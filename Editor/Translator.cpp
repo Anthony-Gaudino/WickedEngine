@@ -5,6 +5,7 @@
 #include "wiMath.h"
 #include "shaders/ShaderInterop_Renderer.h"
 #include "wiEventHandler.h"
+#include <cmath>
 
 using namespace wi::ecs;
 using namespace wi::scene;
@@ -348,25 +349,65 @@ void Translator::Update(const CameraComponent& camera, const XMFLOAT4& currentMo
 			else
 			{
 				XMVECTOR plane, planeNormal;
+				constexpr float plane_epsilon = 1e-6f;
 				if (state == TRANSLATOR_X)
 				{
 					XMVECTOR axis = XMVectorSet(1, 0, 0, 0);
-					XMVECTOR wrong = XMVector3Cross(camera.GetAt(), axis);
+					XMVECTOR view = camera.GetAt();
+					XMVECTOR wrong = XMVector3Cross(view, axis);
+					if (XMVectorGetX(XMVector3LengthSq(wrong)) < plane_epsilon)
+					{
+						wrong = XMVector3Cross(camera.GetUp(), axis);
+					}
+					if (XMVectorGetX(XMVector3LengthSq(wrong)) < plane_epsilon)
+					{
+						wrong = XMVector3Cross(XMVectorSet(0, 0, 1, 0), axis);
+					}
 					planeNormal = XMVector3Cross(wrong, axis);
+					if (XMVectorGetX(XMVector3LengthSq(planeNormal)) < plane_epsilon)
+					{
+						planeNormal = XMVectorSet(0, 1, 0, 0);
+					}
 					this->axis = XMFLOAT3(1, 0, 0);
 				}
 				else if (state == TRANSLATOR_Y)
 				{
 					XMVECTOR axis = XMVectorSet(0, 1, 0, 0);
-					XMVECTOR wrong = XMVector3Cross(camera.GetAt(), axis);
+					XMVECTOR view = camera.GetAt();
+					XMVECTOR wrong = XMVector3Cross(view, axis);
+					if (XMVectorGetX(XMVector3LengthSq(wrong)) < plane_epsilon)
+					{
+						wrong = XMVector3Cross(camera.GetUp(), axis);
+					}
+					if (XMVectorGetX(XMVector3LengthSq(wrong)) < plane_epsilon)
+					{
+						wrong = XMVector3Cross(XMVectorSet(0, 0, 1, 0), axis);
+					}
 					planeNormal = XMVector3Cross(wrong, axis);
+					if (XMVectorGetX(XMVector3LengthSq(planeNormal)) < plane_epsilon)
+					{
+						planeNormal = XMVectorSet(0, 0, 1, 0);
+					}
 					this->axis = XMFLOAT3(0, 1, 0);
 				}
 				else if (state == TRANSLATOR_Z)
 				{
 					XMVECTOR axis = XMVectorSet(0, 0, 1, 0);
-					XMVECTOR wrong = XMVector3Cross(camera.GetAt(), axis);
+					XMVECTOR view = camera.GetAt();
+					XMVECTOR wrong = XMVector3Cross(view, axis);
+					if (XMVectorGetX(XMVector3LengthSq(wrong)) < plane_epsilon)
+					{
+						wrong = XMVector3Cross(camera.GetUp(), axis);
+					}
+					if (XMVectorGetX(XMVector3LengthSq(wrong)) < plane_epsilon)
+					{
+						wrong = XMVector3Cross(XMVectorSet(0, 1, 0, 0), axis);
+					}
 					planeNormal = XMVector3Cross(wrong, axis);
+					if (XMVectorGetX(XMVector3LengthSq(planeNormal)) < plane_epsilon)
+					{
+						planeNormal = XMVectorSet(0, 1, 0, 0);
+					}
 					this->axis = XMFLOAT3(0, 0, 1);
 				}
 				else if (state == TRANSLATOR_XY)
@@ -386,7 +427,31 @@ void Translator::Update(const CameraComponent& camera, const XMFLOAT4& currentMo
 					// xyz
 					planeNormal = camera.GetAt();
 				}
-				plane = XMPlaneFromPointNormal(pos, XMVector3Normalize(planeNormal));
+				float planeNormalLenSq = XMVectorGetX(XMVector3LengthSq(planeNormal));
+				if (!std::isfinite(planeNormalLenSq) || planeNormalLenSq < plane_epsilon)
+				{
+					state = TRANSLATOR_IDLE;
+					if (dragging)
+					{
+						dragEnded = true;
+					}
+					dragging = false;
+					return;
+				}
+				planeNormal = XMVector3Normalize(planeNormal);
+				XMFLOAT3 planeNormalFloat;
+				XMStoreFloat3(&planeNormalFloat, planeNormal);
+				if (!std::isfinite(planeNormalFloat.x) || !std::isfinite(planeNormalFloat.y) || !std::isfinite(planeNormalFloat.z))
+				{
+					state = TRANSLATOR_IDLE;
+					if (dragging)
+					{
+						dragEnded = true;
+					}
+					dragging = false;
+					return;
+				}
+				plane = XMPlaneFromPointNormal(pos, planeNormal);
 
 				if (XMVectorGetX(XMVectorAbs(XMVector3Dot(planeNormal, rayDir))) < 0.001f)
 				{
@@ -447,9 +512,32 @@ void Translator::Update(const CameraComponent& camera, const XMFLOAT4& currentMo
 					deltaV = XMVector3Rotate(deltaV, transform.GetRotationV());
 					XMFLOAT3 delta;
 					XMStoreFloat3(&delta, deltaV);
+					if (!std::isfinite(delta.x) || !std::isfinite(delta.y) || !std::isfinite(delta.z))
+					{
+						transform = transform_start;
+						state = TRANSLATOR_IDLE;
+						if (dragging)
+						{
+							dragEnded = true;
+						}
+						dragging = false;
+						return;
+					}
 					XMFLOAT3 scale = transform.GetScale();
 					scale = wi::math::Max(scale, XMFLOAT3(0.001f, 0.001f, 0.001f)); // no zero division
-					scale = XMFLOAT3((1.0f / scale.x) * (scale.x + delta.x), (1.0f / scale.y) * (scale.y + delta.y), (1.0f / scale.z) * (scale.z + delta.z));
+					XMFLOAT3 targetScale = XMFLOAT3(scale.x + delta.x, scale.y + delta.y, scale.z + delta.z);
+					if (!std::isfinite(targetScale.x) || !std::isfinite(targetScale.y) || !std::isfinite(targetScale.z))
+					{
+						transform = transform_start;
+						state = TRANSLATOR_IDLE;
+						if (dragging)
+						{
+							dragEnded = true;
+						}
+						dragging = false;
+						return;
+					}
+					scale = XMFLOAT3((1.0f / scale.x) * targetScale.x, (1.0f / scale.y) * targetScale.y, (1.0f / scale.z) * targetScale.z);
 					transform.Scale(scale);
 				}
 

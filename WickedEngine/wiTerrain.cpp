@@ -1414,6 +1414,84 @@ namespace wi::terrain
 				const uint32_t physical_width = 16384u;
 				const uint32_t physical_height = 16384u;
 				GPUBufferDesc tile_pool_desc;
+#if defined(PLATFORM_MACOS)
+				const bool supports_bc = false;
+#else
+				const bool supports_bc = device->CheckCapability(GraphicsDeviceCapability::TEXTURE_COMPRESSION_BC);
+#endif
+
+				auto get_surface_format = [&](uint32_t map_type)
+				{
+					struct SurfaceFormat
+					{
+						Format virtual_format = Format::UNKNOWN;
+						Format raw_uav_format = Format::UNKNOWN;
+						ComponentSwizzle swizzle_r = ComponentSwizzle::R;
+						ComponentSwizzle swizzle_g = ComponentSwizzle::G;
+						ComponentSwizzle swizzle_b = ComponentSwizzle::B;
+						ComponentSwizzle swizzle_a = ComponentSwizzle::A;
+						bool override_swizzle = false;
+						uint32_t block_divisor = 1;
+						bool uses_block_compression = false;
+					};
+
+					SurfaceFormat result;
+					result.block_divisor = supports_bc ? 4u : 1u;
+					result.uses_block_compression = supports_bc;
+					switch (map_type)
+					{
+					default:
+					case MaterialComponent::BASECOLORMAP:
+					case MaterialComponent::EMISSIVEMAP:
+						if (supports_bc)
+						{
+							result.virtual_format = Format::BC1_UNORM_SRGB;
+							result.raw_uav_format = Format::R32G32_UINT;
+						}
+						else
+						{
+							result.virtual_format = Format::R8G8B8A8_UNORM_SRGB;
+							result.raw_uav_format = Format::R8G8B8A8_UNORM;
+							result.uses_block_compression = false;
+							result.block_divisor = 1;
+						}
+						break;
+					case MaterialComponent::NORMALMAP:
+						if (supports_bc)
+						{
+							result.virtual_format = Format::BC5_UNORM;
+							result.raw_uav_format = Format::R32G32B32A32_UINT;
+						}
+						else
+						{
+							result.virtual_format = Format::R8G8B8A8_UNORM;
+							result.raw_uav_format = Format::R8G8B8A8_UNORM;
+							result.uses_block_compression = false;
+							result.block_divisor = 1;
+						}
+						result.override_swizzle = true;
+						result.swizzle_r = ComponentSwizzle::R;
+						result.swizzle_g = ComponentSwizzle::G;
+						result.swizzle_b = ComponentSwizzle::ONE;
+						result.swizzle_a = ComponentSwizzle::ONE;
+						break;
+					case MaterialComponent::SURFACEMAP:
+						if (supports_bc)
+						{
+							result.virtual_format = Format::BC3_UNORM;
+							result.raw_uav_format = Format::R32G32B32A32_UINT;
+						}
+						else
+						{
+							result.virtual_format = Format::R8G8B8A8_UNORM;
+							result.raw_uav_format = Format::R8G8B8A8_UNORM;
+							result.uses_block_compression = false;
+							result.block_divisor = 1;
+						}
+						break;
+					}
+					return result;
+				};
 
 				for (uint32_t map_type = 0; map_type < arraysize(atlas.maps); ++map_type)
 				{
@@ -1425,33 +1503,22 @@ namespace wi::terrain
 					desc.mip_levels = 1;
 					desc.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
 
+					auto surface_format = get_surface_format(map_type);
+					desc.format = surface_format.virtual_format;
+					if (surface_format.override_swizzle)
+					{
+						desc.swizzle.r = surface_format.swizzle_r;
+						desc.swizzle.g = surface_format.swizzle_g;
+						desc.swizzle.b = surface_format.swizzle_b;
+						desc.swizzle.a = surface_format.swizzle_a;
+					}
+
 					TextureDesc desc_raw_block = desc;
-					desc_raw_block.width /= 4;
-					desc_raw_block.height /= 4;
+					desc_raw_block.width /= surface_format.block_divisor;
+					desc_raw_block.height /= surface_format.block_divisor;
 					desc_raw_block.bind_flags = BindFlag::UNORDERED_ACCESS;
 					desc_raw_block.layout = ResourceState::UNORDERED_ACCESS;
-
-					switch (map_type)
-					{
-					default:
-					case MaterialComponent::BASECOLORMAP:
-					case MaterialComponent::EMISSIVEMAP:
-						desc.format = Format::BC1_UNORM_SRGB;
-						desc_raw_block.format = Format::R32G32_UINT;
-						break;
-					case MaterialComponent::NORMALMAP:
-						desc.format = Format::BC5_UNORM;
-						desc_raw_block.format = Format::R32G32B32A32_UINT;
-						desc.swizzle.r = ComponentSwizzle::R;
-						desc.swizzle.g = ComponentSwizzle::G;
-						desc.swizzle.b = ComponentSwizzle::ONE;
-						desc.swizzle.a = ComponentSwizzle::ONE;
-						break;
-					case MaterialComponent::SURFACEMAP:
-						desc.format = Format::BC3_UNORM;
-						desc_raw_block.format = Format::R32G32B32A32_UINT;
-						break;
-					}
+					desc_raw_block.format = surface_format.raw_uav_format;
 
 					bool success = device->CreateTexture(&desc, nullptr, &atlas.maps[map_type].texture);
 					assert(success);
@@ -1460,6 +1527,9 @@ namespace wi::terrain
 					success = device->CreateTexture(&desc_raw_block, nullptr, &atlas.maps[map_type].texture_raw_block);
 					assert(success);
 					device->SetName(&atlas.maps[map_type].texture_raw_block, "VirtualTextureAtlas::texture_raw_block");
+
+					atlas.maps[map_type].uses_block_compression = surface_format.uses_block_compression;
+					atlas.maps[map_type].block_dimension_divisor = surface_format.block_divisor;
 
 					assert(atlas.maps[map_type].texture.sparse_properties->total_tile_count == atlas.maps[map_type].texture_raw_block.sparse_properties->total_tile_count);
 					assert(atlas.maps[map_type].texture.sparse_page_size == atlas.maps[map_type].texture_raw_block.sparse_page_size);

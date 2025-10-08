@@ -1433,6 +1433,33 @@ void EditorComponent::Update(float dt)
 	wi::profiler::range_id profrange = wi::profiler::BeginRangeCPU("Editor Update");
 
 	main->canvas.scaling = float(guiScalingCombo.GetSelectedUserdata()) / 100.0f;
+	const float canvasScaling = main->canvas.scaling;
+	bool scalingChanged = false;
+
+	if (scaling != canvasScaling)
+	{
+		scaling = canvasScaling;
+		dpi = main->canvas.dpi;
+		scalingChanged = true;
+	}
+
+	if (renderPath != nullptr)
+	{
+		if (renderPath->scaling != canvasScaling)
+		{
+			renderPath->scaling = canvasScaling;
+			scalingChanged = true;
+		}
+		if (renderPath->dpi != main->canvas.dpi)
+		{
+			renderPath->dpi = main->canvas.dpi;
+		}
+	}
+
+	if (scalingChanged)
+	{
+		ResizeViewport3D();
+	}
 
 	if (CheckInput(EditorActions::SCREENSHOT))
 	{
@@ -4505,42 +4532,19 @@ void EditorComponent::ResizeViewport3D()
 	}
 	width = std::max(64, width);
 	height = std::max(64, height);
-	if (renderPath->width != width || renderPath->height != height || rt_selectionOutline_MSAA.desc.sample_count != renderPath->getMSAASampleCount())
+	renderPath->dpi = dpi;
+	renderPath->scaling = scaling;
+
+	const bool buffers_need_resize =
+		renderPath->width != width ||
+		renderPath->height != height ||
+		rt_selectionOutline_MSAA.desc.sample_count != renderPath->getMSAASampleCount();
+
+	if (buffers_need_resize)
 	{
 		renderPath->width = width;
 		renderPath->height = height;
-		renderPath->dpi = dpi;
-		renderPath->scaling = scaling;
 		renderPath->ResizeBuffers();
-
-		viewport3D.top_left_x = 0;
-		viewport3D.top_left_y = 0;
-		if (GetGUI().IsVisible())
-		{
-			if (generalWnd.IsVisible())
-			{
-				viewport3D.top_left_x = (float)LogicalToPhysical(generalWnd.scale_local.x);
-			}
-			if (graphicsWnd.IsVisible())
-			{
-				viewport3D.top_left_x = (float)LogicalToPhysical(graphicsWnd.scale_local.x);
-			}
-			if (cameraWnd.IsVisible())
-			{
-				viewport3D.top_left_x = (float)LogicalToPhysical(cameraWnd.scale_local.x);
-			}
-			if (materialPickerWnd.IsVisible())
-			{
-				viewport3D.top_left_x = (float)LogicalToPhysical(materialPickerWnd.scale_local.x);
-			}
-			if (paintToolWnd.IsVisible())
-			{
-				viewport3D.top_left_x = (float)LogicalToPhysical(paintToolWnd.scale_local.x);
-			}
-			viewport3D.top_left_y = (float)LogicalToPhysical(topmenuWnd.scale_local.y);
-		}
-		viewport3D.width = (float)renderPath->width;
-		viewport3D.height = (float)renderPath->height;
 
 		GraphicsDevice* device = wi::graphics::GetDevice();
 
@@ -4630,6 +4634,35 @@ void EditorComponent::ResizeViewport3D()
 			}
 		}
 	}
+
+	viewport3D.top_left_x = 0;
+	viewport3D.top_left_y = 0;
+	if (GetGUI().IsVisible())
+	{
+		if (generalWnd.IsVisible())
+		{
+			viewport3D.top_left_x = (float)LogicalToPhysical(generalWnd.scale_local.x);
+		}
+		if (graphicsWnd.IsVisible())
+		{
+			viewport3D.top_left_x = (float)LogicalToPhysical(graphicsWnd.scale_local.x);
+		}
+		if (cameraWnd.IsVisible())
+		{
+			viewport3D.top_left_x = (float)LogicalToPhysical(cameraWnd.scale_local.x);
+		}
+		if (materialPickerWnd.IsVisible())
+		{
+			viewport3D.top_left_x = (float)LogicalToPhysical(materialPickerWnd.scale_local.x);
+		}
+		if (paintToolWnd.IsVisible())
+		{
+			viewport3D.top_left_x = (float)LogicalToPhysical(paintToolWnd.scale_local.x);
+		}
+		viewport3D.top_left_y = (float)LogicalToPhysical(topmenuWnd.scale_local.y);
+	}
+	viewport3D.width = (float)renderPath->width;
+	viewport3D.height = (float)renderPath->height;
 
 	if (GetGUI().IsVisible())
 	{

@@ -60,6 +60,19 @@ BlendState			blendStates[BSTYPE_COUNT];
 GPUBuffer			buffers[BUFFERTYPE_COUNT];
 Sampler				samplers[SAMPLER_COUNT];
 
+namespace
+{
+	void LogBCCompressionUnsupportedOnce()
+	{
+		static std::atomic<bool> logged = false;
+		bool expected = false;
+		if (logged.compare_exchange_strong(expected, true))
+		{
+			wilog_warning("Block compression skipped because BC formats are unsupported on this device.");
+		}
+	}
+}
+
 #if __has_include("wiShaderDump.h")
 // In this case, wiShaderDump.h contains precompiled shader binary data
 #include "wiShaderDump.h"
@@ -1194,10 +1207,39 @@ void LoadShaders()
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_DDGI_INDIRECTPREPARE], "ddgi_indirectprepareCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_DDGI_UPDATE], "ddgi_updateCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_DDGI_UPDATE_DEPTH], "ddgi_updateCS_depth.cso"); });
-	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_TERRAIN_VIRTUALTEXTURE_UPDATE_BASECOLORMAP], "terrainVirtualTextureUpdateCS.cso"); });
-	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_TERRAIN_VIRTUALTEXTURE_UPDATE_NORMALMAP], "terrainVirtualTextureUpdateCS_normalmap.cso"); });
-	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_TERRAIN_VIRTUALTEXTURE_UPDATE_SURFACEMAP], "terrainVirtualTextureUpdateCS_surfacemap.cso"); });
-	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_TERRAIN_VIRTUALTEXTURE_UPDATE_EMISSIVEMAP], "terrainVirtualTextureUpdateCS_emissivemap.cso"); });
+	const bool terrain_supports_bc = device->CheckCapability(GraphicsDeviceCapability::TEXTURE_COMPRESSION_BC);
+	wi::jobsystem::Execute(ctx, [terrain_supports_bc](wi::jobsystem::JobArgs args) {
+		wi::vector<std::string> defines;
+		if (!terrain_supports_bc)
+		{
+			defines.push_back("NO_BC");
+		}
+		LoadShader(ShaderStage::CS, shaders[CSTYPE_TERRAIN_VIRTUALTEXTURE_UPDATE_BASECOLORMAP], "terrainVirtualTextureUpdateCS.cso", ShaderModel::SM_6_0, defines);
+	});
+	wi::jobsystem::Execute(ctx, [terrain_supports_bc](wi::jobsystem::JobArgs args) {
+		wi::vector<std::string> defines;
+		if (!terrain_supports_bc)
+		{
+			defines.push_back("NO_BC");
+		}
+		LoadShader(ShaderStage::CS, shaders[CSTYPE_TERRAIN_VIRTUALTEXTURE_UPDATE_NORMALMAP], "terrainVirtualTextureUpdateCS_normalmap.cso", ShaderModel::SM_6_0, defines);
+	});
+	wi::jobsystem::Execute(ctx, [terrain_supports_bc](wi::jobsystem::JobArgs args) {
+		wi::vector<std::string> defines;
+		if (!terrain_supports_bc)
+		{
+			defines.push_back("NO_BC");
+		}
+		LoadShader(ShaderStage::CS, shaders[CSTYPE_TERRAIN_VIRTUALTEXTURE_UPDATE_SURFACEMAP], "terrainVirtualTextureUpdateCS_surfacemap.cso", ShaderModel::SM_6_0, defines);
+	});
+	wi::jobsystem::Execute(ctx, [terrain_supports_bc](wi::jobsystem::JobArgs args) {
+		wi::vector<std::string> defines;
+		if (!terrain_supports_bc)
+		{
+			defines.push_back("NO_BC");
+		}
+		LoadShader(ShaderStage::CS, shaders[CSTYPE_TERRAIN_VIRTUALTEXTURE_UPDATE_EMISSIVEMAP], "terrainVirtualTextureUpdateCS_emissivemap.cso", ShaderModel::SM_6_0, defines);
+	});
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_MESHLET_PREPARE], "meshlet_prepareCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_IMPOSTOR_PREPARE], "impostor_prepareCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_VIRTUALTEXTURE_TILEREQUESTS], "virtualTextureTileRequestsCS.cso"); });
@@ -10445,6 +10487,12 @@ void GenerateMipChain(const Texture& texture, MIPGENFILTER filter, CommandList c
 
 void BlockCompress(const Texture& texture_src, const Texture& texture_bc, CommandList cmd, uint32_t dst_slice_offset)
 {
+	if (!device->CheckCapability(GraphicsDeviceCapability::TEXTURE_COMPRESSION_BC))
+	{
+		LogBCCompressionUnsupportedOnce();
+		return;
+	}
+
 	const uint32_t block_size = GetFormatBlockSize(texture_bc.desc.format);
 	TextureDesc desc;
 	desc.width = std::max(1u, (texture_bc.desc.width + block_size - 1) / block_size);
@@ -17085,7 +17133,7 @@ void Postprocess_FSR(
 
 namespace fsr2
 {
-#include "shaders/ffx-fsr2/ffx_core.h"
+#include "shaders/ffx-fsr2/ffx_core.h" // IWYU pragma: keep
 #include "shaders/ffx-fsr2/ffx_fsr1.h"
 #include "shaders/ffx-fsr2/ffx_spd.h"
 #include "shaders/ffx-fsr2/ffx_fsr2_callbacks_hlsl.h"
@@ -18890,6 +18938,12 @@ void AddDeferredMIPGen(const Texture& texture, bool preserve_coverage)
 }
 void AddDeferredBlockCompression(const wi::graphics::Texture& texture_src, const wi::graphics::Texture& texture_bc)
 {
+	if (!device->CheckCapability(GraphicsDeviceCapability::TEXTURE_COMPRESSION_BC))
+	{
+		LogBCCompressionUnsupportedOnce();
+		return;
+	}
+
 	deferredMIPGenLock.lock();
 	deferredBCQueue.push_back(std::make_pair(texture_src, texture_bc));
 	deferredMIPGenLock.unlock();

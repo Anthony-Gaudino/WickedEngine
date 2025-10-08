@@ -34,6 +34,7 @@
 #include <cstring>
 #include <iostream>
 #include <algorithm>
+#include <vector>
 
 #if defined(PLATFORM_MACOS)
 #include <dlfcn.h>
@@ -2889,7 +2890,81 @@ using namespace vulkan_internal;
 	#endif // PLATFORM_MACOS
 			assert(features2.features.samplerAnisotropy == VK_TRUE);
 			assert(features2.features.shaderClipDistance == VK_TRUE);
-			assert(features2.features.textureCompressionBC == VK_TRUE);
+			bool bc_supported = features2.features.textureCompressionBC == VK_TRUE;
+			if (bc_supported)
+			{
+				static constexpr struct
+				{
+					VkFormat format;
+					const char* name;
+				} bc_formats_to_validate[] = {
+					{ VK_FORMAT_BC1_RGBA_UNORM_BLOCK, "VK_FORMAT_BC1_RGBA_UNORM_BLOCK" },
+					{ VK_FORMAT_BC1_RGBA_SRGB_BLOCK, "VK_FORMAT_BC1_RGBA_SRGB_BLOCK" },
+					{ VK_FORMAT_BC2_UNORM_BLOCK, "VK_FORMAT_BC2_UNORM_BLOCK" },
+					{ VK_FORMAT_BC2_SRGB_BLOCK, "VK_FORMAT_BC2_SRGB_BLOCK" },
+					{ VK_FORMAT_BC3_UNORM_BLOCK, "VK_FORMAT_BC3_UNORM_BLOCK" },
+					{ VK_FORMAT_BC3_SRGB_BLOCK, "VK_FORMAT_BC3_SRGB_BLOCK" },
+					{ VK_FORMAT_BC4_UNORM_BLOCK, "VK_FORMAT_BC4_UNORM_BLOCK" },
+					{ VK_FORMAT_BC4_SNORM_BLOCK, "VK_FORMAT_BC4_SNORM_BLOCK" },
+					{ VK_FORMAT_BC5_UNORM_BLOCK, "VK_FORMAT_BC5_UNORM_BLOCK" },
+					{ VK_FORMAT_BC5_SNORM_BLOCK, "VK_FORMAT_BC5_SNORM_BLOCK" },
+					{ VK_FORMAT_BC6H_UFLOAT_BLOCK, "VK_FORMAT_BC6H_UFLOAT_BLOCK" },
+					{ VK_FORMAT_BC6H_SFLOAT_BLOCK, "VK_FORMAT_BC6H_SFLOAT_BLOCK" },
+					{ VK_FORMAT_BC7_UNORM_BLOCK, "VK_FORMAT_BC7_UNORM_BLOCK" },
+					{ VK_FORMAT_BC7_SRGB_BLOCK, "VK_FORMAT_BC7_SRGB_BLOCK" },
+				};
+
+				std::vector<std::string> missing_bc_formats;
+				VkImageUsageFlags required_usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+				for (const auto& info : bc_formats_to_validate)
+				{
+					VkImageFormatProperties image_properties = {};
+					VkResult image_support = vkGetPhysicalDeviceImageFormatProperties(
+						physicalDevice,
+						info.format,
+						VK_IMAGE_TYPE_2D,
+						VK_IMAGE_TILING_OPTIMAL,
+						required_usage,
+						0,
+						&image_properties);
+					if (image_support != VK_SUCCESS)
+					{
+						missing_bc_formats.emplace_back(info.name);
+						continue;
+					}
+
+					VkFormatProperties format_properties = {};
+					vkGetPhysicalDeviceFormatProperties(physicalDevice, info.format, &format_properties);
+					if ((format_properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) == 0)
+					{
+						missing_bc_formats.emplace_back(info.name);
+					}
+				}
+
+				if (!missing_bc_formats.empty())
+				{
+					bc_supported = false;
+					std::string warning = "Vulkan device advertises BC compression but lacks support for: ";
+					for (size_t i = 0; i < missing_bc_formats.size(); ++i)
+					{
+						warning += missing_bc_formats[i];
+						if (i + 1 < missing_bc_formats.size())
+						{
+							warning += ", ";
+						}
+					}
+					warning += ". BC textures will be decompressed.";
+					wilog_warning(warning.c_str());
+				}
+			}
+			if (bc_supported)
+			{
+				capabilities |= GraphicsDeviceCapability::TEXTURE_COMPRESSION_BC;
+			}
+			else
+			{
+				wilog_warning("Vulkan device does not support BC texture compression; falling back to uncompressed terrain resources where needed.");
+			}
 			assert(features2.features.occlusionQueryPrecise == VK_TRUE);
 			assert(features_1_2.descriptorIndexing == VK_TRUE);
 			assert(features_1_3.dynamicRendering == VK_TRUE);
@@ -4299,26 +4374,49 @@ using namespace vulkan_internal;
 	bool GraphicsDevice_Vulkan::CreateTexture(const TextureDesc* desc, const SubresourceData* initial_data, Texture* texture, const GPUResource* alias, uint64_t alias_offset) const
 	{
 #ifdef PLATFORM_LINUX
-		// Resource aliasing on Linux sometimes fails with VK_ERROR_UNKOWN so I disable it:
-		alias = nullptr;
-		alias_offset = 0;
+	// Resource aliasing on Linux sometimes fails with VK_ERROR_UNKOWN so I disable it:
+	alias = nullptr;
+	alias_offset = 0;
 #endif // PLATFORM_LINUX
 
-		auto internal_state = std::make_shared<Texture_Vulkan>();
-		internal_state->allocationhandler = allocationhandler;
-		internal_state->defaultLayout = _ConvertImageLayout(desc->layout);
-		texture->internal_state = internal_state;
-		texture->type = GPUResource::Type::TEXTURE;
-		texture->mapped_data = nullptr;
-		texture->mapped_size = 0;
-		texture->mapped_subresources = nullptr;
-		texture->mapped_subresource_count = 0;
-		texture->sparse_properties = nullptr;
-		texture->desc = *desc;
+	VkFormat vkformat = _ConvertFormat(desc->format);
+	if (vkformat == VK_FORMAT_UNDEFINED)
+	{
+	    wilog_error(
+		"Unable to translate texture format %s to Vulkan (texture %p requested, %ux%u, depth: %u, array: %u, mips: %u, bind: 0x%X, misc: 0x%X).",
+		GetFormatString(desc->format),
+		texture,
+		desc->width,
+		desc->height,
+		desc->depth,
+		desc->array_size,
+		desc->mip_levels,
+		(uint32_t)desc->bind_flags,
+		(uint32_t)desc->misc_flags);
+	    return false;
+	}
+
+	auto internal_state = std::make_shared<Texture_Vulkan>();
+	internal_state->allocationhandler = allocationhandler;
+	internal_state->defaultLayout = _ConvertImageLayout(desc->layout);
+	texture->internal_state = internal_state;
+	texture->type = GPUResource::Type::TEXTURE;
+	texture->mapped_data = nullptr;
+	texture->mapped_size = 0;
+	texture->mapped_subresources = nullptr;
+	texture->mapped_subresource_count = 0;
+	texture->sparse_properties = nullptr;
+	texture->desc = *desc;
 
 		if (texture->desc.mip_levels == 0)
 		{
 			texture->desc.mip_levels = GetMipCount(texture->desc.width, texture->desc.height, texture->desc.depth);
+		}
+
+		if (!CheckCapability(GraphicsDeviceCapability::TEXTURE_COMPRESSION_BC) && IsFormatBlockCompressed(texture->desc.format))
+		{
+			wilog_warning("BC-compressed texture request while BC compression is unavailable (format: %s, %ux%u, mips: %u)",
+				GetFormatString(texture->desc.format), texture->desc.width, texture->desc.height, texture->desc.mip_levels);
 		}
 
 		VkImageCreateInfo imageInfo = {};
@@ -4326,7 +4424,7 @@ using namespace vulkan_internal;
 		imageInfo.extent.width = texture->desc.width;
 		imageInfo.extent.height = texture->desc.height;
 		imageInfo.extent.depth = texture->desc.depth;
-		imageInfo.format = _ConvertFormat(texture->desc.format);
+		imageInfo.format = vkformat;
 		imageInfo.arrayLayers = texture->desc.array_size;
 		imageInfo.mipLevels = texture->desc.mip_levels;
 		VkSampleCountFlagBits sample_count = wi_clamp_sample_count(physicalDevice, (VkSampleCountFlagBits)texture->desc.sample_count);
@@ -4395,6 +4493,61 @@ using namespace vulkan_internal;
 		if (has_flag(texture->desc.misc_flags, ResourceMiscFlag::VIDEO_DECODE_DPB_ONLY))
 		{
 			imageInfo.usage = VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR; // Note: this is not a combination of flags, but complete assignment!
+		}
+
+		if (IsFormatBlockCompressed(texture->desc.format))
+		{
+			wilog(
+				"Creating BC texture: format=%s (VkFormat %u), size=%ux%u, depth=%u, array=%u, mips=%u, bind=0x%X, misc=0x%X, usage=0x%X",
+				GetFormatString(texture->desc.format),
+				static_cast<uint32_t>(imageInfo.format),
+				texture->desc.width,
+				texture->desc.height,
+				texture->desc.depth,
+				texture->desc.array_size,
+				texture->desc.mip_levels,
+				static_cast<uint32_t>(texture->desc.bind_flags),
+				static_cast<uint32_t>(texture->desc.misc_flags),
+				imageInfo.usage);
+		}
+
+		if (imageInfo.format != VK_FORMAT_UNDEFINED)
+		{
+			VkFormatProperties formatProperties = {};
+			vkGetPhysicalDeviceFormatProperties(physicalDevice, imageInfo.format, &formatProperties);
+			VkFormatFeatureFlags requiredFeatures = 0;
+			if (imageInfo.usage & VK_IMAGE_USAGE_SAMPLED_BIT)
+			{
+				requiredFeatures |= VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+			}
+			if (imageInfo.usage & VK_IMAGE_USAGE_STORAGE_BIT)
+			{
+				requiredFeatures |= VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT;
+			}
+			if (imageInfo.usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)
+			{
+				requiredFeatures |= VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
+			}
+			if (imageInfo.usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)
+			{
+				requiredFeatures |= VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT;
+			}
+			if (imageInfo.usage & VK_IMAGE_USAGE_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR)
+			{
+				requiredFeatures |= VK_FORMAT_FEATURE_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR;
+			}
+			if ((requiredFeatures & ~formatProperties.optimalTilingFeatures) != 0)
+			{
+				wilog_error(
+					"Texture format %s (VkFormat %u) missing optimal tiling features for usage 0x%X on device '%s'. Required: 0x%X, available: 0x%X (texture %p)",
+					GetFormatString(texture->desc.format),
+					static_cast<uint32_t>(imageInfo.format),
+					imageInfo.usage,
+					adapterName.c_str(),
+					requiredFeatures,
+					formatProperties.optimalTilingFeatures,
+					texture);
+			}
 		}
 
 		if (desc->format == Format::NV12 && has_flag(texture->desc.bind_flags, BindFlag::SHADER_RESOURCE))

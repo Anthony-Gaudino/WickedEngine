@@ -108,92 +108,73 @@ static inline int8x8x2_t wicked_vzip_u16_signed(int8x8_t a, int8x8_t b)
 #define vzip_u16(a,b) wicked_vzip_u16_signed((a),(b))
 #endif // WICKED_VZIP_SHIMS
 
-/**
- * vtbl2_u8 shim (signed aggregate overload)
- *
- * Purpose:
- *   Adapt legacy DirectXMath usage that builds an int8x8x2_t table aggregate
- *   and passes it (sometimes with a byte index already in uint8x8_t form) to
- *   vtbl2_u8. The AArch64 intrinsic expects a uint8x8x2_t. This overload
- *   reinterprets to the unsigned aggregate and forwards without redefining
- *   the intrinsic symbol.
- *
- * Semantics:
- *   Concatenate: T = table.val[0] || table.val[1] (16 bytes)
- *   For each lane i of index (0..7):
- *       result[i] = (index[i] < 16) ? T[index[i]] : 0
- *   Out-of-range lookups (>=16) are zeroed by the hardware intrinsic.
- *
- * Parameters:
- *   table (int8x8x2_t): Signed 2×8-byte table aggregate to adapt.
- *   index (uint8x8_t): 8 unsigned byte indices selecting from the 16-byte table.
- *
- * Return:
- *   uint8x8_t – 8 lookup result bytes.
- */
 #ifdef __cplusplus
-static inline uint8x8_t vtbl2_u8(const int8x8x2_t table, const uint8x8_t index)
+namespace wicked::neon
 {
-	uint8x8x2_t t;
-	t.val[0] = vreinterpret_u8_s8(table.val[0]);
-	t.val[1] = vreinterpret_u8_s8(table.val[1]);
+	inline uint8x8_t vtbl2_u8_dispatch(int8x8x2_t table, uint8x8_t index)
+	{
+		uint8x16_t combined = vcombine_u8(vreinterpret_u8_s8(table.val[0]), vreinterpret_u8_s8(table.val[1]));
+		uint8x16_t idx16 = vcombine_u8(index, vdup_n_u8(0));
+		uint8x16_t result16 = vqtbl1q_u8(combined, idx16);
+		return vget_low_u8(result16);
+	}
 
-	return vtbl2_u8(t, index); // Dispatches to unsigned intrinsic version
-}
+	inline uint8x8_t vtbl2_u8_dispatch(int8x8x2_t table, uint32x2_t index)
+	{
+		return vtbl2_u8_dispatch(table, vreinterpret_u8_u32(index));
+	}
+
+	inline uint8x8_t vtbl2_u8_dispatch(uint8x8x2_t table, uint8x8_t index)
+	{
+		return ::vtbl2_u8(table, index);
+	}
+
+	inline uint8x8_t vtbl2_u8_dispatch(uint8x8x2_t table, uint32x2_t index)
+	{
+		return ::vtbl2_u8(table, vreinterpret_u8_u32(index));
+	}
+
+	inline uint8x8_t vtbl4_u8_dispatch(int8x8x4_t table, uint8x8_t index)
+	{
+		uint8x16_t t0 = vcombine_u8(vreinterpret_u8_s8(table.val[0]), vreinterpret_u8_s8(table.val[1]));
+		uint8x16_t t1 = vcombine_u8(vreinterpret_u8_s8(table.val[2]), vreinterpret_u8_s8(table.val[3]));
+		uint8x16x2_t tables = { t0, t1 };
+		uint8x16_t idx16 = vcombine_u8(index, vdup_n_u8(0));
+		uint8x16_t r16 = vqtbl2q_u8(tables, idx16);
+		return vget_low_u8(r16);
+	}
+
+	inline uint8x8_t vtbl4_u8_dispatch(int8x8x4_t table, uint32x2_t index)
+	{
+		return vtbl4_u8_dispatch(table, vreinterpret_u8_u32(index));
+	}
+
+	inline uint8x8_t vtbl4_u8_dispatch(uint8x8x4_t table, uint8x8_t index)
+	{
+		return ::vtbl4_u8(table, index);
+	}
+
+	inline uint8x8_t vtbl4_u8_dispatch(uint8x8x4_t table, uint32x2_t index)
+	{
+		return ::vtbl4_u8(table, vreinterpret_u8_u32(index));
+	}
+} // namespace wicked::neon
+
+#undef vtbl2_u8
+#define vtbl2_u8(table, index) wicked::neon::vtbl2_u8_dispatch((table), (index))
+
+#undef vtbl4_u8
+#define vtbl4_u8(table, index) wicked::neon::vtbl4_u8_dispatch((table), (index))
 #endif // __cplusplus
-
-/**
- * vtbl4_u8 shim (AArch64 implementation using vqtbl2q_u8)
- *
- * Purpose:
- *   Emulate legacy ARMv7 NEON vtbl4_u8 (4×8-byte tables -> 32-byte lookup) for
- *   DirectXMath code building an int8x8x4_t aggregate, using a single Armv8
- *   table instruction (vqtbl2q_u8) for efficiency.
- *
- * Semantics:
- *   Concatenate: T = table.val[0] || table.val[1] || table.val[2] || table.val[3]
- *   For each lane i of index (0..7):
- *       result[i] = (index[i] < 32) ? T[index[i]] : 0
- *   Hardware zeroes lanes with indices >= 32.
- *
- * Parameters:
- *   table (int8x8x4_t): Signed 4×8-byte table aggregate (reinterpreted to unsigned).
- *   index (uint8x8_t): 8 unsigned byte indices selecting from the 32-byte table.
- *
- * Return:
- *   uint8x8_t – 8 lookup result bytes.
- */
-static inline uint8x8_t vtbl4_u8(const int8x8x4_t table, const uint8x8_t index)
-{
-	// Availability note: relies on vqtbl2q_u8 which should be present on modern
-	// AppleClang AArch64 toolchains. If a build error reports the intrinsic is
-	// missing, introduce a feature test and provide a dual vqtbl1q_u8 fallback
-	// (two 16-byte lookups, blend + explicit zero for idx>=32).
-	// Combine into two 16-byte vectors, then build a 32-byte table set
-	uint8x16_t t0 = vcombine_u8(vreinterpret_u8_s8(
-		table.val[0]),
-		vreinterpret_u8_s8(table.val[1])
-	);
-	uint8x16_t t1 = vcombine_u8(vreinterpret_u8_s8(
-		table.val[2]),
-		vreinterpret_u8_s8(table.val[3])
-	);
-	uint8x16x2_t tables = { t0, t1 };
-	// Form 16-lane index (upper half zeroed)
-	uint8x16_t idx16 = vcombine_u8(index, vdup_n_u8(0));
-	// Single 32-byte table lookup, lanes with idx>=32 automatically zero
-	uint8x16_t r16 = vqtbl2q_u8(tables, idx16);
-
-	return vget_low_u8(r16);
-}
 
 /**
  * vld4_f32_ex replacement: load 4-interleaved float32x2 vectors; ignore flags
  * parameter.
  */
 #ifndef WICKED_HAVE_VLD4_F32_EX
-static inline float32x2x4_t vld4_f32_ex(const float* ptr, int /*flags*/)
+static inline float32x2x4_t vld4_f32_ex(const float* ptr, int flags)
 {
+	(void)flags;
 	return vld4_f32(ptr);
 }
 #endif

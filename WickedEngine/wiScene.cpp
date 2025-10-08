@@ -4217,13 +4217,18 @@ namespace wi::scene
 			device->CreateTexture(&desc, nullptr, &impostorRenderTarget_Surface);
 			device->SetName(&impostorRenderTarget_Surface, "impostorRenderTarget_Surface");
 
-			desc.format = Format::BC3_UNORM;
+			const bool supports_bc = device->CheckCapability(GraphicsDeviceCapability::TEXTURE_COMPRESSION_BC);
+			desc.format = supports_bc ? Format::BC3_UNORM : Format::R8G8B8A8_UNORM;
 			desc.bind_flags = BindFlag::SHADER_RESOURCE;
 			desc.layout = ResourceState::SHADER_RESOURCE;
 			desc.misc_flags = ResourceMiscFlag::NONE;
 			desc.array_size = maxImpostorCount * impostorCaptureAngles * 3;
 			device->CreateTexture(&desc, nullptr, &impostorArray);
 			device->SetName(&impostorArray, "impostorArray");
+			if (!supports_bc)
+			{
+				wilog_warning("BC compression unavailable; impostor array using %s format.", GetFormatString(desc.format));
+			}
 
 			std::string info;
 			info += "Created impostor array with " + std::to_string(maxImpostorCount) + " max impostors";
@@ -5215,6 +5220,7 @@ namespace wi::scene
 		if (weather.rain_amount > 0)
 		{
 			GraphicsDevice* device = wi::graphics::GetDevice();
+			const bool supports_bc = device->CheckCapability(GraphicsDeviceCapability::TEXTURE_COMPRESSION_BC);
 			rainEmitter.opacityCurveControlPeakStart = 0;
 			rainEmitter._flags |= wi::EmittedParticleSystem::FLAG_USE_RAIN_BLOCKER;
 			rainEmitter.shaderType = wi::EmittedParticleSystem::PARTICLESHADERTYPE::SOFT_LIGHTING;
@@ -5249,28 +5255,44 @@ namespace wi::scene
 					XMFLOAT2(0.5f, 0.5f), XMFLOAT2(0.5f, 0),
 					wi::texturehelper::GradientFlags::Smoothstep | wi::texturehelper::GradientFlags::Inverse
 				);
-				Texture gradientTexBC;
-				TextureDesc desc = gradientTex.GetDesc();
-				desc.format = Format::BC4_UNORM;
-				desc.swizzle = { wi::graphics::ComponentSwizzle::ONE,wi::graphics::ComponentSwizzle::ONE,wi::graphics::ComponentSwizzle::ONE,wi::graphics::ComponentSwizzle::R };
-				bool success = device->CreateTexture(&desc, nullptr, &gradientTexBC);
-				assert(success);
-				wi::renderer::AddDeferredBlockCompression(gradientTex, gradientTexBC);
-				rainMaterial.textures[MaterialComponent::BASECOLORMAP].resource.SetTexture(gradientTexBC);
+				if (supports_bc)
+				{
+					Texture gradientTexBC;
+					TextureDesc desc = gradientTex.GetDesc();
+					desc.format = Format::BC4_UNORM;
+					desc.swizzle = { wi::graphics::ComponentSwizzle::ONE,wi::graphics::ComponentSwizzle::ONE,wi::graphics::ComponentSwizzle::ONE,wi::graphics::ComponentSwizzle::R };
+					bool success = device->CreateTexture(&desc, nullptr, &gradientTexBC);
+					assert(success);
+					wi::renderer::AddDeferredBlockCompression(gradientTex, gradientTexBC);
+					rainMaterial.textures[MaterialComponent::BASECOLORMAP].resource.SetTexture(gradientTexBC);
+				}
+				else
+				{
+					wilog_warning("BC compression unavailable; using uncompressed rain albedo texture.");
+					rainMaterial.textures[MaterialComponent::BASECOLORMAP].resource.SetTexture(gradientTex);
+				}
 			}
 			if (!rainMaterial.textures[MaterialComponent::NORMALMAP].resource.IsValid())
 			{
 				Texture gradientTex = wi::texturehelper::CreateLensDistortionNormalMap(
 					32, 32
 				);
-				Texture gradientTexBC;
-				TextureDesc desc = gradientTex.GetDesc();
-				desc.format = Format::BC5_UNORM;
-				desc.swizzle = { wi::graphics::ComponentSwizzle::R,wi::graphics::ComponentSwizzle::G,wi::graphics::ComponentSwizzle::ONE,wi::graphics::ComponentSwizzle::ONE };
-				bool success = device->CreateTexture(&desc, nullptr, &gradientTexBC);
-				assert(success);
-				wi::renderer::AddDeferredBlockCompression(gradientTex, gradientTexBC);
-				rainMaterial.textures[MaterialComponent::NORMALMAP].resource.SetTexture(gradientTexBC);
+				if (supports_bc)
+				{
+					Texture gradientTexBC;
+					TextureDesc desc = gradientTex.GetDesc();
+					desc.format = Format::BC5_UNORM;
+					desc.swizzle = { wi::graphics::ComponentSwizzle::R,wi::graphics::ComponentSwizzle::G,wi::graphics::ComponentSwizzle::ONE,wi::graphics::ComponentSwizzle::ONE };
+					bool success = device->CreateTexture(&desc, nullptr, &gradientTexBC);
+					assert(success);
+					wi::renderer::AddDeferredBlockCompression(gradientTex, gradientTexBC);
+					rainMaterial.textures[MaterialComponent::NORMALMAP].resource.SetTexture(gradientTexBC);
+				}
+				else
+				{
+					wilog_warning("BC compression unavailable; using uncompressed rain normal map.");
+					rainMaterial.textures[MaterialComponent::NORMALMAP].resource.SetTexture(gradientTex);
+				}
 			}
 			//rainMaterial.shadingRate = ShadingRate::RATE_4X4;
 			TransformComponent transform;

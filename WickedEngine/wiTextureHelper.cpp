@@ -11,6 +11,10 @@
 #include "logo.h"
 #include "waterripple.h"
 
+#include <algorithm>
+#include <cstdint>
+#include <vector>
+
 using namespace wi::graphics;
 
 // from Utility/samplerBlueNoiseErrorDistribution_128x128_OptimizedFor_2d2d2d2d_1spp.cpp
@@ -18,6 +22,58 @@ extern float samplerBlueNoiseErrorDistribution_128x128_OptimizedFor_2d2d2d2d_1sp
 
 namespace wi::texturehelper
 {
+
+	static void DecodeBC4BlockUNorm(const uint8_t* block, uint8_t* outValues)
+	{
+		const uint8_t endpoint0 = block[0];
+		const uint8_t endpoint1 = block[1];
+		uint8_t palette[8];
+		palette[0] = endpoint0;
+		palette[1] = endpoint1;
+		if (endpoint0 > endpoint1)
+		{
+			palette[2] = uint8_t((6 * endpoint0 + 1 * endpoint1) / 7);
+			palette[3] = uint8_t((5 * endpoint0 + 2 * endpoint1) / 7);
+			palette[4] = uint8_t((4 * endpoint0 + 3 * endpoint1) / 7);
+			palette[5] = uint8_t((3 * endpoint0 + 4 * endpoint1) / 7);
+			palette[6] = uint8_t((2 * endpoint0 + 5 * endpoint1) / 7);
+			palette[7] = uint8_t((1 * endpoint0 + 6 * endpoint1) / 7);
+		}
+		else
+		{
+			palette[2] = uint8_t((4 * endpoint0 + 1 * endpoint1) / 5);
+			palette[3] = uint8_t((3 * endpoint0 + 2 * endpoint1) / 5);
+			palette[4] = uint8_t((2 * endpoint0 + 3 * endpoint1) / 5);
+			palette[5] = uint8_t((1 * endpoint0 + 4 * endpoint1) / 5);
+			palette[6] = 0;
+			palette[7] = 255;
+		}
+
+		uint64_t indices = 0;
+		for (int i = 0; i < 6; ++i)
+		{
+			indices |= uint64_t(block[2 + i]) << (8 * i);
+		}
+
+		for (int i = 0; i < 16; ++i)
+		{
+			const uint32_t index = uint32_t((indices >> (3 * i)) & 0x7u);
+			outValues[i] = palette[index];
+		}
+	}
+
+	static void DecodeBC5BlockUNorm(const uint8_t* block, uint8_t* outRG)
+	{
+		uint8_t r[16];
+		uint8_t g[16];
+		DecodeBC4BlockUNorm(block, r);
+		DecodeBC4BlockUNorm(block + 8, g);
+		for (int i = 0; i < 16; ++i)
+		{
+			outRG[i * 2 + 0] = r[i];
+			outRG[i * 2 + 1] = g[i];
+		}
+	}
 
 	enum HELPERTEXTURES
 	{
@@ -160,20 +216,100 @@ namespace wi::texturehelper
 			desc.swizzle = { ComponentSwizzle::R,ComponentSwizzle::G,ComponentSwizzle::ONE,ComponentSwizzle::ONE };
 			desc.bind_flags = BindFlag::SHADER_RESOURCE;
 
-			const uint32_t data_stride = GetFormatStride(desc.format);
-			const uint32_t block_size = GetFormatBlockSize(desc.format);
-			const uint8_t* src = waterriple;
-			SubresourceData initdata[7] = {};
-			for (uint32_t mip = 0; mip < desc.mip_levels; ++mip)
+			const bool supports_bc = device->CheckCapability(GraphicsDeviceCapability::TEXTURE_COMPRESSION_BC);
+			if (supports_bc)
 			{
-				const uint32_t num_blocks_x = std::max(1u, desc.width >> mip) / block_size;
-				const uint32_t num_blocks_y = std::max(1u, desc.height >> mip) / block_size;
-				initdata[mip].data_ptr = src;
-				initdata[mip].row_pitch = num_blocks_x * data_stride;
-				src += num_blocks_x * num_blocks_y * data_stride;
+				const uint32_t data_stride = GetFormatStride(desc.format);
+				const uint32_t block_size = GetFormatBlockSize(desc.format);
+				const uint8_t* src = waterriple;
+				SubresourceData initdata[7] = {};
+				for (uint32_t mip = 0; mip < desc.mip_levels; ++mip)
+				{
+					const uint32_t mip_width = std::max(1u, desc.width >> mip);
+					const uint32_t mip_height = std::max(1u, desc.height >> mip);
+					const uint32_t num_blocks_x = (mip_width + block_size - 1) / block_size;
+					const uint32_t num_blocks_y = (mip_height + block_size - 1) / block_size;
+					initdata[mip].data_ptr = src;
+					initdata[mip].row_pitch = num_blocks_x * data_stride;
+					src += num_blocks_x * num_blocks_y * data_stride;
+				}
+				device->CreateTexture(&desc, initdata, &helperTextures[HELPERTEXTURE_WATERRIPPLE]);
+				device->SetName(&helperTextures[HELPERTEXTURE_WATERRIPPLE], "HELPERTEXTURE_WATERRIPPLE");
 			}
-			device->CreateTexture(&desc, initdata, &helperTextures[HELPERTEXTURE_WATERRIPPLE]);
-			device->SetName(&helperTextures[HELPERTEXTURE_WATERRIPPLE], "HELPERTEXTURE_WATERRIPPLE");
+			else
+			{
+				TextureDesc fallback_desc = desc;
+				fallback_desc.format = Format::R8G8_UNORM;
+
+				const uint32_t base_width = desc.width;
+				const uint32_t base_height = desc.height;
+				const uint32_t block_size = GetFormatBlockSize(desc.format);
+				const uint32_t block_stride = GetFormatStride(desc.format);
+				std::vector<SubresourceData> initdata(fallback_desc.mip_levels);
+
+				size_t total_bytes = 0;
+				for (uint32_t mip = 0; mip < fallback_desc.mip_levels; ++mip)
+				{
+					const uint32_t mip_width = std::max(1u, base_width >> mip);
+					const uint32_t mip_height = std::max(1u, base_height >> mip);
+					total_bytes += size_t(mip_width) * mip_height * 2u;
+				}
+				std::vector<uint8_t> decoded_storage(total_bytes);
+
+				const uint8_t* mip_data = waterriple;
+				size_t dest_offset = 0;
+				for (uint32_t mip = 0; mip < fallback_desc.mip_levels; ++mip)
+				{
+					const uint32_t mip_width = std::max(1u, base_width >> mip);
+					const uint32_t mip_height = std::max(1u, base_height >> mip);
+					const uint32_t num_blocks_x = (mip_width + block_size - 1) / block_size;
+					const uint32_t num_blocks_y = (mip_height + block_size - 1) / block_size;
+
+					uint8_t* dst = decoded_storage.data() + dest_offset;
+					SubresourceData& subresource = initdata[mip];
+					subresource.data_ptr = dst;
+					subresource.row_pitch = mip_width * 2u;
+					subresource.slice_pitch = subresource.row_pitch * mip_height;
+
+					for (uint32_t by = 0; by < num_blocks_y; ++by)
+					{
+						for (uint32_t bx = 0; bx < num_blocks_x; ++bx)
+						{
+							const uint8_t* block = mip_data + (by * num_blocks_x + bx) * block_stride;
+							uint8_t decoded_block[16 * 2];
+							DecodeBC5BlockUNorm(block, decoded_block);
+
+							for (uint32_t py = 0; py < 4; ++py)
+							{
+								const uint32_t y = by * 4 + py;
+								if (y >= mip_height)
+								{
+									continue;
+								}
+								uint8_t* row = dst + y * subresource.row_pitch;
+								for (uint32_t px = 0; px < 4; ++px)
+								{
+									const uint32_t x = bx * 4 + px;
+									if (x >= mip_width)
+									{
+										continue;
+									}
+									const uint32_t src_idx = (py * 4 + px) * 2;
+									row[x * 2 + 0] = decoded_block[src_idx + 0];
+									row[x * 2 + 1] = decoded_block[src_idx + 1];
+								}
+							}
+						}
+					}
+
+					mip_data += num_blocks_x * num_blocks_y * block_stride;
+					dest_offset += subresource.slice_pitch;
+				}
+
+				device->CreateTexture(&fallback_desc, initdata.data(), &helperTextures[HELPERTEXTURE_WATERRIPPLE]);
+				device->SetName(&helperTextures[HELPERTEXTURE_WATERRIPPLE], "HELPERTEXTURE_WATERRIPPLE");
+				wilog_warning("BC texture support unavailable; decoded water ripple helper texture to R8G8_UNORM.");
+			}
 		}
 
 		// Checkerboard:

@@ -455,6 +455,7 @@ namespace wi::graphics
 		VIDEO_DECODE_H265 = 1 << 22,
 		R9G9B9E5_SHAREDEXP_RENDERABLE = 1 << 23, // indicates supporting R9G9B9E5_SHAREDEXP format for rendering to
 		COPY_BETWEEN_DIFFERENT_IMAGE_ASPECTS_NOT_SUPPORTED = 1 << 24, // indicates that CopyTexture src and dst ImageAspect must match
+		TEXTURE_COMPRESSION_BC = 1 << 25,
 
 		// Compat:
 		GENERIC_SPARSE_TILE_POOL = ALIASING_GENERIC,

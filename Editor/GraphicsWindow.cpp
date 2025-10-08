@@ -1729,6 +1729,10 @@ void GraphicsWindow::ChangeRenderPath(RENDERPATH path)
 		break;
 	}
 
+	editor->renderPath->init(editor->main->canvas);
+	editor->renderPath->dpi = editor->main->canvas.dpi;
+	editor->renderPath->scaling = editor->scaling;
+
 	if (editor->scenes.empty())
 	{
 		editor->NewScene();

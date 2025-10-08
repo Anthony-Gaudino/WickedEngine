@@ -30,6 +30,34 @@ using namespace wi::primitive;
 
 namespace wi::scene
 {
+	static Format GetBCFallbackFormat(Format format)
+	{
+		switch (format)
+		{
+		case Format::BC1_UNORM:
+		case Format::BC3_UNORM:
+			return Format::R8G8B8A8_UNORM;
+		case Format::BC1_UNORM_SRGB:
+		case Format::BC3_UNORM_SRGB:
+			return Format::R8G8B8A8_UNORM_SRGB;
+		case Format::BC4_UNORM:
+			return Format::R8_UNORM;
+		case Format::BC4_SNORM:
+			return Format::R8_SNORM;
+		case Format::BC5_UNORM:
+			return Format::R8G8_UNORM;
+		case Format::BC5_SNORM:
+			return Format::R8G8_SNORM;
+		case Format::BC6H_UF16:
+		case Format::BC6H_SF16:
+			return Format::R16G16B16A16_FLOAT;
+		case Format::BC7_UNORM:
+		case Format::BC7_UNORM_SRGB:
+			return Format::R8G8B8A8_UNORM;
+		default:
+			return Format::UNKNOWN;
+		}
+	}
 
 
 	XMFLOAT3 TransformComponent::GetPosition() const
@@ -484,7 +512,11 @@ namespace wi::scene
 		wi::resourcemanager::Flags flags = wi::resourcemanager::Flags::NONE;
 		if (!IsPreferUncompressedTexturesEnabled())
 		{
-			flags |= wi::resourcemanager::Flags::IMPORT_BLOCK_COMPRESSED;
+			GraphicsDevice* device = wi::graphics::GetDevice();
+			if (device && device->CheckCapability(GraphicsDeviceCapability::TEXTURE_COMPRESSION_BC))
+			{
+				flags |= wi::resourcemanager::Flags::IMPORT_BLOCK_COMPRESSED;
+			}
 		}
 		if (!IsTextureStreamingDisabled())
 		{
@@ -2138,7 +2170,14 @@ namespace wi::scene
 	}
 	void ObjectComponent::CompressLightmap()
 	{
-		if (IsLightmapDisableBlockCompression())
+		GraphicsDevice* device = wi::graphics::GetDevice();
+		const bool bc_supported = device->CheckCapability(GraphicsDeviceCapability::TEXTURE_COMPRESSION_BC);
+		if (!bc_supported && !IsLightmapDisableBlockCompression())
+		{
+			wilog_warning("BC compression unavailable on this device; lightmap will remain uncompressed.");
+		}
+
+		if (IsLightmapDisableBlockCompression() || !bc_supported)
 		{
 			// Simple packing to R11G11B10_FLOAT format on CPU:
 			using namespace PackedVector;
@@ -2165,7 +2204,6 @@ namespace wi::scene
 			desc.format = Format::BC6H_UF16;
 			desc.bind_flags = BindFlag::SHADER_RESOURCE;
 			Texture bc6tex;
-			GraphicsDevice* device = GetDevice();
 			device->CreateTexture(&desc, nullptr, &bc6tex);
 			CommandList cmd = device->BeginCommandList();
 			wi::renderer::BlockCompress(lightmap, bc6tex, cmd);
@@ -2227,7 +2265,8 @@ namespace wi::scene
 		desc.height = resolution;
 		desc.width = resolution;
 		desc.usage = Usage::DEFAULT;
-		desc.format = Format::BC6H_UF16;
+		const bool bc_supported = device->CheckCapability(GraphicsDeviceCapability::TEXTURE_COMPRESSION_BC);
+		desc.format = bc_supported ? Format::BC6H_UF16 : Format::R16G16B16A16_FLOAT;
 		desc.sample_count = 1; // Note that this texture is always non-MSAA, even if probe is rendered as MSAA, because this contains resolved result
 		desc.bind_flags = BindFlag::SHADER_RESOURCE;
 		desc.mip_levels = GetMipCount(resolution, resolution, 1, 16);
@@ -2235,6 +2274,10 @@ namespace wi::scene
 		desc.layout = ResourceState::SHADER_RESOURCE;
 		device->CreateTexture(&desc, nullptr, &texture);
 		device->SetName(&texture, "EnvironmentProbeComponent::texture");
+		if (!bc_supported)
+		{
+			wilog_warning("BC compression unavailable; environment probe uses %s instead.", GetFormatString(desc.format));
+		}
 	}
 	void EnvironmentProbeComponent::DeleteResource()
 	{

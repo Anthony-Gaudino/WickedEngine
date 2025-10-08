@@ -66,6 +66,8 @@ namespace wi::terrain
 		{
 			wi::graphics::Texture texture;
 			wi::graphics::Texture texture_raw_block;
+			bool uses_block_compression = true;
+			uint32_t block_dimension_divisor = 4;
 		};
 		Map maps[4];
 		wi::graphics::GPUBuffer tile_pool;

@@ -10,10 +10,497 @@
 #include "Utility/dds.h"
 
 #include <algorithm>
+#include <array>
+#include <atomic>
+#include <cstring>
+#include <memory>
 #include <mutex>
+#include <string>
 #include <unordered_map>
 
 using namespace wi::graphics;
+
+namespace
+{
+using wi::graphics::Format;
+
+inline uint8_t Expand5To8(uint32_t value)
+{
+	return uint8_t((value << 3) | (value >> 2));
+}
+
+inline uint8_t Expand6To8(uint32_t value)
+{
+	return uint8_t((value << 2) | (value >> 4));
+}
+
+static void DecodeBC1Block(const uint8_t* block, uint8_t outRGBA[16 * 4])
+{
+	const uint16_t color0 = block[0] | (block[1] << 8);
+	const uint16_t color1 = block[2] | (block[3] << 8);
+
+	uint8_t colors[4][4];
+	colors[0][0] = Expand5To8((color0 >> 11) & 31);
+	colors[0][1] = Expand6To8((color0 >> 5) & 63);
+	colors[0][2] = Expand5To8(color0 & 31);
+	colors[0][3] = 255;
+
+	colors[1][0] = Expand5To8((color1 >> 11) & 31);
+	colors[1][1] = Expand6To8((color1 >> 5) & 63);
+	colors[1][2] = Expand5To8(color1 & 31);
+	colors[1][3] = 255;
+
+	if (color0 > color1)
+	{
+		for (int i = 0; i < 3; ++i)
+		{
+			colors[2][i] = uint8_t((2 * colors[0][i] + colors[1][i]) / 3);
+			colors[3][i] = uint8_t((colors[0][i] + 2 * colors[1][i]) / 3);
+		}
+		colors[2][3] = 255;
+		colors[3][3] = 255;
+	}
+	else
+	{
+		for (int i = 0; i < 3; ++i)
+		{
+			colors[2][i] = uint8_t((colors[0][i] + colors[1][i]) / 2);
+			colors[3][i] = 0;
+		}
+		colors[2][3] = 255;
+		colors[3][3] = 0;
+	}
+
+	const uint32_t indices = block[4] | (block[5] << 8) | (block[6] << 16) | (block[7] << 24);
+	for (int pixel = 0; pixel < 16; ++pixel)
+	{
+		const uint32_t index = (indices >> (pixel * 2)) & 0x3;
+		uint8_t* dst = &outRGBA[pixel * 4];
+		dst[0] = colors[index][0];
+		dst[1] = colors[index][1];
+		dst[2] = colors[index][2];
+		dst[3] = colors[index][3];
+	}
+}
+
+static void DecodeBC2AlphaBlock(const uint8_t* block, uint8_t outAlpha[16])
+{
+	for (int row = 0; row < 4; ++row)
+	{
+		const uint16_t packed = block[row * 2] | (block[row * 2 + 1] << 8);
+		for (int column = 0; column < 4; ++column)
+		{
+			const uint8_t value4 = uint8_t((packed >> (column * 4)) & 0xF);
+			outAlpha[row * 4 + column] = uint8_t(value4 * 17); // stretch 0..15 -> 0..255
+		}
+	}
+}
+
+static void DecodeBC3AlphaBlock(const uint8_t* block, uint8_t outAlpha[16])
+{
+	const uint8_t alpha0 = block[0];
+	const uint8_t alpha1 = block[1];
+	uint64_t bits = 0;
+	for (int i = 0; i < 6; ++i)
+	{
+		bits |= uint64_t(block[2 + i]) << (i * 8);
+	}
+	uint8_t palette[8];
+	palette[0] = alpha0;
+	palette[1] = alpha1;
+	if (alpha0 > alpha1)
+	{
+		for (int i = 2; i < 8; ++i)
+		{
+			palette[i] = uint8_t(((8 - i) * alpha0 + (i - 1) * alpha1) / 7);
+		}
+	}
+	else
+	{
+		for (int i = 2; i < 6; ++i)
+		{
+			palette[i] = uint8_t(((6 - i) * alpha0 + (i - 1) * alpha1) / 6);
+		}
+		palette[6] = 0;
+		palette[7] = 255;
+	}
+	for (int i = 0; i < 16; ++i)
+	{
+		const uint32_t index = uint32_t((bits >> (i * 3)) & 0x7);
+		outAlpha[i] = palette[index];
+	}
+}
+
+static void DecodeBC4BlockUNorm(const uint8_t* block, uint8_t outR[16])
+{
+	DecodeBC3AlphaBlock(block, outR);
+}
+
+static void DecodeBC4BlockSNorm(const uint8_t* block, int8_t outR[16])
+{
+	const int a0 = static_cast<int8_t>(block[0]);
+	const int a1 = static_cast<int8_t>(block[1]);
+	uint64_t bits = 0;
+	for (int i = 0; i < 6; ++i)
+	{
+		bits |= uint64_t(block[2 + i]) << (i * 8);
+	}
+	int palette[8];
+	palette[0] = a0;
+	palette[1] = a1;
+	if (a0 > a1)
+	{
+		for (int i = 2; i < 8; ++i)
+		{
+			palette[i] = ((8 - i) * a0 + (i - 1) * a1) / 7;
+		}
+	}
+	else
+	{
+		for (int i = 2; i < 6; ++i)
+		{
+			palette[i] = ((6 - i) * a0 + (i - 1) * a1) / 6;
+		}
+		palette[6] = -128;
+		palette[7] = 127;
+	}
+	for (int i = 0; i < 16; ++i)
+	{
+		const uint32_t index = uint32_t((bits >> (i * 3)) & 0x7);
+		outR[i] = static_cast<int8_t>(palette[index]);
+	}
+}
+
+static void DecodeBC5Block(const uint8_t* block, uint8_t* outRG, bool snorm)
+{
+	if (snorm)
+	{
+		int8_t r[16];
+		int8_t g[16];
+		DecodeBC4BlockSNorm(block, r);
+		DecodeBC4BlockSNorm(block + 8, g);
+		for (int i = 0; i < 16; ++i)
+		{
+			outRG[i * 2 + 0] = static_cast<uint8_t>(r[i]);
+			outRG[i * 2 + 1] = static_cast<uint8_t>(g[i]);
+		}
+	}
+	else
+	{
+		uint8_t r[16];
+		uint8_t g[16];
+		DecodeBC4BlockUNorm(block, r);
+		DecodeBC4BlockUNorm(block + 8, g);
+		for (int i = 0; i < 16; ++i)
+		{
+			outRG[i * 2 + 0] = r[i];
+			outRG[i * 2 + 1] = g[i];
+		}
+	}
+}
+
+static uint32_t GetBytesPerPixelForFallback(Format format)
+{
+	switch (format)
+	{
+	case Format::BC4_SNORM:
+	case Format::BC4_UNORM:
+		return 1;
+	case Format::BC5_SNORM:
+	case Format::BC5_UNORM:
+		return 2;
+	default:
+		return 4;
+	}
+}
+
+static Format GetFallbackFormat(Format format)
+{
+	switch (format)
+	{
+	case Format::BC1_UNORM:
+		return Format::R8G8B8A8_UNORM;
+	case Format::BC1_UNORM_SRGB:
+		return Format::R8G8B8A8_UNORM_SRGB;
+	case Format::BC2_UNORM:
+		return Format::R8G8B8A8_UNORM;
+	case Format::BC2_UNORM_SRGB:
+		return Format::R8G8B8A8_UNORM_SRGB;
+	case Format::BC3_UNORM:
+		return Format::R8G8B8A8_UNORM;
+	case Format::BC3_UNORM_SRGB:
+		return Format::R8G8B8A8_UNORM_SRGB;
+	case Format::BC7_UNORM:
+		return Format::R8G8B8A8_UNORM;
+	case Format::BC7_UNORM_SRGB:
+		return Format::R8G8B8A8_UNORM_SRGB;
+	case Format::BC4_UNORM:
+		return Format::R8_UNORM;
+	case Format::BC4_SNORM:
+		return Format::R8_SNORM;
+	case Format::BC5_UNORM:
+		return Format::R8G8_UNORM;
+	case Format::BC5_SNORM:
+		return Format::R8G8_SNORM;
+	default:
+		return Format::UNKNOWN;
+	}
+}
+
+static void DecompressBCPlane(Format format, const uint8_t* src_blocks, uint8_t* dest, uint32_t width, uint32_t height, uint32_t destRowPitch)
+{
+	const uint32_t blockWidth = (width + 3) / 4;
+	const uint32_t blockHeight = (height + 3) / 4;
+	const uint32_t blockStride = GetFormatStride(format);
+
+	for (uint32_t by = 0; by < blockHeight; ++by)
+	{
+		for (uint32_t bx = 0; bx < blockWidth; ++bx)
+		{
+			const uint8_t* block = src_blocks + (by * blockWidth + bx) * blockStride;
+			switch (format)
+			{
+			case Format::BC1_UNORM:
+			case Format::BC1_UNORM_SRGB:
+			{
+				uint8_t rgba[16 * 4];
+				DecodeBC1Block(block, rgba);
+				for (uint32_t py = 0; py < 4; ++py)
+				{
+					const uint32_t y = by * 4 + py;
+					if (y >= height)
+					{
+						continue;
+					}
+					uint8_t* row = dest + y * destRowPitch;
+					for (uint32_t px = 0; px < 4; ++px)
+					{
+						const uint32_t x = bx * 4 + px;
+						if (x >= width)
+						{
+							continue;
+						}
+						const uint8_t* src_pixel = &rgba[(py * 4 + px) * 4];
+						uint8_t* dst_pixel = row + x * 4;
+						dst_pixel[0] = src_pixel[0];
+						dst_pixel[1] = src_pixel[1];
+						dst_pixel[2] = src_pixel[2];
+						dst_pixel[3] = src_pixel[3];
+					}
+				}
+				break;
+			}
+			case Format::BC2_UNORM:
+			case Format::BC2_UNORM_SRGB:
+			{
+				uint8_t rgba[16 * 4];
+				uint8_t alpha[16];
+				DecodeBC1Block(block + 8, rgba);
+				DecodeBC2AlphaBlock(block, alpha);
+				for (int i = 0; i < 16; ++i)
+				{
+					rgba[i * 4 + 3] = alpha[i];
+				}
+				for (uint32_t py = 0; py < 4; ++py)
+				{
+					const uint32_t y = by * 4 + py;
+					if (y >= height)
+					{
+						continue;
+					}
+					uint8_t* row = dest + y * destRowPitch;
+					for (uint32_t px = 0; px < 4; ++px)
+					{
+						const uint32_t x = bx * 4 + px;
+						if (x >= width)
+						{
+							continue;
+						}
+						const uint8_t* src_pixel = &rgba[(py * 4 + px) * 4];
+						uint8_t* dst_pixel = row + x * 4;
+						dst_pixel[0] = src_pixel[0];
+						dst_pixel[1] = src_pixel[1];
+						dst_pixel[2] = src_pixel[2];
+						dst_pixel[3] = src_pixel[3];
+					}
+				}
+				break;
+			}
+			case Format::BC3_UNORM:
+			case Format::BC3_UNORM_SRGB:
+			{
+				uint8_t rgba[16 * 4];
+				uint8_t alpha[16];
+				DecodeBC1Block(block + 8, rgba);
+				DecodeBC3AlphaBlock(block, alpha);
+				for (int i = 0; i < 16; ++i)
+				{
+					rgba[i * 4 + 3] = alpha[i];
+				}
+				for (uint32_t py = 0; py < 4; ++py)
+				{
+					const uint32_t y = by * 4 + py;
+					if (y >= height)
+					{
+						continue;
+					}
+					uint8_t* row = dest + y * destRowPitch;
+					for (uint32_t px = 0; px < 4; ++px)
+					{
+						const uint32_t x = bx * 4 + px;
+						if (x >= width)
+						{
+							continue;
+						}
+						const uint8_t* src_pixel = &rgba[(py * 4 + px) * 4];
+						uint8_t* dst_pixel = row + x * 4;
+						dst_pixel[0] = src_pixel[0];
+						dst_pixel[1] = src_pixel[1];
+						dst_pixel[2] = src_pixel[2];
+						dst_pixel[3] = src_pixel[3];
+					}
+				}
+				break;
+			}
+			case Format::BC4_UNORM:
+			case Format::BC4_SNORM:
+			{
+				uint8_t valuesUN[16];
+				int8_t valuesSN[16];
+				const bool snorm = format == Format::BC4_SNORM;
+				if (snorm)
+				{
+					DecodeBC4BlockSNorm(block, valuesSN);
+				}
+				else
+				{
+					DecodeBC4BlockUNorm(block, valuesUN);
+				}
+				for (uint32_t py = 0; py < 4; ++py)
+				{
+					const uint32_t y = by * 4 + py;
+					if (y >= height)
+					{
+						continue;
+					}
+					uint8_t* row = dest + y * destRowPitch;
+					for (uint32_t px = 0; px < 4; ++px)
+					{
+						const uint32_t x = bx * 4 + px;
+						if (x >= width)
+						{
+							continue;
+						}
+						const uint32_t idx = py * 4 + px;
+						row[x] = snorm ? static_cast<uint8_t>(valuesSN[idx]) : valuesUN[idx];
+					}
+				}
+				break;
+			}
+			case Format::BC5_UNORM:
+			case Format::BC5_SNORM:
+			{
+				uint8_t rg[16 * 2];
+				const bool snorm = format == Format::BC5_SNORM;
+				DecodeBC5Block(block, rg, snorm);
+				for (uint32_t py = 0; py < 4; ++py)
+				{
+					const uint32_t y = by * 4 + py;
+					if (y >= height)
+					{
+						continue;
+					}
+					uint8_t* row = dest + y * destRowPitch;
+					for (uint32_t px = 0; px < 4; ++px)
+					{
+						const uint32_t x = bx * 4 + px;
+						if (x >= width)
+						{
+							continue;
+						}
+						const uint32_t idx = py * 4 + px;
+						row[x * 2 + 0] = rg[idx * 2 + 0];
+						row[x * 2 + 1] = rg[idx * 2 + 1];
+					}
+				}
+				break;
+			}
+			case Format::BC7_UNORM:
+			case Format::BC7_UNORM_SRGB:
+			default:
+			{
+				// Unsupported format for CPU fallback; leave pixels as zero.
+				break;
+			}
+			}
+		}
+	}
+}
+
+static bool DecompressBCTexture(const dds::Header& header, const uint8_t* filedata, TextureDesc& desc, Format original_format, wi::vector<uint8_t>& outData, SubresourceData* outSubresources)
+{
+	const Format fallback_format = GetFallbackFormat(original_format);
+	if (fallback_format == Format::UNKNOWN)
+	{
+		return false;
+	}
+
+	desc.format = fallback_format;
+	desc.width = header.width();
+	desc.height = header.height();
+	desc.depth = header.depth();
+
+	const uint32_t bytes_per_pixel = GetBytesPerPixelForFallback(original_format);
+	const uint32_t array_size = desc.array_size;
+	const uint32_t mip_levels = desc.mip_levels;
+	const bool is3D = desc.type == TextureDesc::Type::TEXTURE_3D;
+
+	size_t total_bytes = 0;
+	for (uint32_t slice = 0; slice < array_size; ++slice)
+	{
+		for (uint32_t mip = 0; mip < mip_levels; ++mip)
+		{
+			const uint32_t mip_width = std::max(1u, header.width() >> mip);
+			const uint32_t mip_height = std::max(1u, header.height() >> mip);
+			const uint32_t mip_depth = is3D ? std::max(1u, header.depth() >> mip) : 1u;
+			total_bytes += size_t(mip_width) * mip_height * mip_depth * bytes_per_pixel;
+		}
+	}
+	outData.resize(total_bytes);
+
+	size_t data_offset = 0;
+	uint32_t subresource_index = 0;
+	for (uint32_t slice = 0; slice < array_size; ++slice)
+	{
+		for (uint32_t mip = 0; mip < mip_levels; ++mip)
+		{
+			const uint32_t mip_width = std::max(1u, header.width() >> mip);
+			const uint32_t mip_height = std::max(1u, header.height() >> mip);
+			const uint32_t mip_depth = is3D ? std::max(1u, header.depth() >> mip) : 1u;
+			const size_t slice_pitch = size_t(mip_width) * mip_height * bytes_per_pixel;
+			SubresourceData& sub = outSubresources[subresource_index++];
+			sub.data_ptr = outData.data() + data_offset;
+			sub.row_pitch = mip_width * bytes_per_pixel;
+			sub.slice_pitch = uint32_t(slice_pitch);
+
+			const uint8_t* src = filedata + header.mip_offset(mip, slice);
+			const uint32_t blocks_per_plane = ((mip_width + 3) / 4) * ((mip_height + 3) / 4);
+			const uint32_t block_stride = GetFormatStride(original_format);
+
+			for (uint32_t depth_slice = 0; depth_slice < mip_depth; ++depth_slice)
+			{
+				const uint8_t* src_depth = src + depth_slice * blocks_per_plane * block_stride;
+				uint8_t* dst_depth = (uint8_t*)sub.data_ptr + sub.slice_pitch * depth_slice;
+				DecompressBCPlane(original_format, src_depth, dst_depth, mip_width, mip_height, sub.row_pitch);
+			}
+
+			data_offset += slice_pitch * mip_depth;
+		}
+	}
+
+	return true;
+}
+}
 
 namespace wi
 {
@@ -425,14 +912,19 @@ namespace wi
 							break;
 						}
 
-						if (desc.format == Format::BC4_UNORM || desc.format == Format::BC4_SNORM)
+						const Format original_format = desc.format;
+						const bool is_bc_format = IsFormatBlockCompressed(original_format);
+						const bool supports_bc = device->CheckCapability(GraphicsDeviceCapability::TEXTURE_COMPRESSION_BC);
+						const bool needs_bc_fallback = is_bc_format && !supports_bc;
+
+						if (original_format == Format::BC4_UNORM || original_format == Format::BC4_SNORM)
 						{
 							desc.swizzle.r = ComponentSwizzle::R;
 							desc.swizzle.g = ComponentSwizzle::R;
 							desc.swizzle.b = ComponentSwizzle::R;
 							desc.swizzle.a = ComponentSwizzle::ONE;
 						}
-						if (desc.format == Format::BC5_UNORM || desc.format == Format::BC5_SNORM)
+						if (original_format == Format::BC5_UNORM || original_format == Format::BC5_SNORM)
 						{
 							desc.swizzle.r = ComponentSwizzle::R;
 							desc.swizzle.g = ComponentSwizzle::G;
@@ -449,36 +941,52 @@ namespace wi
 							desc.type = TextureDesc::Type::TEXTURE_3D;
 						}
 
-						if (IsFormatBlockCompressed(desc.format))
+						if (is_bc_format && supports_bc)
 						{
-							desc.width = AlignTo(desc.width, GetFormatBlockSize(desc.format));
-							desc.height = AlignTo(desc.height, GetFormatBlockSize(desc.format));
+							desc.width = AlignTo(desc.width, GetFormatBlockSize(original_format));
+							desc.height = AlignTo(desc.height, GetFormatBlockSize(original_format));
 						}
 
+						wi::vector<uint8_t> decompressed_storage;
+						wi::vector<SubresourceData> initdata_vector;
 						wi::vector<SubresourceData> initdata_heap;
 						SubresourceData initdata_stack[16] = {};
 						SubresourceData* initdata = nullptr;
 
-						// Determine if we need heap allocation for initdata, or it is small enough for stack:
-						if (desc.array_size * desc.mip_levels < arraysize(initdata_stack))
+						if (needs_bc_fallback)
 						{
-							initdata = initdata_stack;
+							initdata_vector.resize(desc.array_size * desc.mip_levels);
+							initdata = initdata_vector.data();
+							flags &= ~Flags::STREAMING;
+							if (!DecompressBCTexture(header, filedata, desc, original_format, decompressed_storage, initdata))
+							{
+								wi::backlog::post("DDS BC fallback failed for: " + name, wi::backlog::LogLevel::Error);
+								return false;
+							}
 						}
 						else
 						{
-							initdata_heap.resize(desc.array_size * desc.mip_levels);
-							initdata = initdata_heap.data();
-						}
-
-						uint32_t subresource_index = 0;
-						for (uint32_t slice = 0; slice < desc.array_size; ++slice)
-						{
-							for (uint32_t mip = 0; mip < desc.mip_levels; ++mip)
+							// Determine if we need heap allocation for initdata, or it is small enough for stack:
+							if (desc.array_size * desc.mip_levels < arraysize(initdata_stack))
 							{
-								SubresourceData& subresourceData = initdata[subresource_index++];
-								subresourceData.data_ptr = filedata + header.mip_offset(mip, slice);
-								subresourceData.row_pitch = header.row_pitch(mip);
-								subresourceData.slice_pitch = header.slice_pitch(mip);
+								initdata = initdata_stack;
+							}
+							else
+							{
+								initdata_heap.resize(desc.array_size * desc.mip_levels);
+								initdata = initdata_heap.data();
+							}
+
+							uint32_t subresource_index = 0;
+							for (uint32_t slice = 0; slice < desc.array_size; ++slice)
+							{
+								for (uint32_t mip = 0; mip < desc.mip_levels; ++mip)
+								{
+									SubresourceData& subresourceData = initdata[subresource_index++];
+									subresourceData.data_ptr = filedata + header.mip_offset(mip, slice);
+									subresourceData.row_pitch = header.row_pitch(mip);
+									subresourceData.slice_pitch = header.slice_pitch(mip);
+								}
 							}
 						}
 
@@ -805,7 +1313,8 @@ namespace wi
 
 							wi::renderer::AddDeferredMIPGen(resource->texture, true);
 
-							if (has_flag(flags, Flags::IMPORT_BLOCK_COMPRESSED))
+							const bool supports_bc = device->CheckCapability(GraphicsDeviceCapability::TEXTURE_COMPRESSION_BC);
+							if (supports_bc && has_flag(flags, Flags::IMPORT_BLOCK_COMPRESSED))
 							{
 								// Schedule additional task to compress into BC format and replace resource texture:
 								Texture uncompressed_src = std::move(resource->texture);
@@ -843,6 +1352,10 @@ namespace wi
 								}
 
 								wi::renderer::AddDeferredBlockCompression(uncompressed_src, resource->texture);
+							}
+							else if (!supports_bc && has_flag(flags, Flags::IMPORT_BLOCK_COMPRESSED))
+							{
+								wilog_warning("BC compression requested for texture '%s', but device lacks support. Using uncompressed resource instead.", name.c_str());
 							}
 						}
 					}

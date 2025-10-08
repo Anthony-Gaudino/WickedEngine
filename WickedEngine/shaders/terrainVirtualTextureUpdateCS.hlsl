@@ -23,46 +23,48 @@ void main(uint3 DTid : SV_DispatchThreadID)
 
 	Texture2DArray blendmap = bindless_textures2DArray[descriptor_index(push.blendmap_texture)];
 	ByteAddressBuffer blendmap_buffer = bindless_buffers[descriptor_index(push.blendmap_buffer)];
-	
-#if defined(UPDATE_BASECOLORMAP) || defined(UPDATE_EMISSIVEMAP)
-	RWTexture2D<uint2> output = bindless_rwtextures_uint2[descriptor_index(push.output_texture)];
+
+#if defined(NO_BC)
+	RWTexture2D<float4> output = bindless_rwtextures[descriptor_index(push.output_texture)];
 #else
+	#if defined(UPDATE_BASECOLORMAP) || defined(UPDATE_EMISSIVEMAP)
+	RWTexture2D<uint2> output = bindless_rwtextures_uint2[descriptor_index(push.output_texture)];
+	#else
 	RWTexture2D<uint4> output = bindless_rwtextures_uint4[descriptor_index(push.output_texture)];
+	#endif
 #endif
-		
-#ifdef UPDATE_BASECOLORMAP
+
+#if defined(UPDATE_BASECOLORMAP) || defined(UPDATE_SURFACEMAP) || defined(UPDATE_EMISSIVEMAP)
 	float3 block_rgb[16];
-#endif // UPDATE_BASECOLORMAP
-		
-#ifdef UPDATE_EMISSIVEMAP
-	float3 block_rgb[16];
-#endif // UPDATE_EMISSIVEMAP
+#endif
+
+#ifdef UPDATE_SURFACEMAP
+	float block_a[16];
+#endif
+
+#if defined(UPDATE_EMISSIVEMAP) && defined(NO_BC)
+	float block_emissive_a[16];
+#endif
 
 #ifdef UPDATE_NORMALMAP
 	float block_x[16];
 	float block_y[16];
-#endif // UPDATE_NORMALMAP
+#endif
 
-#ifdef UPDATE_SURFACEMAP
-	float3 block_rgb[16];
-	float block_a[16];
-#endif // UPDATE_SURFACEMAP
-
-	for(uint idx = 0; idx < 16; ++idx)
+	for (uint idx = 0; idx < 16; ++idx)
 	{
 		const uint2 block_offset = block_offsets[idx];
 		const int2 pixel = push.offset + DTid.xy * 4 + block_offset;
 		const float2 uv = (pixel.xy + 0.5f) * push.resolution_rcp;
 		const float2 uv2 = float2(uv.x, 1 - uv.y);
-		
+
 		half4 total_color = 0;
 		half accumulation = 0;
 
-		// Note: blending is front-to back with early exit like decals
-		for(int blendmap_index = push.blendmap_layers - 1; blendmap_index >= 0; blendmap_index--)
+		for (int blendmap_index = push.blendmap_layers - 1; blendmap_index >= 0; blendmap_index--)
 		{
 			float weight = blendmap.SampleLevel(sampler_linear_clamp, float3(uv, blendmap_index), 0).r;
-			if(weight == 0)
+			if (weight == 0)
 				continue;
 
 			uint materialIndex = blendmap_buffer.Load(push.blendmap_buffer_offset + blendmap_index * sizeof(uint));
@@ -84,9 +86,9 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			}
 			total_color = mad(1 - accumulation, weight * baseColor, total_color);
 			accumulation = mad(1 - weight, accumulation, weight);
-			if(accumulation >= 1)
+			if (accumulation >= 1)
 				break;
-#endif // UPDATE_BASECOLORMAP
+#endif
 
 #ifdef UPDATE_NORMALMAP
 			[branch]
@@ -101,10 +103,10 @@ void main(uint3 DTid : SV_DispatchThreadID)
 				half2 normalMap = tex.SampleLevel(sampler_linear_wrap, uv2 / overscale, lod).rg;
 				total_color.rg = mad(1 - accumulation, weight * normalMap, total_color.rg);
 				accumulation = mad(1 - weight, accumulation, weight);
-				if(accumulation >= 1)
+				if (accumulation >= 1)
 					break;
 			}
-#endif // UPDATE_NORMALMAP
+#endif
 
 #ifdef UPDATE_SURFACEMAP
 			float4 surface = float4(1, material.GetRoughness(), material.GetMetalness(), material.GetReflectance());
@@ -122,9 +124,9 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			}
 			total_color = mad(1 - accumulation, weight * surface, total_color);
 			accumulation = mad(1 - weight, accumulation, weight);
-			if(accumulation >= 1)
+			if (accumulation >= 1)
 				break;
-#endif // UPDATE_SURFACEMAP
+#endif
 
 #ifdef UPDATE_EMISSIVEMAP
 			float4 emissiveColor = 0;
@@ -143,46 +145,82 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			}
 			total_color = mad(1 - accumulation, weight * emissiveColor, total_color);
 			accumulation = mad(1 - weight, accumulation, weight);
-			if(accumulation >= 1)
+			if (accumulation >= 1)
 				break;
-#endif // UPDATE_EMISSIVEMAP
+#endif
 		}
 
 #ifdef UPDATE_BASECOLORMAP
 		block_rgb[idx] = ApplySRGBCurve_Fast(total_color.rgb);
-#endif // UPDATE_BASECOLORMAP
+#endif
 
 #ifdef UPDATE_NORMALMAP
 		block_x[idx] = total_color.r;
 		block_y[idx] = total_color.g;
-#endif // UPDATE_NORMALMAP
+#endif
 
 #ifdef UPDATE_SURFACEMAP
 		block_rgb[idx] = total_color.rgb;
 		block_a[idx] = total_color.a;
-#endif // UPDATE_SURFACEMAP
+#endif
 
 #ifdef UPDATE_EMISSIVEMAP
 		block_rgb[idx] = ApplySRGBCurve_Fast(total_color.rgb);
-#endif // UPDATE_EMISSIVEMAP
+		#if defined(NO_BC)
+		block_emissive_a[idx] = saturate(total_color.a);
+		#endif
+#endif
 	}
 
 	const uint2 write_coord = push.write_offset + DTid.xy;
 
+#if defined(NO_BC)
+	const uint2 base_pixel = write_coord * 4;
+	[unroll]
+	for (uint idx = 0; idx < 16; ++idx)
+	{
+		const uint2 pixel_coord = base_pixel + block_offsets[idx];
+
+#ifdef UPDATE_BASECOLORMAP
+		output[pixel_coord] = float4(saturate(block_rgb[idx]), 1.0f);
+#endif
+
+#ifdef UPDATE_NORMALMAP
+		float2 normal_xy = saturate(float2(block_x[idx], block_y[idx]));
+		float2 normal_xy_signed = normal_xy * 2.0f - 1.0f;
+		float normal_z = sqrt(saturate(1.0f - dot(normal_xy_signed, normal_xy_signed)));
+		float3 encoded_normal = float3(normal_xy, normal_z * 0.5f + 0.5f);
+		output[pixel_coord] = float4(encoded_normal, 1.0f);
+#endif
+
+#ifdef UPDATE_SURFACEMAP
+		float3 surface_rgb = saturate(block_rgb[idx]);
+		float surface_a = saturate(block_a[idx]);
+		output[pixel_coord] = float4(surface_rgb, surface_a);
+#endif
+
+#ifdef UPDATE_EMISSIVEMAP
+		float3 emissive_rgb = saturate(block_rgb[idx]);
+		float emissive_a = saturate(block_emissive_a[idx]);
+		output[pixel_coord] = float4(emissive_rgb, emissive_a);
+#endif
+	}
+#else
 #ifdef UPDATE_BASECOLORMAP
 	output[write_coord] = CompressBC1Block(block_rgb);
-#endif // UPDATE_BASECOLORMAP
+#endif
 
 #ifdef UPDATE_NORMALMAP
 	output[write_coord] = CompressBC5Block(block_x, block_y);
-#endif // UPDATE_NORMALMAP
+#endif
 
 #ifdef UPDATE_SURFACEMAP
 	output[write_coord] = CompressBC3Block(block_rgb, block_a);
-#endif // UPDATE_SURFACEMAP
+#endif
 
 #ifdef UPDATE_EMISSIVEMAP
 	output[write_coord] = CompressBC1Block(block_rgb);
-#endif // UPDATE_EMISSIVEMAP
+#endif
+#endif
 }
 
