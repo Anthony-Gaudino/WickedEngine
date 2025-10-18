@@ -1235,6 +1235,16 @@ namespace vulkan_internal
 				internal_state->swapChain = nullptr;
 			}
 		}
+		else
+		{
+#ifdef VK_USE_PLATFORM_MACOS_MVK
+			if (internal_state->swapChain != VK_NULL_HANDLE)
+			{
+				// MoltenVK can leave work in-flight during live window resize, so ensure GPU is idle before handing the old swapchain to vkCreateSwapchainKHR
+				vulkan_check(vkDeviceWaitIdle(device));
+			}
+#endif
+		}
 
 		if (swapchain_capabilities.currentExtent.width != 0xFFFFFFFF && swapchain_capabilities.currentExtent.height != 0xFFFFFFFF)
 		{
@@ -3322,6 +3332,11 @@ using namespace vulkan_internal;
 						continue;
 					if (queues[queue2].queue == nullptr)
 						continue;
+					if (queues[queue1].queue == queues[queue2].queue)
+					{
+						queues[queue1].frame_semaphores[fr][queue2] = VK_NULL_HANDLE;
+						continue;
+					}
 
 					VkSemaphoreCreateInfo info = {};
 					info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -7490,9 +7505,28 @@ using namespace vulkan_internal;
 			}
 
 			// final submits with fences:
+			const uint32_t current_buffer_index = GetBufferIndex();
 			for (int q = 0; q < QUEUE_COUNT; ++q)
 			{
-				queues[q].submit(this, frame_fence[GetBufferIndex()][q]);
+				if (queues[q].queue == VK_NULL_HANDLE)
+				{
+					frame_fence_in_use[current_buffer_index][q] = false;
+					continue;
+				}
+
+				bool use_fence = true;
+				for (int other = q + 1; other < QUEUE_COUNT; ++other)
+				{
+					if (queues[other].queue == queues[q].queue)
+					{
+						use_fence = false;
+						break;
+					}
+				}
+
+				VkFence fence = use_fence ? frame_fence[current_buffer_index][q] : VK_NULL_HANDLE;
+				frame_fence_in_use[current_buffer_index][q] = use_fence;
+				queues[q].submit(this, fence);
 			}
 		}
 
@@ -7506,6 +7540,10 @@ using namespace vulkan_internal;
 			for (int queue2 = 0; queue2 < QUEUE_COUNT; ++queue2)
 			{
 				if (queue1 == queue2)
+					continue;
+				if (queues[queue2].queue == nullptr)
+					continue;
+				if (queues[queue1].queue == queues[queue2].queue)
 					continue;
 				VkSemaphore semaphore = queues[queue2].frame_semaphores[GetBufferIndex()][queue1];
 				if (semaphore == VK_NULL_HANDLE)
@@ -7527,9 +7565,13 @@ using namespace vulkan_internal;
 			uint32_t resetFenceCount = 0;
 			for (int queue = 0; queue < QUEUE_COUNT; ++queue)
 			{
+				if (!frame_fence_in_use[bufferindex][queue])
+					continue;
+
 				VkFence fence = frame_fence[bufferindex][queue];
 				if (fence == VK_NULL_HANDLE)
 					continue;
+
 				resetFences[resetFenceCount++] = fence;
 				if (vkGetFenceStatus(device, fence) == VK_SUCCESS)
 					continue;
@@ -7552,6 +7594,14 @@ using namespace vulkan_internal;
 			if (resetFenceCount > 0)
 			{
 				vulkan_check(vkResetFences(device, resetFenceCount, resetFences));
+			}
+
+			for (int queue = 0; queue < QUEUE_COUNT; ++queue)
+			{
+				if (frame_fence_in_use[bufferindex][queue])
+				{
+					frame_fence_in_use[bufferindex][queue] = false;
+				}
 			}
 		}
 

@@ -5,6 +5,8 @@
 #include "wiTextureHelper.h"
 #include "wiProfiler.h"
 
+#include <algorithm>
+
 using namespace wi::graphics;
 using namespace wi::enums;
 using namespace wi::scene;
@@ -13,6 +15,16 @@ using namespace wi::ecs;
 namespace wi
 {
 	static constexpr float foreground_depth_range = 0.01f;
+
+	// Helper: safe integer division that always returns at least 1
+	static inline uint32_t safe_div(uint32_t value, uint32_t divisor)
+	{
+		if (divisor == 0)
+		{
+			return std::max(1u, value);
+		}
+		return std::max(1u, value / divisor);
+	}
 
 	void RenderPath3D::DeleteGPUResources()
 	{
@@ -93,6 +105,8 @@ namespace wi
 		GraphicsDevice* device = wi::graphics::GetDevice();
 
 		XMUINT2 internalResolution = GetInternalResolution();
+		internalResolution.x = std::max(1u, internalResolution.x);
+		internalResolution.y = std::max(1u, internalResolution.y);
 		camera->width = (float)internalResolution.x;
 		camera->height = (float)internalResolution.y;
 
@@ -176,8 +190,8 @@ namespace wi
 			TextureDesc desc;
 			desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
 			desc.format = wi::renderer::format_rendertarget_main;
-			desc.width = internalResolution.x / 4;
-			desc.height = internalResolution.y / 4;
+			desc.width = safe_div(internalResolution.x, 4);
+			desc.height = safe_div(internalResolution.y, 4);
 			desc.mip_levels = std::min(8u, (uint32_t)std::log2(std::max(desc.width, desc.height)));
 			device->CreateTexture(&desc, nullptr, &rtSceneCopy);
 			device->SetName(&rtSceneCopy, "rtSceneCopy");
@@ -208,14 +222,14 @@ namespace wi
 			TextureDesc desc;
 			desc.bind_flags = BindFlag::RENDER_TARGET | BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
 			desc.format = Format::R10G10B10A2_UNORM;
-			desc.width = internalResolution.x / 4;
-			desc.height = internalResolution.y / 4;
+			desc.width = safe_div(internalResolution.x, 4);
+			desc.height = safe_div(internalResolution.y, 4);
 			desc.bind_flags = BindFlag::UNORDERED_ACCESS | BindFlag::SHADER_RESOURCE;
 			device->CreateTexture(&desc, nullptr, &rtGUIBlurredBackground[0]);
 			device->SetName(&rtGUIBlurredBackground[0], "rtGUIBlurredBackground[0]");
 
-			desc.width /= 4;
-			desc.height /= 4;
+			desc.width = safe_div(desc.width, 4);
+			desc.height = safe_div(desc.height, 4);
 			device->CreateTexture(&desc, nullptr, &rtGUIBlurredBackground[1]);
 			device->SetName(&rtGUIBlurredBackground[1], "rtGUIBlurredBackground[1]");
 			device->CreateTexture(&desc, nullptr, &rtGUIBlurredBackground[2]);
@@ -246,7 +260,7 @@ namespace wi
 			desc.sample_count = getMSAASampleCount();
 			desc.layout = ResourceState::DEPTHSTENCIL;
 			desc.format = wi::renderer::format_depthbuffer_main;
-			desc.bind_flags = BindFlag::DEPTH_STENCIL;
+			desc.bind_flags = BindFlag::DEPTH_STENCIL | BindFlag::SHADER_RESOURCE;
 			device->CreateTexture(&desc, nullptr, &depthBuffer_Main);
 			device->SetName(&depthBuffer_Main, "depthBuffer_Main");
 
@@ -534,8 +548,8 @@ namespace wi
 				TextureDesc desc;
 				desc.bind_flags = BindFlag::RENDER_TARGET | BindFlag::SHADER_RESOURCE;
 				desc.format = Format::R16G16_FLOAT;
-				desc.width = internalResolution.x / 8;
-				desc.height = internalResolution.y / 8;
+				desc.width = safe_div(internalResolution.x, 8);
+				desc.height = safe_div(internalResolution.y, 8);
 				assert(ComputeTextureMemorySizeInBytes(desc) <= ComputeTextureMemorySizeInBytes(rtParticleDistortion.desc)); // aliasing check
 				device->CreateTexture(&desc, nullptr, &rtWaterRipple, &rtParticleDistortion); // aliased!
 				device->SetName(&rtWaterRipple, "rtWaterRipple");
@@ -1082,6 +1096,20 @@ namespace wi
 					rtPrimitiveID_render,
 					cmd
 				);
+			}
+			else
+			{
+				GPUBarrier to_shader = GPUBarrier::Image(&depthBuffer_Main, ResourceState::DEPTHSTENCIL, ResourceState::SHADER_RESOURCE);
+				device->Barrier(&to_shader, 1, cmd);
+
+				wi::renderer::ResolveMSAADepthBuffer(
+					depthBuffer_Copy,
+					depthBuffer_Main,
+					cmd
+				);
+
+				GPUBarrier to_depth = GPUBarrier::Image(&depthBuffer_Main, ResourceState::SHADER_RESOURCE, depthBuffer_Main.desc.layout);
+				device->Barrier(&to_depth, 1, cmd);
 			}
 
 			wi::renderer::ComputeTiledLightCulling(
@@ -2795,8 +2823,8 @@ namespace wi
 		{
 		case RenderPath3D::AO_SSAO:
 		case RenderPath3D::AO_HBAO:
-			desc.width = internalResolution.x / 2;
-			desc.height = internalResolution.y / 2;
+			desc.width = std::max(1u, internalResolution.x / 2u);
+			desc.height = std::max(1u, internalResolution.y / 2u);
 			break;
 		case RenderPath3D::AO_MSAO:
 			desc.width = internalResolution.x;
@@ -3076,12 +3104,15 @@ namespace wi
 			if (internalResolution.x == 0 || internalResolution.y == 0)
 				return;
 
+			const uint32_t reflectionWidth = std::max(1u, internalResolution.x / 4u);
+			const uint32_t reflectionHeight = std::max(1u, internalResolution.y / 4u);
+
 			TextureDesc desc;
 			desc.sample_count = 4;
 			desc.bind_flags = BindFlag::RENDER_TARGET;
 			desc.format = wi::renderer::format_rendertarget_main;
-			desc.width = internalResolution.x / 4;
-			desc.height = internalResolution.y / 4;
+			desc.width = reflectionWidth;
+			desc.height = reflectionHeight;
 			desc.misc_flags = ResourceMiscFlag::TRANSIENT_ATTACHMENT;
 			desc.layout = ResourceState::RENDERTARGET;
 			device->CreateTexture(&desc, nullptr, &rtReflection);
@@ -3142,8 +3173,8 @@ namespace wi
 			TextureDesc desc;
 			desc.format = Format::R16G16B16A16_FLOAT;
 			desc.bind_flags = BindFlag::RENDER_TARGET | BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
-			desc.width = internalResolution.x / 2;
-			desc.height = internalResolution.y / 2;
+			desc.width = std::max(1u, internalResolution.x / 2u);
+			desc.height = std::max(1u, internalResolution.y / 2u);
 			device->CreateTexture(&desc, nullptr, &rtVolumetricLights);
 			device->SetName(&rtVolumetricLights, "rtVolumetricLights");
 		}
@@ -3174,8 +3205,8 @@ namespace wi
 
 			desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
 			desc.sample_count = 1;
-			desc.width = internalResolution.x / 4;
-			desc.height = internalResolution.y / 4;
+			desc.width = std::max(1u, internalResolution.x / 4u);
+			desc.height = std::max(1u, internalResolution.y / 4u);
 			device->CreateTexture(&desc, nullptr, &rtSun[1]);
 			device->SetName(&rtSun[1], "rtSun[1]");
 			device->CreateTexture(&desc, nullptr, &rtSun[2]);

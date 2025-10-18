@@ -262,6 +262,7 @@ namespace wi::graphics
 		inline TransitionHandler& GetTransitionHandler() { return transition_handlers[GetBufferIndex()]; }
 
 		VkFence frame_fence[BUFFERCOUNT][QUEUE_COUNT] = {};
+		bool frame_fence_in_use[BUFFERCOUNT][QUEUE_COUNT] = {};
 
 		struct DescriptorBinder
 		{

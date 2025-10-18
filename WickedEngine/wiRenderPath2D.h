@@ -5,6 +5,7 @@
 #include "wiVideo.h"
 
 #include <string>
+#include <algorithm>
 
 namespace wi
 {
@@ -96,10 +97,11 @@ namespace wi
 		float resolutionScale = 1.0f;
 		XMUINT2 GetInternalResolution() const
 		{
-			return XMUINT2(
-				uint32_t((float)GetPhysicalWidth() * resolutionScale),
-				uint32_t((float)GetPhysicalHeight() * resolutionScale)
-			);
+			const float scaledWidth = (float)GetPhysicalWidth() * resolutionScale;
+			const float scaledHeight = (float)GetPhysicalHeight() * resolutionScale;
+			const uint32_t width = std::max(1u, (uint32_t)std::max(0.0f, scaledWidth));
+			const uint32_t height = std::max(1u, (uint32_t)std::max(0.0f, scaledHeight));
+			return XMUINT2(width, height);
 		}
 
 		float GetHDRScaling() const { return hdr_scaling; }
