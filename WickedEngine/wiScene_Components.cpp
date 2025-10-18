@@ -11,6 +11,9 @@
 #include "wiUnorderedMap.h"
 #include "wiLua.h"
 
+#include <cmath>
+#include <limits>
+
 #include "Utility/mikktspace.h"
 #include "Utility/meshoptimizer/meshoptimizer.h"
 
@@ -391,6 +394,10 @@ namespace wi::scene
 		{
 			material.options_stencilref |= SHADERMATERIAL_OPTION_BIT_CAPSULE_SHADOW_DISABLED;
 		}
+		if (std::fabs(saturation - 1.0f) > std::numeric_limits<float>::epsilon())
+		{
+			material.options_stencilref |= SHADERMATERIAL_OPTION_BIT_USE_SATURATION;
+		}
 
 		material.options_stencilref |= wi::renderer::CombineStencilrefs(engineStencilRef, userStencilRef) << 24u;
 
@@ -429,13 +436,134 @@ namespace wi::scene
 			material.textures[i].sparse_feedbackmap_descriptor = textures[i].sparse_feedbackmap_descriptor;
 		}
 
+		int resolved_sampler_descriptor = sampler_descriptor;
 		if (sampler_descriptor < 0)
+		{
+			const wi::graphics::Sampler* default_sampler = wi::renderer::GetSampler(wi::enums::SAMPLER_OBJECTSHADER);
+			if (default_sampler != nullptr && default_sampler->IsValid())
+			{
+				const wi::graphics::SamplerDesc& default_desc = default_sampler->GetDesc();
+				wi::graphics::Filter fallback_filter = default_desc.filter;
+				const wi::graphics::Filter original_filter = fallback_filter;
+				bool needs_override = false;
+
+				for (uint32_t slot_index = 0; slot_index < TEXTURESLOT_COUNT; ++slot_index)
+				{
+					const auto& texturemap = textures[slot_index];
+					if (!texturemap.resource.IsValid())
+					{
+						continue;
+					}
+					const wi::graphics::Texture& texture = texturemap.resource.GetTexture();
+					if (!texture.IsValid())
+					{
+						continue;
+					}
+					const wi::graphics::Format format = texture.GetDesc().format;
+					if (format == wi::graphics::Format::UNKNOWN)
+					{
+						continue;
+					}
+
+					if (!device->SupportsFilter(format, fallback_filter))
+					{
+						needs_override = true;
+						if (wi::graphics::FilterHasAnisotropy(fallback_filter) && device->SupportsFilter(format, wi::graphics::Filter::MIN_MAG_MIP_LINEAR))
+						{
+							fallback_filter = wi::graphics::Filter::MIN_MAG_MIP_LINEAR;
+							if (!device->SupportsFilter(format, fallback_filter))
+							{
+								fallback_filter = wi::graphics::Filter::MIN_MAG_MIP_POINT;
+							}
+						}
+						else if (fallback_filter == wi::graphics::Filter::MIN_MAG_MIP_LINEAR)
+						{
+							fallback_filter = wi::graphics::Filter::MIN_MAG_MIP_POINT;
+						}
+						else
+						{
+							fallback_filter = wi::graphics::Filter::MIN_MAG_MIP_POINT;
+						}
+					}
+				}
+
+				if (needs_override && fallback_filter != original_filter)
+				{
+					const wi::graphics::Sampler* fallback_sampler = nullptr;
+					if (default_desc.address_u == default_desc.address_v && default_desc.address_u == default_desc.address_w)
+					{
+						switch (fallback_filter)
+						{
+						case wi::graphics::Filter::MIN_MAG_MIP_LINEAR:
+							switch (default_desc.address_u)
+							{
+							case wi::graphics::TextureAddressMode::WRAP:
+								fallback_sampler = wi::renderer::GetSampler(wi::enums::SAMPLER_LINEAR_WRAP);
+								break;
+							case wi::graphics::TextureAddressMode::CLAMP:
+								fallback_sampler = wi::renderer::GetSampler(wi::enums::SAMPLER_LINEAR_CLAMP);
+								break;
+							case wi::graphics::TextureAddressMode::MIRROR:
+								fallback_sampler = wi::renderer::GetSampler(wi::enums::SAMPLER_LINEAR_MIRROR);
+								break;
+							default:
+								break;
+							}
+							break;
+						case wi::graphics::Filter::MIN_MAG_MIP_POINT:
+							switch (default_desc.address_u)
+							{
+							case wi::graphics::TextureAddressMode::WRAP:
+								fallback_sampler = wi::renderer::GetSampler(wi::enums::SAMPLER_POINT_WRAP);
+								break;
+							case wi::graphics::TextureAddressMode::CLAMP:
+								fallback_sampler = wi::renderer::GetSampler(wi::enums::SAMPLER_POINT_CLAMP);
+								break;
+							case wi::graphics::TextureAddressMode::MIRROR:
+								fallback_sampler = wi::renderer::GetSampler(wi::enums::SAMPLER_POINT_MIRROR);
+								break;
+							default:
+								break;
+							}
+							break;
+						default:
+							break;
+						}
+					}
+
+					if (!fallback_sampler)
+					{
+						switch (fallback_filter)
+						{
+						case wi::graphics::Filter::MIN_MAG_MIP_LINEAR:
+							fallback_sampler = wi::renderer::GetSampler(wi::enums::SAMPLER_LINEAR_WRAP);
+							break;
+						case wi::graphics::Filter::MIN_MAG_MIP_POINT:
+							fallback_sampler = wi::renderer::GetSampler(wi::enums::SAMPLER_POINT_WRAP);
+							break;
+						default:
+							break;
+						}
+					}
+
+					if (fallback_sampler && fallback_sampler->IsValid())
+					{
+						resolved_sampler_descriptor = device->GetDescriptorIndex(fallback_sampler);
+					}
+				}
+			}
+		}
+
+		if (resolved_sampler_descriptor < 0)
 		{
 			material.sampler_descriptor = device->GetDescriptorIndex(wi::renderer::GetSampler(wi::enums::SAMPLER_OBJECTSHADER));
 		}
 		else
 		{
-			material.sampler_descriptor = sampler_descriptor;
+			///////
+			// material.sampler_descriptor = sampler_descriptor;
+			///////
+			material.sampler_descriptor = resolved_sampler_descriptor;
 		}
 
 		if (shaderType == SHADERTYPE_INTERIORMAPPING && textures[BASECOLORMAP].resource.IsValid() && !has_flag(textures[BASECOLORMAP].resource.GetTexture().GetDesc().misc_flags, ResourceMiscFlag::TEXTURECUBE))

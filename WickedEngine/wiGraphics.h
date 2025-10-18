@@ -206,6 +206,47 @@ namespace wi::graphics
 		MAXIMUM_MIN_MAG_MIP_LINEAR,
 		MAXIMUM_ANISOTROPIC,
 	};
+	constexpr bool FilterHasLinearComponent(Filter filter)
+	{
+		switch (filter)
+		{
+		case Filter::MIN_MAG_MIP_POINT:
+		case Filter::COMPARISON_MIN_MAG_MIP_POINT:
+		case Filter::MINIMUM_MIN_MAG_MIP_POINT:
+		case Filter::MAXIMUM_MIN_MAG_MIP_POINT:
+			return false;
+		default:
+			return true;
+		}
+	}
+	constexpr bool FilterIsComparison(Filter filter)
+	{
+		const uint8_t value = static_cast<uint8_t>(filter);
+		return value >= static_cast<uint8_t>(Filter::COMPARISON_MIN_MAG_MIP_POINT) && value <= static_cast<uint8_t>(Filter::COMPARISON_ANISOTROPIC);
+	}
+	constexpr bool FilterIsMinimum(Filter filter)
+	{
+		const uint8_t value = static_cast<uint8_t>(filter);
+		return value >= static_cast<uint8_t>(Filter::MINIMUM_MIN_MAG_MIP_POINT) && value <= static_cast<uint8_t>(Filter::MINIMUM_ANISOTROPIC);
+	}
+	constexpr bool FilterIsMaximum(Filter filter)
+	{
+		const uint8_t value = static_cast<uint8_t>(filter);
+		return value >= static_cast<uint8_t>(Filter::MAXIMUM_MIN_MAG_MIP_POINT) && value <= static_cast<uint8_t>(Filter::MAXIMUM_ANISOTROPIC);
+	}
+	constexpr bool FilterHasAnisotropy(Filter filter)
+	{
+		switch (filter)
+		{
+		case Filter::ANISOTROPIC:
+		case Filter::COMPARISON_ANISOTROPIC:
+		case Filter::MINIMUM_ANISOTROPIC:
+		case Filter::MAXIMUM_ANISOTROPIC:
+			return true;
+		default:
+			return false;
+		}
+	}
 	enum class SamplerBorderColor : uint8_t
 	{
 		TRANSPARENT_BLACK,

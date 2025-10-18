@@ -32,6 +32,8 @@
 #include <atomic>
 #include <mutex>
 #include <algorithm>
+#include <unordered_map>
+#include <unordered_set>
 
 #define vulkan_assert(cond, fname) { wilog_assert(cond, "Vulkan error: %s failed with %s (%s:%d)", fname, string_VkResult(res), relative_path(__FILE__), __LINE__); }
 #define vulkan_check(call) [&]() { VkResult res = call; vulkan_assert((res >= VK_SUCCESS), extract_function_name(#call).c_str()); return res; }()
@@ -403,6 +405,8 @@ namespace wi::graphics
 
 		VkPipelineCache pipelineCache = VK_NULL_HANDLE;
 		wi::unordered_map<PipelineHash, VkPipeline> pipelines_global;
+		mutable wi::SpinLock filter_support_cache_mutex;
+		mutable wi::unordered_map<size_t, bool> filter_support_cache;
 
 		void pso_validate(CommandList cmd);
 
@@ -429,6 +433,7 @@ namespace wi::graphics
 		bool CreateRaytracingAccelerationStructure(const RaytracingAccelerationStructureDesc* desc, RaytracingAccelerationStructure* bvh) const override;
 		bool CreateRaytracingPipelineState(const RaytracingPipelineStateDesc* desc, RaytracingPipelineState* rtpso) const override;
 		bool CreateVideoDecoder(const VideoDesc* desc, VideoDecoder* video_decoder) const override;
+		bool SupportsFilter(Format format, Filter filter) const override;
 
 		int CreateSubresource(Texture* texture, SubresourceType type, uint32_t firstSlice, uint32_t sliceCount, uint32_t firstMip, uint32_t mipCount, const Format* format_change = nullptr, const ImageAspect* aspect = nullptr, const Swizzle* swizzle = nullptr, float min_lod_clamp = 0) const override;
 		int CreateSubresource(GPUBuffer* buffer, SubresourceType type, uint64_t offset, uint64_t size = ~0, const Format* format_change = nullptr, const uint32_t* structuredbuffer_stride_change = nullptr) const override;

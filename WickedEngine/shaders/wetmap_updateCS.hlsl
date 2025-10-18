@@ -52,7 +52,9 @@ void main(uint DTid : SV_DispatchThreadID)
 
 	if(push.rain_amount > 0 && GetFrame().texture_shadowatlas_index >= 0 && any(GetFrame().rain_blocker_mad))
 	{
-		Texture2D texture_shadowatlas = bindless_textures[descriptor_index(GetFrame().texture_shadowatlas_index)];
+		/////
+		// Texture2D texture_shadowatlas = bindless_textures[descriptor_index(GetFrame().texture_shadowatlas_index)];
+		Texture2D<float> texture_shadowatlas = bindless_textures_float[descriptor_index(GetFrame().texture_shadowatlas_index)];
 		float3 shadow_pos = mul(GetFrame().rain_blocker_matrix, float4(world_pos, 1)).xyz;
 		float3 shadow_uv = clipspace_to_uv(shadow_pos);
 		float shadow = 1;
@@ -61,14 +63,24 @@ void main(uint DTid : SV_DispatchThreadID)
 			shadow_uv.xy = mad(shadow_uv.xy, GetFrame().rain_blocker_mad.xy, GetFrame().rain_blocker_mad.zw);
 
 			float cmp = shadow_pos.z + 0.001;
-			shadow  = texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, shadow_uv.xy, cmp, 2 * int2(-1, -1)).r;
-			shadow += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, shadow_uv.xy, cmp, 2 * int2(-1, 0)).r;
-			shadow += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, shadow_uv.xy, cmp, 2 * int2(-1, 1)).r;
-			shadow += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, shadow_uv.xy, cmp, 2 * int2(0, -1)).r;
-			shadow += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, shadow_uv.xy, cmp, 2 * int2(0, 1)).r;
-			shadow += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, shadow_uv.xy, cmp, 2 * int2(1, -1)).r;
-			shadow += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, shadow_uv.xy, cmp, 2 * int2(1, 0)).r;
-			shadow += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, shadow_uv.xy, cmp, 2 * int2(1, 1)).r;
+			/////
+			// shadow  = texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, shadow_uv.xy, cmp, 2 * int2(-1, -1)).r;
+			// shadow += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, shadow_uv.xy, cmp, 2 * int2(-1, 0)).r;
+			// shadow += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, shadow_uv.xy, cmp, 2 * int2(-1, 1)).r;
+			// shadow += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, shadow_uv.xy, cmp, 2 * int2(0, -1)).r;
+			// shadow += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, shadow_uv.xy, cmp, 2 * int2(0, 1)).r;
+			// shadow += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, shadow_uv.xy, cmp, 2 * int2(1, -1)).r;
+			// shadow += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, shadow_uv.xy, cmp, 2 * int2(1, 0)).r;
+			// shadow += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, shadow_uv.xy, cmp, 2 * int2(1, 1)).r;
+			////
+			shadow  = texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, shadow_uv.xy, cmp, 2 * int2(-1, -1));
+			shadow += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, shadow_uv.xy, cmp, 2 * int2(-1, 0));
+			shadow += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, shadow_uv.xy, cmp, 2 * int2(-1, 1));
+			shadow += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, shadow_uv.xy, cmp, 2 * int2(0, -1));
+			shadow += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, shadow_uv.xy, cmp, 2 * int2(0, 1));
+			shadow += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, shadow_uv.xy, cmp, 2 * int2(1, -1));
+			shadow += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, shadow_uv.xy, cmp, 2 * int2(1, 0));
+			shadow += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, shadow_uv.xy, cmp, 2 * int2(1, 1));
 			shadow /= 9.0;
 		}
 

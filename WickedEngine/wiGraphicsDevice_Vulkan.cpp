@@ -5146,6 +5146,77 @@ using namespace vulkan_internal;
 
 		return res == VK_SUCCESS;
 	}
+	bool GraphicsDevice_Vulkan::SupportsFilter(Format format, Filter filter) const
+	{
+		if (format == Format::UNKNOWN)
+		{
+			return true;
+		}
+
+		const size_t key = (static_cast<size_t>(format) << 8ull) | static_cast<size_t>(filter);
+		{
+			std::scoped_lock lock(filter_support_cache_mutex);
+			auto it = filter_support_cache.find(key);
+			if (it != filter_support_cache.end())
+			{
+				return it->second;
+			}
+		}
+
+		bool supported = true;
+		const VkFormat vkformat = vulkan_internal::_ConvertFormat(format);
+		if (vkformat != VK_FORMAT_UNDEFINED)
+		{
+	#ifdef VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_DEPTH_COMPARISON_BIT
+			VkFormatFeatureFlags2 features2_flags = 0;
+	#endif
+			VkFormatFeatureFlags features = 0;
+	#ifdef VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3
+			VkFormatProperties3 format_properties3 = { VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3 };
+			VkFormatProperties2 format_properties2 = { VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2 };
+			format_properties2.pNext = &format_properties3;
+			vkGetPhysicalDeviceFormatProperties2(physicalDevice, vkformat, &format_properties2);
+			features = format_properties2.formatProperties.optimalTilingFeatures;
+	#ifdef VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_DEPTH_COMPARISON_BIT
+			features2_flags = format_properties3.optimalTilingFeatures;
+	#endif
+	#else
+			VkFormatProperties properties = {};
+			vkGetPhysicalDeviceFormatProperties(physicalDevice, vkformat, &properties);
+			features = properties.optimalTilingFeatures;
+	#endif
+
+			if (FilterHasLinearComponent(filter))
+			{
+				supported = supported && ((features & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0);
+			}
+			if (FilterIsMinimum(filter) || FilterIsMaximum(filter))
+			{
+				supported = supported && ((features & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_MINMAX_BIT) != 0);
+			}
+			if (FilterIsComparison(filter))
+			{
+				bool depth_compare_supported = false;
+	#ifdef VK_FORMAT_FEATURE_SAMPLED_IMAGE_DEPTH_COMPARISON_BIT
+				depth_compare_supported = (features & VK_FORMAT_FEATURE_SAMPLED_IMAGE_DEPTH_COMPARISON_BIT) != 0;
+	#endif
+	#ifdef VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_DEPTH_COMPARISON_BIT
+				depth_compare_supported = depth_compare_supported || ((features2_flags & VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_DEPTH_COMPARISON_BIT) != 0);
+	#endif
+				supported = supported && depth_compare_supported;
+			}
+			if (FilterHasAnisotropy(filter))
+			{
+				supported = supported && (features2.features.samplerAnisotropy == VK_TRUE);
+			}
+		}
+
+		{
+			std::scoped_lock lock(filter_support_cache_mutex);
+			filter_support_cache[key] = supported;
+		}
+		return supported;
+	}
 	bool GraphicsDevice_Vulkan::CreateSampler(const SamplerDesc* desc, Sampler* sampler) const
 	{
 		auto internal_state = std::make_shared<Sampler_Vulkan>();

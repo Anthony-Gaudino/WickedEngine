@@ -1084,8 +1084,13 @@ float4 main(PixelInput input, in bool is_frontface : SV_IsFrontFace APPEND_COVER
 
 
 	ApplyFog(dist, surface.V, color);
-
-	color.rgb = mul(saturationMatrix(material.GetSaturation()), color.rgb);
+	////
+	// color.rgb = mul(saturationMatrix(material.GetSaturation()), color.rgb);
+	[branch]
+	if (material.GetOptions() & SHADERMATERIAL_OPTION_BIT_USE_SATURATION)
+	{
+		color.rgb = mul(saturationMatrix(material.GetSaturation()), color.rgb);
+	}
 
 	color = saturateMediump(color);
 

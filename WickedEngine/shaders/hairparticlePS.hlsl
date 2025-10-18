@@ -78,7 +78,13 @@ float4 main(VertexToPixel input) : SV_Target
 	
 	ApplyFog(dist, V, color);
 
-	color.rgb = mul(saturationMatrix(material.GetSaturation()), color.rgb);
+	/////
+	// color.rgb = mul(saturationMatrix(material.GetSaturation()), color.rgb);
+	[branch]
+	if (material.GetOptions() & SHADERMATERIAL_OPTION_BIT_USE_SATURATION)
+	{
+		color.rgb = mul(saturationMatrix(material.GetSaturation()), color.rgb);
+	}
 	
 	return color;
 }
