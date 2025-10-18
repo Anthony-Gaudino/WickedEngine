@@ -3,6 +3,7 @@
 #include "wiResourceManager.h"
 #include "wiPhysics.h"
 #include "wiRenderer.h"
+#include "wiGraphicsDevice.h"
 #include "wiJobSystem.h"
 #include "wiSpinLock.h"
 #include "wiHelper.h"
@@ -484,7 +485,11 @@ namespace wi::scene
 		wi::resourcemanager::Flags flags = wi::resourcemanager::Flags::NONE;
 		if (!IsPreferUncompressedTexturesEnabled())
 		{
-			flags |= wi::resourcemanager::Flags::IMPORT_BLOCK_COMPRESSED;
+			auto device = wi::graphics::GetDevice();
+			if (device != nullptr && device->CheckCapability(wi::graphics::GraphicsDeviceCapability::TEXTURE_COMPRESSION_BC))
+			{
+				flags |= wi::resourcemanager::Flags::IMPORT_BLOCK_COMPRESSED;
+			}
 		}
 		if (!IsTextureStreamingDisabled())
 		{
@@ -2278,16 +2283,19 @@ namespace wi::scene
 		SetDirty();
 
 		GraphicsDevice* device = wi::graphics::GetDevice();
+		const bool bc_supported = device != nullptr && device->CheckCapability(wi::graphics::GraphicsDeviceCapability::TEXTURE_COMPRESSION_BC);
 
 		TextureDesc desc;
 		desc.array_size = 6;
 		desc.height = resolution;
 		desc.width = resolution;
 		desc.usage = Usage::DEFAULT;
-		desc.format = Format::BC6H_UF16;
+		// desc.format = Format::BC6H_UF16;
+		desc.format = bc_supported ? Format::BC6H_UF16 : wi::renderer::format_rendertarget_envprobe;
 		desc.sample_count = 1; // Note that this texture is always non-MSAA, even if probe is rendered as MSAA, because this contains resolved result
 		desc.bind_flags = BindFlag::SHADER_RESOURCE;
-		desc.mip_levels = GetMipCount(resolution, resolution, 1, 16);
+		// desc.mip_levels = GetMipCount(resolution, resolution, 1, 16);
+		desc.mip_levels = GetMipCount(resolution, resolution, 1, bc_supported ? 16u : 1u);
 		desc.misc_flags = ResourceMiscFlag::TEXTURECUBE;
 		desc.layout = ResourceState::SHADER_RESOURCE;
 		device->CreateTexture(&desc, nullptr, &texture);

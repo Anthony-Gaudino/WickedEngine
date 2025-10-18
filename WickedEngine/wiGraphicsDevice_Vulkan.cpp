@@ -2879,17 +2879,21 @@ using namespace vulkan_internal;
 
 			assert(features2.features.imageCubeArray == VK_TRUE);
 			assert(features2.features.independentBlend == VK_TRUE);
-	#if defined(PLATFORM_MACOS)
+			#if defined(PLATFORM_MACOS)
 			if (features2.features.geometryShader != VK_TRUE)
 			{
-				wilog_warning("Vulkan geometry shader support unavailable; using mesh shaders on macOS.");
+				wilog_warning("Vulkan geometry shader support unavailable!");
 			}
-	#else
+			if (features2.features.textureCompressionBC != VK_TRUE)
+			{
+				wilog_warning("Vulkan BC texture compression not supported, falling back to uncompressed textures.");
+			}
+			#else
 			assert(features2.features.geometryShader == VK_TRUE);
-	#endif // PLATFORM_MACOS
+			assert(features2.features.textureCompressionBC == VK_TRUE);
+			#endif // PLATFORM_MACOS
 			assert(features2.features.samplerAnisotropy == VK_TRUE);
 			assert(features2.features.shaderClipDistance == VK_TRUE);
-			assert(features2.features.textureCompressionBC == VK_TRUE);
 			assert(features2.features.occlusionQueryPrecise == VK_TRUE);
 			assert(features_1_2.descriptorIndexing == VK_TRUE);
 			assert(features_1_3.dynamicRendering == VK_TRUE);

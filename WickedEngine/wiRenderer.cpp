@@ -9474,7 +9474,29 @@ void RefreshEnvProbes(const Visibility& vis, CommandList cmd)
 		device->EventEnd(cmd);
 
 		// Finally, the complete envmap is block compressed into the probe's texture:
-		BlockCompress(envrenderingColorBuffer_Filtered, probe.texture, cmd);
+		// BlockCompress(envrenderingColorBuffer_Filtered, probe.texture, cmd);
+		// Finally, store the filtered envmap into the probe texture, with BC compression when supported:
+		const bool bc_supported = device->CheckCapability(GraphicsDeviceCapability::TEXTURE_COMPRESSION_BC);
+		if (bc_supported && probe.texture.desc.format == Format::BC6H_UF16)
+		{
+			BlockCompress(envrenderingColorBuffer_Filtered, probe.texture, cmd);
+		}
+		else
+		{
+			GPUBarrier barriers[] = {
+				GPUBarrier::Image(&envrenderingColorBuffer_Filtered, envrenderingColorBuffer_Filtered.desc.layout, ResourceState::COPY_SRC),
+				GPUBarrier::Image(&probe.texture, probe.texture.desc.layout, ResourceState::COPY_DST),
+			};
+			device->Barrier(barriers, arraysize(barriers), cmd);
+
+			device->CopyResource(&probe.texture, &envrenderingColorBuffer_Filtered, cmd);
+
+			for (auto& barrier : barriers)
+			{
+				std::swap(barrier.image.layout_before, barrier.image.layout_after);
+			}
+			device->Barrier(barriers, arraysize(barriers), cmd);
+		}
 	};
 
 	if (vis.scene->probes.GetCount() == 0)
