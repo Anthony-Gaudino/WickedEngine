@@ -52,6 +52,44 @@ RWTexture2D<float4> texture_render : register(u0);
 RWTexture2D<float2> texture_cloudDepth : register(u1);
 #endif // VOLUMETRICCLOUD_CAPTURE
 
+#ifndef VOLUMETRICCLOUD_CAPTURE
+static const uint2 nearestDepthOffsets[4] = {
+	uint2(0, 0),
+	uint2(1, 0),
+	uint2(0, 1),
+	uint2(1, 1)
+};
+
+inline float SampleNearestOpaqueDepth(uint2 halfResCoord, float2 uv)
+{
+	const uint2 resolution = GetCamera().internal_resolution;
+	const float2 texelSize = GetCamera().internal_resolution_rcp;
+	const uint2 maxCoord = uint2(
+		(uint)max((int)resolution.x - 1, 0),
+		(uint)max((int)resolution.y - 1, 0)
+	);
+
+	float nearestDepth = texture_depth.SampleLevel(sampler_point_clamp, uv, 0).r;
+	nearestDepth = nearestDepth > 0.0 ? nearestDepth : 0.0;
+
+	const uint2 base = uint2(halfResCoord.x & ~1u, halfResCoord.y & ~1u);
+
+	[unroll]
+	for (int i = 0; i < 4; ++i)
+	{
+		const uint2 sampleCoord = min(base + nearestDepthOffsets[i], maxCoord);
+		const float2 sampleUV = (float2(sampleCoord) + 0.5) * texelSize;
+		const float sampleDepth = texture_depth.SampleLevel(sampler_point_clamp, sampleUV, 0).r;
+		if (sampleDepth > 0.0 && (nearestDepth == 0.0 || sampleDepth < nearestDepth))
+		{
+			nearestDepth = sampleDepth;
+		}
+	}
+
+	return nearestDepth;
+}
+#endif // VOLUMETRICCLOUD_CAPTURE
+
 // Octaves for multiple-scattering approximation. 1 means single-scattering only.
 #define MS_COUNT 2
 
@@ -767,7 +805,11 @@ void main(uint3 DTid : SV_DispatchThreadID)
 	uint2 halfResCoord = DTid.xy * 2 + halfResIndexToCoordinateOffset[checkerBoardIndex];
 
 	const float2 uv = (halfResCoord + 0.5) * postprocess.params0.zw;
-	const float depth = texture_depth.SampleLevel(sampler_point_clamp, uv, 1).r; // Second mip reprojection
+	float depth = SampleNearestOpaqueDepth(halfResCoord, uv);
+	if (depth == 0.0)
+	{
+		depth = texture_depth.SampleLevel(sampler_point_clamp, uv, 1).r;
+	}
 	
 	float2 screenPosition = uv_to_clipspace(uv);
 	

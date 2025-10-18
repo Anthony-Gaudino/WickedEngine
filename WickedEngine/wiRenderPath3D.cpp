@@ -246,7 +246,7 @@ namespace wi
 			desc.sample_count = getMSAASampleCount();
 			desc.layout = ResourceState::DEPTHSTENCIL;
 			desc.format = wi::renderer::format_depthbuffer_main;
-			desc.bind_flags = BindFlag::DEPTH_STENCIL;
+			desc.bind_flags = BindFlag::DEPTH_STENCIL | BindFlag::SHADER_RESOURCE;
 			device->CreateTexture(&desc, nullptr, &depthBuffer_Main);
 			device->SetName(&depthBuffer_Main, "depthBuffer_Main");
 
