@@ -117,7 +117,16 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 	AddWidget(&occlusionCullingCheckBox);
 
 	visibilityComputeShadingCheckBox.Create("Visibility Compute Shading: ");
-	visibilityComputeShadingCheckBox.SetTooltip("Visibility Compute Shading (experimental)\nThis will shade the scene in compute shaders instead of pixel shaders\nThis has a higher initial performance cost, but it will be faster in high polygon scenes.\nIt is not compatible with MSAA and tessellation.");
+	{
+		const bool primitiveIDSupported = wi::renderer::IsPrimitiveIDSupported();
+		std::string tooltip = "Visibility Compute Shading (experimental)\nThis will shade the scene in compute shaders instead of pixel shaders\nThis has a higher initial performance cost, but it will be faster in high polygon scenes.\nIt is not compatible with MSAA and tessellation.";
+		if (!primitiveIDSupported)
+		{
+			tooltip += "\nNot available on this platform (primitive ID unsupported).";
+		}
+		visibilityComputeShadingCheckBox.SetTooltip(tooltip);
+		visibilityComputeShadingCheckBox.SetEnabled(primitiveIDSupported);
+	}
 	visibilityComputeShadingCheckBox.SetPos(XMFLOAT2(x, y += step));
 	visibilityComputeShadingCheckBox.SetSize(XMFLOAT2(itemheight, itemheight));
 	if (editor->main->config.GetSection("graphics").Has("visibility_compute_shading"))
@@ -126,7 +135,9 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 	}
 	visibilityComputeShadingCheckBox.OnClick([=](wi::gui::EventArgs args) {
 		editor->renderPath->setVisibilityComputeShadingEnabled(args.bValue);
-		editor->main->config.GetSection("graphics").Set("visibility_compute_shading", args.bValue);
+		const bool enabled = editor->renderPath->getVisibilityComputeShadingEnabled();
+		visibilityComputeShadingCheckBox.SetCheck(enabled);
+		editor->main->config.GetSection("graphics").Set("visibility_compute_shading", enabled);
 		editor->main->config.Commit();
 	});
 	AddWidget(&visibilityComputeShadingCheckBox);
@@ -410,13 +421,21 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 	variableRateShadingClassificationDebugCheckBox.SetEnabled(wi::graphics::GetDevice()->CheckCapability(wi::graphics::GraphicsDeviceCapability::VARIABLE_RATE_SHADING_TIER2));
 
 	advancedLightCullingCheckBox.Create("2.5D Light Culling: ");
-	advancedLightCullingCheckBox.SetTooltip("Enable a more aggressive light culling approach which can result in slower culling but faster rendering (Tiled renderer only)");
+	const bool advancedLightCullingSupported = wi::renderer::IsAdvancedLightCullingSupported();
+	std::string advancedLightTooltip = "Enable a more aggressive light culling approach which can result in slower culling but faster rendering (Tiled renderer only)";
+	if (!advancedLightCullingSupported)
+	{
+		advancedLightTooltip += "\nRequires primitive ID support, which is unavailable on this platform.";
+	}
+	advancedLightCullingCheckBox.SetTooltip(advancedLightTooltip);
 	advancedLightCullingCheckBox.SetPos(XMFLOAT2(x, y += step));
 	advancedLightCullingCheckBox.SetSize(XMFLOAT2(itemheight, itemheight));
-	advancedLightCullingCheckBox.OnClick([](wi::gui::EventArgs args) {
+	advancedLightCullingCheckBox.OnClick([this](wi::gui::EventArgs args) {
 		wi::renderer::SetAdvancedLightCulling(args.bValue);
+		advancedLightCullingCheckBox.SetCheck(wi::renderer::GetAdvancedLightCulling());
 	});
 	advancedLightCullingCheckBox.SetCheck(wi::renderer::GetAdvancedLightCulling());
+	advancedLightCullingCheckBox.SetEnabled(advancedLightCullingSupported);
 	AddWidget(&advancedLightCullingCheckBox);
 
 	debugLightCullingCheckBox.Create("DEBUG: ");

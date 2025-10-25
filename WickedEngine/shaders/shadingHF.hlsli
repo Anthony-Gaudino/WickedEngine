@@ -282,6 +282,7 @@ inline uint GetFlatTileIndex(min16uint2 pixel)
 
 inline void TiledLighting(inout Surface surface, inout Lighting lighting, uint flatTileIndex)
 {
+    const bool disable_depth_culling = (GetCamera().options & SHADERCAMERA_OPTION_DISABLE_DEPTH_CULLING) != 0;
 #ifndef DISABLE_ENVMAPS
 	// Apply environment maps:
 	half4 envmapAccumulation = 0;
@@ -292,24 +293,10 @@ inline void TiledLighting(inout Surface surface, inout Lighting lighting, uint f
 	{
 		// Loop through envmap buckets in the tile:
 		ShaderEntityIterator iterator = probes();
-		for(uint bucket = iterator.first_bucket(); bucket <= iterator.last_bucket(); ++bucket)
+		if (disable_depth_culling)
 		{
-			uint bucket_bits = load_entitytile(flatTileIndex + bucket);
-			bucket_bits = iterator.mask_entity(bucket, bucket_bits);
-
-#ifndef ENTITY_TILE_UNIFORM
-			// Bucket scalarizer - Siggraph 2017 - Improved Culling [Michal Drobot]:
-			bucket_bits = WaveReadLaneFirst(WaveActiveBitOr(bucket_bits));
-#endif // ENTITY_TILE_UNIFORM
-
-			[loop]
-			while (WaveActiveAnyTrue(bucket_bits != 0 && envmapAccumulation.a < 0.99))
+			for (uint entity_index = iterator.first_item(); entity_index < iterator.end_item() && envmapAccumulation.a < 0.99; ++entity_index)
 			{
-				// Retrieve global entity index from local bucket, then remove bit from local bucket:
-				const uint bucket_bit_index = firstbitlow(bucket_bits);
-				const uint entity_index = bucket * 32 + bucket_bit_index;
-				bucket_bits ^= 1u << bucket_bit_index;
-				
 				ShaderEntity probe = load_entity(entity_index);
 
 				float4x4 probeProjection = load_entitymatrix(probe.GetMatrixIndex());
@@ -328,7 +315,48 @@ inline void TiledLighting(inout Surface surface, inout Lighting lighting, uint f
 					envmapAccumulation.rgb = mad(1 - envmapAccumulation.a, envmapColor.a * envmapColor.rgb, envmapAccumulation.rgb);
 					envmapAccumulation.a = mad(1 - envmapColor.a, envmapAccumulation.a, envmapColor.a);
 				}
+			}
+		}
+		else
+		{
+			for(uint bucket = iterator.first_bucket(); bucket <= iterator.last_bucket(); ++bucket)
+			{
+				uint bucket_bits = load_entitytile(flatTileIndex + bucket);
+				bucket_bits = iterator.mask_entity(bucket, bucket_bits);
 
+#ifndef ENTITY_TILE_UNIFORM
+				// Bucket scalarizer - Siggraph 2017 - Improved Culling [Michal Drobot]:
+				bucket_bits = WaveReadLaneFirst(WaveActiveBitOr(bucket_bits));
+#endif // ENTITY_TILE_UNIFORM
+
+				[loop]
+				while (WaveActiveAnyTrue(bucket_bits != 0 && envmapAccumulation.a < 0.99))
+				{
+					// Retrieve global entity index from local bucket, then remove bit from local bucket:
+					const uint bucket_bit_index = firstbitlow(bucket_bits);
+					const uint entity_index = bucket * 32 + bucket_bit_index;
+					bucket_bits ^= 1u << bucket_bit_index;
+					
+					ShaderEntity probe = load_entity(entity_index);
+
+					float4x4 probeProjection = load_entitymatrix(probe.GetMatrixIndex());
+					const int probeTexture = asint(probeProjection[3][0]);
+					probeProjection[3] = float4(0, 0, 0, 1);
+					TextureCube<half4> cubemap = bindless_cubemaps_half4[descriptor_index(probeTexture)];
+						
+					const half3 clipSpacePos = mul(probeProjection, float4(surface.P, 1)).xyz;
+					const half3 uvw = box_to_uv(clipSpacePos.xyz);
+					[branch]
+					if (is_saturated(uvw))
+					{
+						const half4 envmapColor = EnvironmentReflection_Local(cubemap, surface, probe, probeProjection, clipSpacePos);
+						// perform manual blending of probes:
+						//  NOTE: they are sorted top-to-bottom, but blending is performed bottom-to-top
+						envmapAccumulation.rgb = mad(1 - envmapAccumulation.a, envmapColor.a * envmapColor.rgb, envmapAccumulation.rgb);
+						envmapAccumulation.a = mad(1 - envmapColor.a, envmapAccumulation.a, envmapColor.a);
+					}
+
+				}
 			}
 		}
 	}
@@ -430,24 +458,10 @@ inline void TiledLighting(inout Surface surface, inout Lighting lighting, uint f
 	{
 		// Loop through light buckets in the tile:
 		ShaderEntityIterator iterator = spotlights();
-		for(uint bucket = iterator.first_bucket(); bucket <= iterator.last_bucket(); ++bucket)
+		if (disable_depth_culling)
 		{
-			uint bucket_bits = load_entitytile(flatTileIndex + bucket);
-			bucket_bits = iterator.mask_entity(bucket, bucket_bits);
-
-#ifndef ENTITY_TILE_UNIFORM
-			// Bucket scalarizer - Siggraph 2017 - Improved Culling [Michal Drobot]:
-			bucket_bits = WaveReadLaneFirst(WaveActiveBitOr(bucket_bits));
-#endif // ENTITY_TILE_UNIFORM
-
-			[loop]
-			while (bucket_bits != 0)
+			for (uint entity_index = iterator.first_item(); entity_index < iterator.end_item(); ++entity_index)
 			{
-				// Retrieve global entity index from local bucket, then remove bit from local bucket:
-				const uint bucket_bit_index = firstbitlow(bucket_bits);
-				const uint entity_index = bucket * 32 + bucket_bit_index;
-				bucket_bits ^= 1u << bucket_bit_index;
-				
 				ShaderEntity light = load_entity(entity_index);
 
 				half shadow_mask = 1;
@@ -464,7 +478,46 @@ inline void TiledLighting(inout Surface surface, inout Lighting lighting, uint f
 #endif // SHADOW_MASK_ENABLED && !TRANSPARENT
 
 				light_spot(light, surface, lighting, shadow_mask);
+			}
+		}
+		else
+		{
+			for(uint bucket = iterator.first_bucket(); bucket <= iterator.last_bucket(); ++bucket)
+			{
+				uint bucket_bits = load_entitytile(flatTileIndex + bucket);
+				bucket_bits = iterator.mask_entity(bucket, bucket_bits);
 
+#ifndef ENTITY_TILE_UNIFORM
+				// Bucket scalarizer - Siggraph 2017 - Improved Culling [Michal Drobot]:
+				bucket_bits = WaveReadLaneFirst(WaveActiveBitOr(bucket_bits));
+#endif // ENTITY_TILE_UNIFORM
+
+				[loop]
+				while (bucket_bits != 0)
+				{
+					// Retrieve global entity index from local bucket, then remove bit from local bucket:
+					const uint bucket_bit_index = firstbitlow(bucket_bits);
+					const uint entity_index = bucket * 32 + bucket_bit_index;
+					bucket_bits ^= 1u << bucket_bit_index;
+					
+					ShaderEntity light = load_entity(entity_index);
+
+					half shadow_mask = 1;
+#if defined(SHADOW_MASK_ENABLED) && !defined(TRANSPARENT)
+					[branch]
+					if (light.IsCastingShadow() && (GetFrame().options & OPTION_BIT_SHADOW_MASK) && (GetCamera().options & SHADERCAMERA_OPTION_USE_SHADOW_MASK) && GetCamera().texture_rtshadow_index >= 0)
+					{
+						uint shadow_index = entity_index - lights().first_item();
+						if (shadow_index < 16)
+						{
+							shadow_mask = bindless_textures2DArray_half4[descriptor_index(GetCamera().texture_rtshadow_index)][uint3(surface.pixel, shadow_index)].r;
+						}
+					}
+#endif // SHADOW_MASK_ENABLED && !TRANSPARENT
+
+					light_spot(light, surface, lighting, shadow_mask);
+
+				}
 			}
 		}
 	}
@@ -474,24 +527,10 @@ inline void TiledLighting(inout Surface surface, inout Lighting lighting, uint f
 	{
 		// Loop through light buckets in the tile:
 		ShaderEntityIterator iterator = pointlights();
-		for(uint bucket = iterator.first_bucket(); bucket <= iterator.last_bucket(); ++bucket)
+		if (disable_depth_culling)
 		{
-			uint bucket_bits = load_entitytile(flatTileIndex + bucket);
-			bucket_bits = iterator.mask_entity(bucket, bucket_bits);
-
-#ifndef ENTITY_TILE_UNIFORM
-			// Bucket scalarizer - Siggraph 2017 - Improved Culling [Michal Drobot]:
-			bucket_bits = WaveReadLaneFirst(WaveActiveBitOr(bucket_bits));
-#endif // ENTITY_TILE_UNIFORM
-
-			[loop]
-			while (bucket_bits != 0)
+			for (uint entity_index = iterator.first_item(); entity_index < iterator.end_item(); ++entity_index)
 			{
-				// Retrieve global entity index from local bucket, then remove bit from local bucket:
-				const uint bucket_bit_index = firstbitlow(bucket_bits);
-				const uint entity_index = bucket * 32 + bucket_bit_index;
-				bucket_bits ^= 1u << bucket_bit_index;
-				
 				ShaderEntity light = load_entity(entity_index);
 
 				half shadow_mask = 1;
@@ -511,6 +550,46 @@ inline void TiledLighting(inout Surface surface, inout Lighting lighting, uint f
 
 			}
 		}
+		else
+		{
+			for(uint bucket = iterator.first_bucket(); bucket <= iterator.last_bucket(); ++bucket)
+			{
+				uint bucket_bits = load_entitytile(flatTileIndex + bucket);
+				bucket_bits = iterator.mask_entity(bucket, bucket_bits);
+
+#ifndef ENTITY_TILE_UNIFORM
+				// Bucket scalarizer - Siggraph 2017 - Improved Culling [Michal Drobot]:
+				bucket_bits = WaveReadLaneFirst(WaveActiveBitOr(bucket_bits));
+#endif // ENTITY_TILE_UNIFORM
+
+				[loop]
+				while (bucket_bits != 0)
+				{
+					// Retrieve global entity index from local bucket, then remove bit from local bucket:
+					const uint bucket_bit_index = firstbitlow(bucket_bits);
+					const uint entity_index = bucket * 32 + bucket_bit_index;
+					bucket_bits ^= 1u << bucket_bit_index;
+					
+					ShaderEntity light = load_entity(entity_index);
+
+					half shadow_mask = 1;
+#if defined(SHADOW_MASK_ENABLED) && !defined(TRANSPARENT)
+					[branch]
+					if (light.IsCastingShadow() && (GetFrame().options & OPTION_BIT_SHADOW_MASK) && (GetCamera().options & SHADERCAMERA_OPTION_USE_SHADOW_MASK) && GetCamera().texture_rtshadow_index >= 0)
+					{
+						uint shadow_index = entity_index - lights().first_item();
+						if (shadow_index < 16)
+						{
+							shadow_mask = bindless_textures2DArray_half4[descriptor_index(GetCamera().texture_rtshadow_index)][uint3(surface.pixel, shadow_index)].r;
+						}
+					}
+#endif // SHADOW_MASK_ENABLED && !TRANSPARENT
+
+					light_point(light, surface, lighting, shadow_mask);
+
+				}
+			}
+		}
 	}
 
 	[branch]
@@ -518,24 +597,10 @@ inline void TiledLighting(inout Surface surface, inout Lighting lighting, uint f
 	{
 		// Loop through light buckets in the tile:
 		ShaderEntityIterator iterator = rectlights();
-		for(uint bucket = iterator.first_bucket(); bucket <= iterator.last_bucket(); ++bucket)
+		if (disable_depth_culling)
 		{
-			uint bucket_bits = load_entitytile(flatTileIndex + bucket);
-			bucket_bits = iterator.mask_entity(bucket, bucket_bits);
-
-#ifndef ENTITY_TILE_UNIFORM
-			// Bucket scalarizer - Siggraph 2017 - Improved Culling [Michal Drobot]:
-			bucket_bits = WaveReadLaneFirst(WaveActiveBitOr(bucket_bits));
-#endif // ENTITY_TILE_UNIFORM
-
-			[loop]
-			while (bucket_bits != 0)
+			for (uint entity_index = iterator.first_item(); entity_index < iterator.end_item(); ++entity_index)
 			{
-				// Retrieve global entity index from local bucket, then remove bit from local bucket:
-				const uint bucket_bit_index = firstbitlow(bucket_bits);
-				const uint entity_index = bucket * 32 + bucket_bit_index;
-				bucket_bits ^= 1u << bucket_bit_index;
-				
 				ShaderEntity light = load_entity(entity_index);
 
 				half shadow_mask = 1;
@@ -555,6 +620,46 @@ inline void TiledLighting(inout Surface surface, inout Lighting lighting, uint f
 
 			}
 		}
+		else
+		{
+			for(uint bucket = iterator.first_bucket(); bucket <= iterator.last_bucket(); ++bucket)
+			{
+				uint bucket_bits = load_entitytile(flatTileIndex + bucket);
+				bucket_bits = iterator.mask_entity(bucket, bucket_bits);
+
+#ifndef ENTITY_TILE_UNIFORM
+				// Bucket scalarizer - Siggraph 2017 - Improved Culling [Michal Drobot]:
+				bucket_bits = WaveReadLaneFirst(WaveActiveBitOr(bucket_bits));
+#endif // ENTITY_TILE_UNIFORM
+
+				[loop]
+				while (bucket_bits != 0)
+				{
+					// Retrieve global entity index from local bucket, then remove bit from local bucket:
+					const uint bucket_bit_index = firstbitlow(bucket_bits);
+					const uint entity_index = bucket * 32 + bucket_bit_index;
+					bucket_bits ^= 1u << bucket_bit_index;
+					
+					ShaderEntity light = load_entity(entity_index);
+
+					half shadow_mask = 1;
+#if defined(SHADOW_MASK_ENABLED) && !defined(TRANSPARENT)
+					[branch]
+					if (light.IsCastingShadow() && (GetFrame().options & OPTION_BIT_SHADOW_MASK) && (GetCamera().options & SHADERCAMERA_OPTION_USE_SHADOW_MASK) && GetCamera().texture_rtshadow_index >= 0)
+					{
+						uint shadow_index = entity_index - lights().first_item();
+						if (shadow_index < 16)
+						{
+							shadow_mask = bindless_textures2DArray_half4[descriptor_index(GetCamera().texture_rtshadow_index)][uint3(surface.pixel, shadow_index)].r;
+						}
+					}
+#endif // SHADOW_MASK_ENABLED && !defined(TRANSPARENT)
+
+					light_rect(light, surface, lighting, shadow_mask);
+
+				}
+			}
+		}
 	}
 
 	// Capsule shadows and capsule reflection blockers:
@@ -568,24 +673,10 @@ inline void TiledLighting(inout Surface surface, inout Lighting lighting, uint f
 		
 		// Loop through light buckets in the tile:
 		ShaderEntityIterator iterator = forces();
-		for (uint bucket = iterator.first_bucket(); (bucket <= iterator.last_bucket()) && (capsuleshadow > 0 || capsulereflection > 0); ++bucket)
+		if (disable_depth_culling)
 		{
-			uint bucket_bits = load_entitytile(flatTileIndex + bucket);
-			bucket_bits = iterator.mask_entity(bucket, bucket_bits);
-
-#ifndef ENTITY_TILE_UNIFORM
-			// Bucket scalarizer - Siggraph 2017 - Improved Culling [Michal Drobot]:
-			bucket_bits = WaveReadLaneFirst(WaveActiveBitOr(bucket_bits));
-#endif // ENTITY_TILE_UNIFORM
-
-			[loop]
-			while ((bucket_bits != 0) && (capsuleshadow > 0 || capsulereflection > 0))
+			for (uint entity_index = iterator.first_item(); (entity_index < iterator.end_item()) && (capsuleshadow > 0 || capsulereflection > 0); ++entity_index)
 			{
-				// Retrieve global entity index from local bucket, then remove bit from local bucket:
-				const uint bucket_bit_index = firstbitlow(bucket_bits);
-				const uint entity_index = bucket * 32 + bucket_bit_index;
-				bucket_bits ^= 1u << bucket_bit_index;
-				
 				ShaderEntity entity = load_entity(entity_index);
 				if ((entity.GetFlags() & ENTITY_FLAG_CAPSULE_SHADOW_COLLIDER) == 0)
 					continue;
@@ -605,6 +696,48 @@ inline void TiledLighting(inout Surface surface, inout Lighting lighting, uint f
 			
 				capsuleshadow *= occ;
 				capsulereflection *= ref;
+			}
+		}
+		else
+		{
+			for (uint bucket = iterator.first_bucket(); (bucket <= iterator.last_bucket()) && (capsuleshadow > 0 || capsulereflection > 0); ++bucket)
+			{
+				uint bucket_bits = load_entitytile(flatTileIndex + bucket);
+				bucket_bits = iterator.mask_entity(bucket, bucket_bits);
+
+#ifndef ENTITY_TILE_UNIFORM
+				// Bucket scalarizer - Siggraph 2017 - Improved Culling [Michal Drobot]:
+				bucket_bits = WaveReadLaneFirst(WaveActiveBitOr(bucket_bits));
+#endif // ENTITY_TILE_UNIFORM
+
+				[loop]
+				while ((bucket_bits != 0) && (capsuleshadow > 0 || capsulereflection > 0))
+				{
+					// Retrieve global entity index from local bucket, then remove bit from local bucket:
+					const uint bucket_bit_index = firstbitlow(bucket_bits);
+					const uint entity_index = bucket * 32 + bucket_bit_index;
+					bucket_bits ^= 1u << bucket_bit_index;
+					
+					ShaderEntity entity = load_entity(entity_index);
+					if ((entity.GetFlags() & ENTITY_FLAG_CAPSULE_SHADOW_COLLIDER) == 0)
+						continue;
+				
+					float3 A = entity.position;
+					float3 B = entity.GetColliderTip();
+					half radius = entity.GetRange() * CAPSULE_SHADOW_BOLDEN;
+					half occ = directionalOcclusionCapsule(surface.P, A, B, radius, occlusion_cone);
+					half ref = directionalOcclusionCapsule(surface.P, A, B, radius, reflection_cone);
+
+					// attenuation based on capsule-sphere:
+					float3 center = lerp(A, B, 0.5);
+					half range = distance(center, A) + radius + CAPSULE_SHADOW_AFFECTION_RANGE;
+					half range2 = range * range;
+					occ = 1 - saturate((1 - occ) * saturate(attenuation_pointlight(distance_squared(surface.P, center), range, range2)));
+					ref = 1 - saturate((1 - ref) * saturate(attenuation_pointlight(distance_squared(closest_point_on_line(surface.P, surface.P + surface.R, center), center), range, range2)));
+				
+					capsuleshadow *= occ;
+					capsulereflection *= ref;
+				}
 			}
 		}
 		
@@ -628,6 +761,8 @@ inline void TiledDecals(inout Surface surface, uint flatTileIndex, inout half4 s
 	[branch]
 	if (decals().empty())
 		return;
+
+	const bool disable_depth_culling = (GetCamera().options & SHADERCAMERA_OPTION_DISABLE_DEPTH_CULLING) != 0;
 		
 	// decals are enabled, loop through them first:
 	half4 decalAccumulation = 0;
@@ -645,24 +780,10 @@ inline void TiledDecals(inout Surface surface, uint flatTileIndex, inout half4 s
 
 	// Loop through decal buckets in the tile:
 	ShaderEntityIterator iterator = decals();
-	for(uint bucket = iterator.first_bucket(); bucket <= iterator.last_bucket(); ++bucket)
+	if (disable_depth_culling)
 	{
-		uint bucket_bits = load_entitytile(flatTileIndex + bucket);
-		bucket_bits = iterator.mask_entity(bucket, bucket_bits);
-
-#ifndef ENTITY_TILE_UNIFORM
-		// This is the wave scalarizer from Improved Culling - Siggraph 2017 [Drobot]:
-		bucket_bits = WaveReadLaneFirst(WaveActiveBitOr(bucket_bits));
-#endif // ENTITY_TILE_UNIFORM
-
-		[loop]
-		while (WaveActiveAnyTrue(bucket_bits != 0 && decalAccumulation.a < 1 && decalBumpAccumulation.a < 1 && decalSurfaceAccumulationAlpha < 1))
+		for (uint entity_index = iterator.first_item(); (entity_index < iterator.end_item()) && (decalAccumulation.a < 1 && decalBumpAccumulation.a < 1 && decalSurfaceAccumulationAlpha < 1); ++entity_index)
 		{
-			// Retrieve global entity index from local bucket, then remove bit from local bucket:
-			const uint bucket_bit_index = firstbitlow(bucket_bits);
-			const uint entity_index = bucket * 32 + bucket_bit_index;
-			bucket_bits ^= 1u << bucket_bit_index;
-			
 			ShaderEntity decal = load_entity(entity_index);
 
 			float4x4 decalProjection = load_entitymatrix(decal.GetMatrixIndex());
@@ -671,7 +792,7 @@ inline void TiledDecals(inout Surface surface, uint flatTileIndex, inout half4 s
 			const int decalSurfacemap = asint(decalProjection[3][2]);
 			const int decalDisplacementmap = asint(decalProjection[3][3]);
 			decalProjection[3] = float4(0, 0, 0, 1);
-				
+			
 			// under here will be VGPR!
 			if ((decal.layerMask & surface.layerMask) == 0)
 				continue;
@@ -740,6 +861,106 @@ inline void TiledDecals(inout Surface surface, uint flatTileIndex, inout half4 s
 				}
 			}
 
+		}
+	}
+	else
+	{
+		for(uint bucket = iterator.first_bucket(); bucket <= iterator.last_bucket(); ++bucket)
+		{
+			uint bucket_bits = load_entitytile(flatTileIndex + bucket);
+			bucket_bits = iterator.mask_entity(bucket, bucket_bits);
+
+#ifndef ENTITY_TILE_UNIFORM
+			// This is the wave scalarizer from Improved Culling - Siggraph 2017 [Drobot]:
+			bucket_bits = WaveReadLaneFirst(WaveActiveBitOr(bucket_bits));
+#endif // ENTITY_TILE_UNIFORM
+
+			[loop]
+			while (WaveActiveAnyTrue(bucket_bits != 0 && decalAccumulation.a < 1 && decalBumpAccumulation.a < 1 && decalSurfaceAccumulationAlpha < 1))
+			{
+				// Retrieve global entity index from local bucket, then remove bit from local bucket:
+				const uint bucket_bit_index = firstbitlow(bucket_bits);
+				const uint entity_index = bucket * 32 + bucket_bit_index;
+				bucket_bits ^= 1u << bucket_bit_index;
+				
+				ShaderEntity decal = load_entity(entity_index);
+
+				float4x4 decalProjection = load_entitymatrix(decal.GetMatrixIndex());
+				const int decalTexture = asint(decalProjection[3][0]);
+				const int decalNormal = asint(decalProjection[3][1]);
+				const int decalSurfacemap = asint(decalProjection[3][2]);
+				const int decalDisplacementmap = asint(decalProjection[3][3]);
+				decalProjection[3] = float4(0, 0, 0, 1);
+				
+				// under here will be VGPR!
+				if ((decal.layerMask & surface.layerMask) == 0)
+					continue;
+				const float3 clipSpacePos = mul(decalProjection, float4(surface.P, 1)).xyz;
+				float3 uvw = box_to_uv(clipSpacePos.xyz);
+				[branch]
+				if (is_saturated(uvw))
+				{
+					uvw.xy = mad(uvw.xy, decal.shadowAtlasMulAdd.xy, decal.shadowAtlasMulAdd.zw);
+					// mipmapping needs to be performed by hand:
+					const float2 decalDX = mul(P_dx, (float3x3)decalProjection).xy;
+					const float2 decalDY = mul(P_dy, (float3x3)decalProjection).xy;
+					half4 decalColor = decal.GetColor();
+					// blend out if close to cube Z:
+					const half edgeBlend = 1 - pow8(saturate(abs((half)clipSpacePos.z)));
+					const half slopeBlend = decal.GetConeAngleCos() > 0 ? pow(saturate(dot((half3)surface.N, decal.GetDirection())), decal.GetConeAngleCos()) : 1;
+					decalColor.a *= edgeBlend * slopeBlend;
+					[branch]
+					if (decalDisplacementmap >= 0)
+					{
+						const half3 t = (half3)get_right(decalProjection);
+						const half3 b = -(half3)get_up(decalProjection);
+						const half3 n = (half3)surface.N;
+						const half3x3 tbn = half3x3(t, b, n);
+						float4 inoutuv = uvw.xyxy;
+						ParallaxOcclusionMapping_Impl(
+							inoutuv,
+							surface.V,
+							tbn,
+							decal.GetLength(),
+							bindless_textures_half4[descriptor_index(decalDisplacementmap)],
+							uvw.xy,
+							decalDX,
+							decalDY,
+							sampler_linear_clamp
+						);
+						uvw.xy = saturate(inoutuv.xy);
+					}
+					[branch]
+					if (decalTexture >= 0)
+					{
+						decalColor *= bindless_textures_half4[descriptor_index(decalTexture)].SampleGrad(sam, uvw.xy, decalDX, decalDY);
+						if ((decal.GetFlags() & ENTITY_FLAG_DECAL_BASECOLOR_ONLY_ALPHA) == 0)
+						{
+							// perform manual blending of decals:
+							//  NOTE: they are sorted top-to-bottom, but blending is performed bottom-to-top
+							decalAccumulation.rgb = mad(1 - decalAccumulation.a, decalColor.a * decalColor.rgb, decalAccumulation.rgb);
+							decalAccumulation.a = mad(1 - decalColor.a, decalAccumulation.a, decalColor.a);
+						}
+					}
+					[branch]
+					if (decalNormal >= 0)
+					{
+						half3 decalBumpColor = half3(bindless_textures_half4[descriptor_index(decalNormal)].SampleGrad(sam, uvw.xy, decalDX, decalDY).rg, 1);
+						decalBumpColor = decalBumpColor * 2 - 1;
+						decalBumpColor.rg *= decal.GetAngleScale();
+						decalBumpAccumulation.rgb = mad(1 - decalBumpAccumulation.a, decalColor.a * decalBumpColor.rgb, decalBumpAccumulation.rgb);
+						decalBumpAccumulation.a = mad(1 - decalColor.a, decalBumpAccumulation.a, decalColor.a);
+					}
+					[branch]
+					if (decalSurfacemap >= 0)
+					{
+						half4 decalSurfaceColor = (half4)bindless_textures_half4[descriptor_index(decalSurfacemap)].SampleGrad(sam, uvw.xy, decalDX, decalDY);
+						decalSurfaceAccumulation = mad(1 - decalSurfaceAccumulationAlpha, decalColor.a * decalSurfaceColor, decalSurfaceAccumulation);
+						decalSurfaceAccumulationAlpha = mad(1 - decalColor.a, decalSurfaceAccumulationAlpha, decalColor.a);
+					}
+				}
+
+			}
 		}
 	}
 

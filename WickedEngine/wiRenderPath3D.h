@@ -308,7 +308,7 @@ namespace wi
 		constexpr void setReflectionRoughnessCutoff(float value) { reflectionRoughnessCutoff = value; }
 		constexpr void setSSGIDepthRejection(float value) { ssgiDepthRejection = value; }
 		constexpr void setTonemap(wi::renderer::Tonemap value) { tonemap = value; }
-		constexpr void setVisibilityComputeShadingEnabled(bool value) { visibility_shading_in_compute = value; }
+		void setVisibilityComputeShadingEnabled(bool value);
 
 		void setAO(AO value);
 		void setSSREnabled(bool value);

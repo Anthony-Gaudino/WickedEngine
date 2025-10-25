@@ -50,10 +50,35 @@ void main(uint Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
 	surface.pixel = pixel.xy;
 	surface.screenUV = uv;
 
+	bool surface_loaded = surface.load(prim, ray.Origin, ray.Direction, rayDirection_quad_x, rayDirection_quad_y, tile.entity_flat_tile_index);
+	bool fallback_used = false;
+	float fallback_depth = 1.0f;
+	float3 fallback_positionWS = 0;
 	[branch]
-	if (!surface.load(prim, ray.Origin, ray.Direction, rayDirection_quad_x, rayDirection_quad_y, tile.entity_flat_tile_index))
+	if (!surface_loaded)
+	{
+		fallback_depth = texture_depth[pixel];
+		if (fallback_depth < 1.0f)
+		{
+			float fallback_lineardepth = compute_lineardepth(fallback_depth) * GetCamera().z_far_rcp;
+			float depth_linear = fallback_lineardepth * GetCamera().z_range + GetCamera().z_near;
+			float4 fallback_svposition = float4(float2(pixel) + 0.5f, fallback_depth, depth_linear);
+			fallback_positionWS = GetCamera().screen_to_world(fallback_svposition);
+			surface_loaded = surface.load(prim, fallback_positionWS);
+			fallback_used = surface_loaded;
+		}
+	}
+	if (!surface_loaded)
 	{
 		return;
+	}
+	[branch]
+	if (fallback_used)
+	{
+		float3 viewVector = ray.Origin - fallback_positionWS;
+		surface.hit_depth = length(viewVector);
+		float viewLength = max(surface.hit_depth, 1e-5);
+		surface.V = viewVector / viewLength;
 	}
 
 #ifdef INTERIORMAPPING

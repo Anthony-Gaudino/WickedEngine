@@ -113,6 +113,11 @@ bool IsPrimitiveIDSupported()
 #endif
 }
 
+bool IsAdvancedLightCullingSupported()
+{
+	return IsPrimitiveIDSupported();
+}
+
 bool wireRender = false;
 bool debugBoneLines = false;
 bool debugPartitionTree = false;
@@ -124,7 +129,7 @@ bool debugCameras = false;
 bool debugColliders = false;
 bool debugSprings = false;
 bool gridHelper = false;
-bool advancedLightCulling = true;
+bool advancedLightCulling = IsAdvancedLightCullingSupported();
 bool variableRateShadingClassification = false;
 bool variableRateShadingClassificationDebug = false;
 float GameSpeed = 1;
@@ -10066,6 +10071,11 @@ void ComputeTiledLightCulling(
 		device->BindComputeShader(&shaders[GetAdvancedLightCulling() ? CSTYPE_LIGHTCULLING_ADVANCED : CSTYPE_LIGHTCULLING], cmd);
 	}
 
+	// Defensive clear: ensure the structured buffer has no leftover/uninitialized data
+	// before the compute shader writes into it. This avoids visual artifacts in case
+	// some buckets are not deterministically written on all GPU drivers/hardware.
+	device->ClearUAV(&res.entityTiles, 0, cmd);
+
 	device->BindUAV(&res.entityTiles, 0, cmd);
 
 	device->Dispatch(res.tileCount.x, res.tileCount.y, 1, cmd);
@@ -18964,8 +18974,26 @@ bool GetToDrawVoxelHelper() { return VXGI_DEBUG; }
 void SetToDrawVoxelHelper(bool value, int clipmap_level) { VXGI_DEBUG = value; VXGI_DEBUG_CLIPMAP = clipmap_level; }
 void SetDebugLightCulling(bool enabled) { debugLightCulling = enabled; }
 bool GetDebugLightCulling() { return debugLightCulling; }
-void SetAdvancedLightCulling(bool enabled) { advancedLightCulling = enabled; }
-bool GetAdvancedLightCulling() { return advancedLightCulling; }
+void SetAdvancedLightCulling(bool enabled)
+{
+	static bool warned_once = false;
+	if (enabled && !IsAdvancedLightCullingSupported())
+	{
+		advancedLightCulling = false;
+		if (!warned_once)
+		{
+			wi::backlog::post("2.5D light culling requires primitive ID support; falling back to basic tiled culling on this platform.");
+			warned_once = true;
+		}
+		return;
+	}
+	advancedLightCulling = enabled;
+}
+
+bool GetAdvancedLightCulling()
+{
+	return advancedLightCulling && IsAdvancedLightCullingSupported();
+}
 void SetVariableRateShadingClassification(bool enabled) { variableRateShadingClassification = enabled; }
 bool GetVariableRateShadingClassification() { return variableRateShadingClassification; }
 void SetVariableRateShadingClassificationDebug(bool enabled) { variableRateShadingClassificationDebug = enabled; }

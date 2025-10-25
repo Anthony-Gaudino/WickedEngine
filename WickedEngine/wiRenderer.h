@@ -1148,6 +1148,7 @@ namespace wi::renderer
 	void SetDebugLightCulling(bool enabled);
 	bool GetDebugLightCulling();
 	void SetAdvancedLightCulling(bool enabled);
+	bool IsAdvancedLightCullingSupported();
 	bool GetAdvancedLightCulling();
 	void SetVariableRateShadingClassification(bool enabled);
 	bool GetVariableRateShadingClassification();

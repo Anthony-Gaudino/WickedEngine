@@ -378,6 +378,7 @@ struct Surface
 		const bool is_hairparticle = geometry.flags & SHADERMESH_FLAG_HAIRPARTICLE;
 		const bool is_emittedparticle = geometry.flags & SHADERMESH_FLAG_EMITTEDPARTICLE;
 		const bool simple_lighting = is_hairparticle || is_emittedparticle;
+	    const bool disable_depth_culling = (GetCamera().options & SHADERCAMERA_OPTION_DISABLE_DEPTH_CULLING) != 0;
 
 		half3 Nunnormalized = 0;
 		
@@ -746,24 +747,10 @@ struct Surface
 			
 			// Loop through decal buckets in the tile:
 			ShaderEntityIterator iterator = decals();
-			for(uint bucket = iterator.first_bucket(); bucket <= iterator.last_bucket(); ++bucket)
+			if (disable_depth_culling)
 			{
-				uint bucket_bits = load_entitytile(flatTileIndex + bucket);
-				bucket_bits = iterator.mask_entity(bucket, bucket_bits);
-
-#ifndef ENTITY_TILE_UNIFORM
-				// This is the wave scalarizer from Improved Culling - Siggraph 2017 [Drobot]:
-				bucket_bits = WaveReadLaneFirst(WaveActiveBitOr(bucket_bits));
-#endif // ENTITY_TILE_UNIFORM
-
-				[loop]
-				while (WaveActiveAnyTrue(bucket_bits != 0 && decalAccumulation.a < 1 && decalBumpAccumulation.a < 1 && decalSurfaceAccumulationAlpha < 1))
+				for (uint entity_index = iterator.first_item(); entity_index < iterator.end_item() && decalAccumulation.a < 1 && decalBumpAccumulation.a < 1 && decalSurfaceAccumulationAlpha < 1; ++entity_index)
 				{
-					// Retrieve global entity index from local bucket, then remove bit from local bucket:
-					const uint bucket_bit_index = firstbitlow(bucket_bits);
-					const uint entity_index = bucket * 32 + bucket_bit_index;
-					bucket_bits ^= 1u << bucket_bit_index;
-					
 					ShaderEntity decal = load_entity(entity_index);
 
 					float4x4 decalProjection = load_entitymatrix(decal.GetMatrixIndex());
@@ -772,8 +759,7 @@ struct Surface
 					const int decalSurfacemap = asint(decalProjection[3][2]);
 					const int decalDisplacementmap = asint(decalProjection[3][3]);
 					decalProjection[3] = float4(0, 0, 0, 1);
-						
-					// under here will be VGPR!
+					
 					if ((decal.layerMask & layerMask) == 0)
 						continue;
 					const float3 clipSpacePos = mul(decalProjection, float4(P, 1)).xyz;
@@ -782,11 +768,9 @@ struct Surface
 					if (is_saturated(uvw))
 					{
 						uvw.xy = mad(uvw.xy, decal.shadowAtlasMulAdd.xy, decal.shadowAtlasMulAdd.zw);
-						// mipmapping needs to be performed by hand:
 						const float2 decalDX = mul(P_dx, (float3x3)decalProjection).xy;
 						const float2 decalDY = mul(P_dy, (float3x3)decalProjection).xy;
 						half4 decalColor = decal.GetColor();
-						// blend out if close to cube Z:
 						const half edgeBlend = 1 - pow8(saturate(abs((half)clipSpacePos.z)));
 						const half slopeBlend = decal.GetConeAngleCos() > 0 ? pow(saturate(dot((half3)N, decal.GetDirection())), decal.GetConeAngleCos()) : 1;
 						decalColor.a *= edgeBlend * slopeBlend;
@@ -817,8 +801,6 @@ struct Surface
 							decalColor *= bindless_textures_half4[descriptor_index(decalTexture)].SampleGrad(sam, uvw.xy, decalDX, decalDY);
 							if ((decal.GetFlags() & ENTITY_FLAG_DECAL_BASECOLOR_ONLY_ALPHA) == 0)
 							{
-								// perform manual blending of decals:
-								//  NOTE: they are sorted top-to-bottom, but blending is performed bottom-to-top
 								decalAccumulation.rgb = mad(1 - decalAccumulation.a, decalColor.a * decalColor.rgb, decalAccumulation.rgb);
 								decalAccumulation.a = mad(1 - decalColor.a, decalAccumulation.a, decalColor.a);
 							}
@@ -841,6 +823,106 @@ struct Surface
 						}
 					}
 
+				}
+			}
+			else
+			{
+				for(uint bucket = iterator.first_bucket(); bucket <= iterator.last_bucket(); ++bucket)
+				{
+					uint bucket_bits = load_entitytile(flatTileIndex + bucket);
+					bucket_bits = iterator.mask_entity(bucket, bucket_bits);
+
+#ifndef ENTITY_TILE_UNIFORM
+					// This is the wave scalarizer from Improved Culling - Siggraph 2017 [Drobot]:
+					bucket_bits = WaveReadLaneFirst(WaveActiveBitOr(bucket_bits));
+#endif // ENTITY_TILE_UNIFORM
+
+					[loop]
+					while (WaveActiveAnyTrue(bucket_bits != 0 && decalAccumulation.a < 1 && decalBumpAccumulation.a < 1 && decalSurfaceAccumulationAlpha < 1))
+					{
+						// Retrieve global entity index from local bucket, then remove bit from local bucket:
+						const uint bucket_bit_index = firstbitlow(bucket_bits);
+						const uint entity_index = bucket * 32 + bucket_bit_index;
+						bucket_bits ^= 1u << bucket_bit_index;
+						
+						ShaderEntity decal = load_entity(entity_index);
+
+						float4x4 decalProjection = load_entitymatrix(decal.GetMatrixIndex());
+						const int decalTexture = asint(decalProjection[3][0]);
+						const int decalNormal = asint(decalProjection[3][1]);
+						const int decalSurfacemap = asint(decalProjection[3][2]);
+						const int decalDisplacementmap = asint(decalProjection[3][3]);
+						decalProjection[3] = float4(0, 0, 0, 1);
+						
+						// under here will be VGPR!
+						if ((decal.layerMask & layerMask) == 0)
+							continue;
+						const float3 clipSpacePos = mul(decalProjection, float4(P, 1)).xyz;
+						float3 uvw = clipspace_to_uv(clipSpacePos.xyz);
+						[branch]
+						if (is_saturated(uvw))
+						{
+							uvw.xy = mad(uvw.xy, decal.shadowAtlasMulAdd.xy, decal.shadowAtlasMulAdd.zw);
+							// mipmapping needs to be performed by hand:
+							const float2 decalDX = mul(P_dx, (float3x3)decalProjection).xy;
+							const float2 decalDY = mul(P_dy, (float3x3)decalProjection).xy;
+							half4 decalColor = decal.GetColor();
+							// blend out if close to cube Z:
+							const half edgeBlend = 1 - pow8(saturate(abs((half)clipSpacePos.z)));
+							const half slopeBlend = decal.GetConeAngleCos() > 0 ? pow(saturate(dot((half3)N, decal.GetDirection())), decal.GetConeAngleCos()) : 1;
+							decalColor.a *= edgeBlend * slopeBlend;
+							[branch]
+							if (decalDisplacementmap >= 0)
+							{
+								const half3 t = (half3)get_right(decalProjection);
+								const half3 b = -(half3)get_up(decalProjection);
+								const half3 n = (half3)N;
+								const half3x3 tbn = half3x3(t, b, n);
+								float4 inoutuv = uvw.xyxy;
+								ParallaxOcclusionMapping_Impl(
+									inoutuv,
+									V,
+									tbn,
+									decal.GetLength(),
+									bindless_textures_half4[descriptor_index(decalDisplacementmap)],
+									uvw.xy,
+									decalDX,
+									decalDY,
+									sampler_linear_clamp
+								);
+								uvw.xy = saturate(inoutuv.xy);
+							}
+							[branch]
+							if (decalTexture >= 0)
+							{
+								decalColor *= bindless_textures_half4[descriptor_index(decalTexture)].SampleGrad(sam, uvw.xy, decalDX, decalDY);
+								if ((decal.GetFlags() & ENTITY_FLAG_DECAL_BASECOLOR_ONLY_ALPHA) == 0)
+								{
+									// perform manual blending of decals:
+									//  NOTE: they are sorted top-to-bottom, but blending is performed bottom-to-top
+									decalAccumulation.rgb = mad(1 - decalAccumulation.a, decalColor.a * decalColor.rgb, decalAccumulation.rgb);
+									decalAccumulation.a = mad(1 - decalColor.a, decalAccumulation.a, decalColor.a);
+								}
+							}
+							[branch]
+							if (decalNormal >= 0)
+							{
+								half3 decalBumpColor = half3(bindless_textures_half4[descriptor_index(decalNormal)].SampleGrad(sam, uvw.xy, decalDX, decalDY).rg, 1);
+								decalBumpColor = decalBumpColor * 2 - 1;
+								decalBumpColor.rg *= decal.GetAngleScale();
+								decalBumpAccumulation.rgb = mad(1 - decalBumpAccumulation.a, decalColor.a * decalBumpColor.rgb, decalBumpAccumulation.rgb);
+								decalBumpAccumulation.a = mad(1 - decalColor.a, decalBumpAccumulation.a, decalColor.a);
+							}
+							[branch]
+							if (decalSurfacemap >= 0)
+							{
+								half4 decalSurfaceColor = bindless_textures_half4[descriptor_index(decalSurfacemap)].SampleGrad(sam, uvw.xy, decalDX, decalDY);
+								decalSurfaceAccumulation = mad(1 - decalSurfaceAccumulationAlpha, decalColor.a * decalSurfaceColor, decalSurfaceAccumulation);
+								decalSurfaceAccumulationAlpha = mad(1 - decalColor.a, decalSurfaceAccumulationAlpha, decalColor.a);
+							}
+						}
+
+					}
 				}
 			}
 

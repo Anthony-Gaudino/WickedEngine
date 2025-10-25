@@ -28,6 +28,7 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 GTid : SV_GroupThreadID, uint3
 	
 	const uint2 tileIndex = uint2(floor(pixel / TILED_CULLING_BLOCKSIZE));
 	const uint flatTileIndex = flatten2D(tileIndex, GetCamera().entity_culling_tilecount.xy) * SHADER_ENTITY_TILE_BUCKET_COUNT;
+    const bool disable_depth_culling = (GetCamera().options & SHADERCAMERA_OPTION_DISABLE_DEPTH_CULLING) != 0;
 	
 	const float2 lowres_size = postprocess.params1.xy;
 	const float2 lowres_texel_size = postprocess.params1.zw;
@@ -59,56 +60,85 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 GTid : SV_GroupThreadID, uint3
 	[branch]
 	if (!lights().empty())
 	{
-		// Loop through light buckets in the tile:
 		const uint first_item = lights().first_item();
 		const uint last_item = lights().last_item();
-		const uint first_bucket = first_item / 32;
-		const uint last_bucket = min(last_item / 32, max(0, SHADER_ENTITY_TILE_BUCKET_COUNT - 1));
-		[loop]
-		for (uint bucket = first_bucket; bucket <= last_bucket && shadow_index < MAX_RTSHADOWS; ++bucket)
+		if (disable_depth_culling)
 		{
-			uint bucket_bits = load_entitytile(flatTileIndex + bucket);
-
-			// Bucket scalarizer - Siggraph 2017 - Improved Culling [Michal Drobot]:
-			bucket_bits = WaveReadLaneFirst(WaveActiveBitOr(bucket_bits));
-
-			[loop]
-			while (bucket_bits != 0 && shadow_index < MAX_RTSHADOWS)
+			for (uint entity_index = first_item; entity_index <= last_item && shadow_index < MAX_RTSHADOWS; ++entity_index)
 			{
-				// Retrieve global entity index from local bucket, then remove bit from local bucket:
-				const uint bucket_bit_index = firstbitlow(bucket_bits);
-				const uint entity_index = bucket * 32 + bucket_bit_index;
-				bucket_bits ^= 1u << bucket_bit_index;
+				shadow_index = entity_index - lights().first_item();
+				if (shadow_index >= MAX_RTSHADOWS)
+					break;
 
-				// Check if it is a light and process:
-				[branch]
-				if (entity_index >= first_item && entity_index <= last_item)
+				ShaderEntity light = load_entity(entity_index);
+
+				if (!light.IsCastingShadow())
 				{
-					shadow_index = entity_index - lights().first_item();
-					if (shadow_index >= MAX_RTSHADOWS)
-						break;
+					continue;
+				}
 
-					ShaderEntity light = load_entity(entity_index);
+				if (light.IsStaticLight())
+				{
+					continue; // static lights will be skipped (they are used in lightmap baking)
+				}
+				
+				float shadow0 = load_shadow(shadow_index, shadow_mask0);
+				float shadow1 = load_shadow(shadow_index, shadow_mask1);
+				float shadow2 = load_shadow(shadow_index, shadow_mask2);
+				float shadow3 = load_shadow(shadow_index, shadow_mask3);
 
-					if (!light.IsCastingShadow())
+				float shadow = bilinear(float4(shadow0,shadow1,shadow2,shadow3) * weights, sam_pixel_frac);
+				shadow *= weights_norm;
+
+				output[uint3(pixel, shadow_index)] = shadow;
+			}
+		}
+		else
+		{
+			const uint first_bucket = first_item / 32;
+			const uint last_bucket = min(last_item / 32, max(0, SHADER_ENTITY_TILE_BUCKET_COUNT - 1));
+			[loop]
+			for (uint bucket = first_bucket; bucket <= last_bucket && shadow_index < MAX_RTSHADOWS; ++bucket)
+			{
+				uint bucket_bits = load_entitytile(flatTileIndex + bucket);
+
+				bucket_bits = WaveReadLaneFirst(WaveActiveBitOr(bucket_bits));
+
+				[loop]
+				while (bucket_bits != 0 && shadow_index < MAX_RTSHADOWS)
+				{
+					const uint bucket_bit_index = firstbitlow(bucket_bits);
+					const uint entity_index = bucket * 32 + bucket_bit_index;
+					bucket_bits ^= 1u << bucket_bit_index;
+
+					if (entity_index >= first_item && entity_index <= last_item)
 					{
-						continue;
-					}
+						shadow_index = entity_index - lights().first_item();
+						if (shadow_index >= MAX_RTSHADOWS)
+							break;
 
-					if (light.IsStaticLight())
-					{
-						continue; // static lights will be skipped (they are used in lightmap baking)
-					}
-					
-					float shadow0 = load_shadow(shadow_index, shadow_mask0);
-					float shadow1 = load_shadow(shadow_index, shadow_mask1);
-					float shadow2 = load_shadow(shadow_index, shadow_mask2);
-					float shadow3 = load_shadow(shadow_index, shadow_mask3);
+						ShaderEntity light = load_entity(entity_index);
 
-					float shadow = bilinear(float4(shadow0,shadow1,shadow2,shadow3) * weights, sam_pixel_frac);
-					shadow *= weights_norm;
-		
-					output[uint3(pixel, shadow_index)] = shadow;
+						if (!light.IsCastingShadow())
+						{
+							continue;
+						}
+
+						if (light.IsStaticLight())
+						{
+							continue; // static lights will be skipped (they are used in lightmap baking)
+						}
+						
+						float shadow0 = load_shadow(shadow_index, shadow_mask0);
+						float shadow1 = load_shadow(shadow_index, shadow_mask1);
+						float shadow2 = load_shadow(shadow_index, shadow_mask2);
+						float shadow3 = load_shadow(shadow_index, shadow_mask3);
+
+						float shadow = bilinear(float4(shadow0,shadow1,shadow2,shadow3) * weights, sam_pixel_frac);
+						shadow *= weights_norm;
+
+						output[uint3(pixel, shadow_index)] = shadow;
+					}
 				}
 			}
 		}

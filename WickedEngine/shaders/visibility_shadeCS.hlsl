@@ -49,8 +49,26 @@ void main(uint Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
 	Surface surface;
 	surface.init();
 
+	bool surface_loaded = surface.load(prim, ray.Origin, ray.Direction);
+	bool fallback_used = false;
+	float fallback_depth = 1.0f;
+	float3 fallback_positionWS = 0;
 	[branch]
-	if (!surface.load(prim, ray.Origin, ray.Direction))
+	if (!surface_loaded)
+	{
+		fallback_depth = texture_depth[pixel];
+		if (fallback_depth < 1.0f)
+		{
+			// Fallback to depth buffer reprojection when ray surface data is missing.
+			float fallback_lineardepth = compute_lineardepth(fallback_depth) * GetCamera().z_far_rcp;
+			float depth_linear = fallback_lineardepth * GetCamera().z_range + GetCamera().z_near;
+			float4 fallback_svposition = float4(float2(pixel) + 0.5f, fallback_depth, depth_linear);
+			fallback_positionWS = GetCamera().screen_to_world(fallback_svposition);
+			surface_loaded = surface.load(prim, fallback_positionWS);
+			fallback_used = surface_loaded;
+		}
+	}
+	if (!surface_loaded)
 	{
 		return;
 	}
@@ -67,6 +85,14 @@ void main(uint Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
 	surface.roughness = data1.a;
 	surface.N = decode_oct(unpack_half2(payload_0.z));
 	surface.emissiveColor = Unpack_R11G11B10_FLOAT(payload_0.w);
+	[branch]
+	if (fallback_used)
+	{
+		float3 viewVector = ray.Origin - fallback_positionWS;
+		surface.hit_depth = length(viewVector);
+		float viewLength = max(surface.hit_depth, 1e-5);
+		surface.V = viewVector / viewLength;
+	}
 
 	surface.opacity = 1;
 	surface.baseColor = half4(surface.albedo, surface.opacity);

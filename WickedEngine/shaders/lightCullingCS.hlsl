@@ -41,8 +41,12 @@ inline uint ConstructEntityMask(in float depthRangeMin, in float depthRangeRecip
 
 	const float fMin = bounds.c.z - bounds.r;
 	const float fMax = bounds.c.z + bounds.r;
-	const uint __entitymaskcellindexSTART = clamp(floor((fMin - depthRangeMin) * depthRangeRecip), 0, 31);
-	const uint __entitymaskcellindexEND = clamp(floor((fMax - depthRangeMin) * depthRangeRecip), 0, 31);
+	const float span = max(fMax - fMin, 1e-5f);
+	const float padding = span * 0.35f;
+	const float paddedMin = fMin - padding;
+	const float paddedMax = fMax + padding;
+	const uint __entitymaskcellindexSTART = clamp(floor((paddedMin - depthRangeMin) * depthRangeRecip), 0, 31);
+	const uint __entitymaskcellindexEND = clamp(floor((paddedMax - depthRangeMin) * depthRangeRecip), 0, 31);
 
 	//// Unoptimized mask construction with loop:
 	//// Construct mask from START to END:
@@ -74,6 +78,7 @@ void main(uint3 Gid : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint3 GTid :
 	uint2 dim;
 	texture_depth.GetDimensions(dim.x, dim.y);
 	float2 dim_rcp = rcp(dim);
+	const bool disableDepthCulling = (GetCamera().options & SHADERCAMERA_OPTION_DISABLE_DEPTH_CULLING) != 0;
 
 	// Each thread will zero out one bucket in the LDS:
 	for (uint i = groupIndex; i < SHADER_ENTITY_TILE_BUCKET_COUNT; i += TILED_CULLING_THREADSIZE * TILED_CULLING_THREADSIZE)
@@ -111,19 +116,20 @@ void main(uint3 Gid : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint3 GTid :
 
 	GroupMemoryBarrierWithGroupSync();
 
-	float wave_local_min = WaveActiveMin(depthMinUnrolled);
-	float wave_local_max = WaveActiveMax(depthMaxUnrolled);
-	if (WaveIsFirstLane())
-	{
-		InterlockedMin(uMinDepth, asuint(wave_local_min));
-		InterlockedMax(uMaxDepth, asuint(wave_local_max));
-	}
+	// Avoid wave intrinsics so platforms without stable subgroup support still compute reliable bounds.
+	InterlockedMin(uMinDepth, asuint(depthMinUnrolled));
+	InterlockedMax(uMaxDepth, asuint(depthMaxUnrolled));
 
 	GroupMemoryBarrierWithGroupSync();
 
 	// reversed depth buffer!
 	float fMinDepth = asfloat(uMaxDepth);
 	float fMaxDepth = asfloat(uMinDepth);
+	if (disableDepthCulling)
+	{
+		fMinDepth = 1.0f;
+		fMaxDepth = 0.0f;
+	}
 
 	fMaxDepth = max(0.000001, fMaxDepth); // fix for AMD!!!!!!!!!
 
@@ -170,6 +176,12 @@ void main(uint3 Gid : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint3 GTid :
 			maxAABB = max(maxAABB, viewSpace[i]);
 		}
 
+		// Ensure the tile bounding box retains a minimal thickness even when min/max depth collapse.
+		// Without this, extremely shallow tiles can fail sphere/AABB tests and drop nearby geometry.
+		const float3 tile_aabb_epsilon = float3(0.01f, 0.01f, 0.05f);
+		minAABB -= tile_aabb_epsilon;
+		maxAABB += tile_aabb_epsilon;
+
 		AABBfromMinMax(GroupAABB, minAABB, maxAABB);
 
 		// We can perform coarse AABB intersection tests with this:
@@ -183,30 +195,47 @@ void main(uint3 Gid : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint3 GTid :
 	float nearClipVS = ScreenToView(float4(0, 0, 1, 1), dim_rcp).z;
 
 #ifdef ADVANCED_CULLING
-	// We divide the minmax depth bounds to 32 equal slices
-	// then we mark the occupied depth slices with atomic or from each thread
-	// we do all this in linear (view) space
-	const float __depthRangeRecip = 31.0f / (maxDepthVS - minDepthVS);
-	uint __depthmaskUnrolled = 0;
-
-	[unroll]
-	for (uint granularity = 0; granularity < TILED_CULLING_GRANULARITY * TILED_CULLING_GRANULARITY; ++granularity)
+	float __depthRangeRecip = 0;
+	bool use_depth_mask = false;
+	uint depth_mask = 0xFFFFFFFFu;
 	{
-		float realDepthVS = ScreenToView(float4(0, 0, depth[granularity], 1), dim_rcp).z;
-		const uint __depthmaskcellindex = max(0, min(31, floor((realDepthVS - minDepthVS) * __depthRangeRecip)));
-		__depthmaskUnrolled |= 1u << __depthmaskcellindex;
-	}
+		const float depth_span = maxDepthVS - minDepthVS;
+		use_depth_mask = depth_span > 0.0001f;
+		if (disableDepthCulling)
+		{
+			use_depth_mask = false;
+		}
+		if (use_depth_mask)
+		{
+			__depthRangeRecip = 31.0f / depth_span;
+			uint __depthmaskUnrolled = 0;
 
-	uint wave_depth_mask = WaveActiveBitOr(__depthmaskUnrolled);
-	if (WaveIsFirstLane())
-	{
-		InterlockedOr(uDepthMask, wave_depth_mask);
+			[unroll]
+			for (uint granularity = 0; granularity < TILED_CULLING_GRANULARITY * TILED_CULLING_GRANULARITY; ++granularity)
+			{
+				float realDepthVS = ScreenToView(float4(0, 0, depth[granularity], 1), dim_rcp).z;
+				const uint __depthmaskcellindex = max(0, min(31, floor((realDepthVS - minDepthVS) * __depthRangeRecip)));
+				__depthmaskUnrolled |= 1u << __depthmaskcellindex;
+			}
+
+			// Accumulate the per-thread slice bits without relying on subgroup ballot operations.
+			InterlockedOr(uDepthMask, __depthmaskUnrolled);
+		}
 	}
+#else
+	const float __depthRangeRecip = 0;
+	const bool use_depth_mask = false;
+	const uint depth_mask = 0xFFFFFFFFu;
 #endif
 
 	GroupMemoryBarrierWithGroupSync();
 
-	const uint depth_mask = uDepthMask; // take out from groupshared into register
+#ifdef ADVANCED_CULLING
+	if (use_depth_mask)
+	{
+		depth_mask = uDepthMask;
+	}
+#endif
 	
 	// Point lights:
 	for (uint i = pointlights().first_item() + groupIndex; i < pointlights().end_item(); i += TILED_CULLING_THREADSIZE * TILED_CULLING_THREADSIZE)
@@ -224,7 +253,7 @@ void main(uint3 Gid : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint3 GTid :
 			if (SphereIntersectsAABB(sphere, GroupAABB)) // tighter fit than sphere-frustum culling
 			{
 #ifdef ADVANCED_CULLING
-				if (depth_mask & ConstructEntityMask(minDepthVS, __depthRangeRecip, sphere))
+				if (!use_depth_mask || (depth_mask & ConstructEntityMask(minDepthVS, __depthRangeRecip, sphere)))
 #endif
 				{
 					AppendEntity_Opaque(i);
@@ -252,7 +281,7 @@ void main(uint3 Gid : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint3 GTid :
 			if (SphereIntersectsAABB(sphere, GroupAABB)) // tighter fit than sphere-frustum culling
 			{
 #ifdef ADVANCED_CULLING
-				if (depth_mask & ConstructEntityMask(minDepthVS, __depthRangeRecip, sphere))
+				if (!use_depth_mask || (depth_mask & ConstructEntityMask(minDepthVS, __depthRangeRecip, sphere)))
 #endif
 				{
 					AppendEntity_Opaque(i);
@@ -278,7 +307,7 @@ void main(uint3 Gid : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint3 GTid :
 			if (SphereIntersectsAABB(sphere, GroupAABB)) // tighter fit than sphere-frustum culling
 			{
 #ifdef ADVANCED_CULLING
-				if (depth_mask & ConstructEntityMask(minDepthVS, __depthRangeRecip, sphere))
+				if (!use_depth_mask || (depth_mask & ConstructEntityMask(minDepthVS, __depthRangeRecip, sphere)))
 #endif
 				{
 					AppendEntity_Opaque(i);
@@ -320,7 +349,7 @@ void main(uint3 Gid : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint3 GTid :
 			if (IntersectAABB(a, b))
 			{
 #ifdef ADVANCED_CULLING
-				if (depth_mask & ConstructEntityMask(minDepthVS, __depthRangeRecip, sphere))
+				if (!use_depth_mask || (depth_mask & ConstructEntityMask(minDepthVS, __depthRangeRecip, sphere)))
 #endif
 				{
 					AppendEntity_Opaque(i);
@@ -351,7 +380,7 @@ void main(uint3 Gid : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint3 GTid :
 			if (IntersectAABB(a, b))
 			{
 #ifdef ADVANCED_CULLING
-				if (depth_mask & ConstructEntityMask(minDepthVS, __depthRangeRecip, sphere))
+				if (!use_depth_mask || (depth_mask & ConstructEntityMask(minDepthVS, __depthRangeRecip, sphere)))
 #endif
 				{
 					AppendEntity_Opaque(i);
@@ -384,7 +413,7 @@ void main(uint3 Gid : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint3 GTid :
 			if (SphereIntersectsAABB(sphere, GroupAABB)) // tighter fit than sphere-frustum culling
 			{
 #ifdef ADVANCED_CULLING
-				if (depth_mask & ConstructEntityMask(minDepthVS, __depthRangeRecip, sphere))
+				if (!use_depth_mask || (depth_mask & ConstructEntityMask(minDepthVS, __depthRangeRecip, sphere)))
 #endif
 				{
 					AppendEntity_Opaque(i);

@@ -4,6 +4,7 @@
 #include "wiHelper.h"
 #include "wiTextureHelper.h"
 #include "wiProfiler.h"
+#include "wiBacklog.h"
 
 using namespace wi::graphics;
 using namespace wi::enums;
@@ -13,6 +14,18 @@ using namespace wi::ecs;
 namespace wi
 {
 	static constexpr float foreground_depth_range = 0.01f;
+
+		void RenderPath3D::setVisibilityComputeShadingEnabled(bool value)
+		{
+			const bool supported = wi::renderer::IsPrimitiveIDSupported();
+			if (value && !supported)
+			{
+				visibility_shading_in_compute = false;
+				wi::backlog::post("Visibility compute shading requires primitive ID support on this platform, falling back to pixel shading.");
+				return;
+			}
+			visibility_shading_in_compute = value;
+		}
 
 	void RenderPath3D::DeleteGPUResources()
 	{
@@ -247,6 +260,10 @@ namespace wi
 			desc.layout = ResourceState::DEPTHSTENCIL;
 			desc.format = wi::renderer::format_depthbuffer_main;
 			desc.bind_flags = BindFlag::DEPTH_STENCIL;
+			if (!wi::renderer::IsPrimitiveIDSupported())
+			{
+				desc.bind_flags |= BindFlag::SHADER_RESOURCE;
+			}
 			device->CreateTexture(&desc, nullptr, &depthBuffer_Main);
 			device->SetName(&depthBuffer_Main, "depthBuffer_Main");
 
@@ -737,6 +754,10 @@ namespace wi
 		camera->scissor = GetScissorInternalResolution();
 		camera->sample_count = depthBuffer_Main.desc.sample_count;
 		camera->shadercamera_options = SHADERCAMERA_OPTION_NONE;
+		if (!wi::renderer::IsPrimitiveIDSupported())
+		{
+			camera->shadercamera_options |= SHADERCAMERA_OPTION_DISABLE_DEPTH_CULLING;
+		}
 		camera->texture_primitiveID_index = device->GetDescriptorIndex(&rtPrimitiveID, SubresourceType::SRV);
 		camera->texture_depth_index = device->GetDescriptorIndex(&depthBuffer_Copy, SubresourceType::SRV);
 		camera->texture_lineardepth_index = device->GetDescriptorIndex(&rtLinearDepth, SubresourceType::SRV);
@@ -782,6 +803,10 @@ namespace wi
 		camera_reflection.scissor.bottom = (int)depthBuffer_Reflection.desc.height;
 		camera_reflection.sample_count = depthBuffer_Reflection.desc.sample_count;
 		camera_reflection.shadercamera_options = SHADERCAMERA_OPTION_NONE;
+		if (!wi::renderer::IsPrimitiveIDSupported())
+		{
+			camera_reflection.shadercamera_options |= SHADERCAMERA_OPTION_DISABLE_DEPTH_CULLING;
+		}
 		camera_reflection.texture_primitiveID_index = -1;
 		camera_reflection.texture_depth_index = device->GetDescriptorIndex(&depthBuffer_Reflection_resolved, SubresourceType::SRV);
 		camera_reflection.texture_lineardepth_index = -1;
@@ -1083,6 +1108,32 @@ namespace wi
 					cmd
 				);
 			}
+			else
+			{
+				// Primitive IDs are unavailable (Metal), so derive depth resources directly from the actual depth buffer.
+				GPUBarrier depth_to_srv[] = {
+					GPUBarrier::Image(&depthBuffer_Main, ResourceState::DEPTHSTENCIL, ResourceState::SHADER_RESOURCE_COMPUTE),
+					GPUBarrier::Image(&depthBuffer_Copy, depthBuffer_Copy.desc.layout, ResourceState::UNORDERED_ACCESS),
+				};
+				device->Barrier(depth_to_srv, arraysize(depth_to_srv), cmd);
+
+				wi::renderer::ResolveMSAADepthBuffer(depthBuffer_Copy, depthBuffer_Main, cmd);
+
+				GPUBarrier depth_srv_to_dsv[] = {
+					GPUBarrier::Image(&depthBuffer_Main, ResourceState::SHADER_RESOURCE_COMPUTE, ResourceState::DEPTHSTENCIL),
+					GPUBarrier::Image(&depthBuffer_Copy, ResourceState::UNORDERED_ACCESS, ResourceState::SHADER_RESOURCE_COMPUTE),
+					GPUBarrier::Image(&rtLinearDepth, rtLinearDepth.desc.layout, ResourceState::UNORDERED_ACCESS),
+				};
+				device->Barrier(depth_srv_to_dsv, arraysize(depth_srv_to_dsv), cmd);
+
+				wi::renderer::Postprocess_Lineardepth(depthBuffer_Copy, rtLinearDepth, cmd);
+
+				GPUBarrier depth_outputs_to_srv[] = {
+					GPUBarrier::Image(&depthBuffer_Copy, ResourceState::SHADER_RESOURCE_COMPUTE, depthBuffer_Copy.desc.layout),
+					GPUBarrier::Image(&rtLinearDepth, ResourceState::SHADER_RESOURCE_COMPUTE, rtLinearDepth.desc.layout),
+				};
+				device->Barrier(depth_outputs_to_srv, arraysize(depth_outputs_to_srv), cmd);
+			}
 
 			wi::renderer::ComputeTiledLightCulling(
 				tiledLightResources,
@@ -1100,13 +1151,15 @@ namespace wi
 				);
 			}
 			else if (
-				getSSREnabled() ||
-				getSSGIEnabled() ||
-				getRaytracedReflectionEnabled() ||
-				getRaytracedDiffuseEnabled() ||
-				wi::renderer::GetScreenSpaceShadowsEnabled() ||
-				wi::renderer::GetRaytracedShadowsEnabled() ||
-				wi::renderer::GetVXGIEnabled()
+				wi::renderer::IsPrimitiveIDSupported() && (
+					getSSREnabled() ||
+					getSSGIEnabled() ||
+					getRaytracedReflectionEnabled() ||
+					getRaytracedDiffuseEnabled() ||
+					wi::renderer::GetScreenSpaceShadowsEnabled() ||
+					wi::renderer::GetRaytracedShadowsEnabled() ||
+					wi::renderer::GetVXGIEnabled()
+				)
 				)
 			{
 				// These post effects require surface normals and/or roughness

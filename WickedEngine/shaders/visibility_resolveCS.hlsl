@@ -63,7 +63,7 @@ void main(uint2 Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
 #endif // VISIBILITY_MSAA
 
 	float depth = 1; // invalid
-	uint bin = ~0u; // invalid
+	uint bin = SHADERTYPE_BIN_COUNT; // default to sky bin
 	if (pixel_valid)
 	{
 		[branch]
@@ -76,8 +76,25 @@ void main(uint2 Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
 			Surface surface;
 			surface.init();
 
-			[branch]
-			if (surface.load(prim, ray.Origin, ray.Direction))
+			bool surface_loaded = surface.load(prim, ray.Origin, ray.Direction);
+			if (!surface_loaded)
+			{
+				float fallback_depth = texture_depth[pixel];
+				if (fallback_depth < 1.0f)
+				{
+					float fallback_lineardepth = compute_lineardepth(fallback_depth) * GetCamera().z_far_rcp;
+					float depth_linear = fallback_lineardepth * GetCamera().z_range + GetCamera().z_near;
+					float4 fallback_svposition = float4(float2(pixel) + 0.5f, fallback_depth, depth_linear);
+					float3 fallback_positionWS = GetCamera().screen_to_world(fallback_svposition);
+					surface_loaded = surface.load(prim, fallback_positionWS);
+					if (surface_loaded)
+					{
+						depth = fallback_depth;
+					}
+				}
+			}
+
+			if (surface_loaded)
 			{
 				float4 tmp = mul(GetCamera().view_projection, float4(surface.P, 1));
 				tmp.xyz /= max(0.0001, tmp.w); // max: avoid nan
@@ -85,20 +102,28 @@ void main(uint2 Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
 
 				bin = surface.material.GetShaderType();
 			}
+			else
+			{
+				primitiveID = 0; // mark as sky if surface data could not be resolved
+				depth = 0;
+			}
 		}
 		else
 		{
 			// sky:
 			depth = 0;
-			bin = SHADERTYPE_BIN_COUNT;
 		}
-		if (groupIndex < 32)
+
+		if (bin <= SHADERTYPE_BIN_COUNT)
 		{
-			InterlockedOr(local_bin_execution_mask_0[bin], 1u << groupIndex);
-		}
-		else
-		{
-			InterlockedOr(local_bin_execution_mask_1[bin], 1u << (groupIndex - 32u));
+			if (groupIndex < 32)
+			{
+				InterlockedOr(local_bin_execution_mask_0[bin], 1u << groupIndex);
+			}
+			else
+			{
+				InterlockedOr(local_bin_execution_mask_1[bin], 1u << (groupIndex - 32u));
+			}
 		}
 	}
 
