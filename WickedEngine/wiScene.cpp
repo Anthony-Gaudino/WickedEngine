@@ -4021,6 +4021,22 @@ namespace wi::scene
 						subsetGeometry.flags |= SHADERMESH_FLAG_DOUBLE_SIDED;
 					}
 					std::memcpy(geometryArrayMapped + mesh.geometryOffset + subsetIndex, &subsetGeometry, sizeof(subsetGeometry));
+						// Ensure material transmission isn't exactly zero on Apple platforms
+						// at the moment the material is applied to this geometry subset.
+	#if defined(PLATFORM_MACOS) || defined(PLATFORM_IOS)
+						if (materialArrayMapped != nullptr && subsetGeometry.materialIndex < materialArraySize)
+						{
+							uint32_t lo = materialArrayMapped[subsetGeometry.materialIndex].transmission_sheenroughness_clearcoat_clearcoatroughness.x;
+							uint16_t trans_half = (uint16_t)(lo & 0xFFFFu);
+							if (trans_half == 0)
+							{
+								const uint16_t fallback_half = XMConvertFloatToHalf(wi::renderer::TRANSMISSION_PATCH_VALUE);
+								lo = (lo & 0xFFFF0000u) | (uint32_t)fallback_half;
+								materialArrayMapped[subsetGeometry.materialIndex].transmission_sheenroughness_clearcoat_clearcoatroughness.x = lo;
+								material_patched_count.fetch_add(1);
+							}
+						}
+	#endif
 					subsetIndex++;
 				}
 			}
@@ -5007,6 +5023,38 @@ namespace wi::scene
 
 			size_t geometryAllocation = geometryAllocator.fetch_add(1);
 			std::memcpy(geometryArrayMapped + geometryAllocation, &geometry, sizeof(geometry));
+
+#if defined(PLATFORM_MACOS) || defined(PLATFORM_IOS)
+	// Ensure transmission half is not zero when applying material to emitter geometry
+	if (materialArrayMapped != nullptr && geometry.materialIndex < materialArraySize)
+	{
+		uint32_t lo = materialArrayMapped[geometry.materialIndex].transmission_sheenroughness_clearcoat_clearcoatroughness.x;
+		uint16_t trans_half = (uint16_t)(lo & 0xFFFFu);
+		if (trans_half == 0)
+		{
+			const uint16_t fallback_half = XMConvertFloatToHalf(wi::renderer::TRANSMISSION_PATCH_VALUE);
+			lo = (lo & 0xFFFF0000u) | (uint32_t)fallback_half;
+			materialArrayMapped[geometry.materialIndex].transmission_sheenroughness_clearcoat_clearcoatroughness.x = lo;
+			material_patched_count.fetch_add(1);
+		}
+	}
+#endif
+
+#if defined(PLATFORM_MACOS) || defined(PLATFORM_IOS)
+	// Ensure transmission half is not zero when applying material to hair geometry
+	if (materialArrayMapped != nullptr && geometry.materialIndex < materialArraySize)
+	{
+		uint32_t lo = materialArrayMapped[geometry.materialIndex].transmission_sheenroughness_clearcoat_clearcoatroughness.x;
+		uint16_t trans_half = (uint16_t)(lo & 0xFFFFu);
+		if (trans_half == 0)
+		{
+			const uint16_t fallback_half = XMConvertFloatToHalf(wi::renderer::TRANSMISSION_PATCH_VALUE);
+			lo = (lo & 0xFFFF0000u) | (uint32_t)fallback_half;
+			materialArrayMapped[geometry.materialIndex].transmission_sheenroughness_clearcoat_clearcoatroughness.x = lo;
+			material_patched_count.fetch_add(1);
+		}
+	}
+#endif
 
 			ShaderMeshInstance inst;
 			inst.init();

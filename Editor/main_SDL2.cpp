@@ -271,6 +271,12 @@ int main(int argc, char *argv[])
 
     editor.SetWindow(window.get());
 
+#if !defined(NDEBUG)
+	// Development helper: disable magenta fragment-execution test and enable screen-space shadow mask debug overlay
+	wi::renderer::SetDebugLogOcclusion(false);
+	wi::renderer::SetDebugVisibilityView(wi::renderer::DEBUGVIS_RTSHADOW);
+#endif
+
     int ret = sdl_loop();
 
 	wi::jobsystem::ShutDown();

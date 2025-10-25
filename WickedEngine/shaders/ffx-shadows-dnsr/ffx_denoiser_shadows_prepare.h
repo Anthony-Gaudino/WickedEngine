@@ -25,13 +25,45 @@ THE SOFTWARE.
 
 #include "ffx_denoiser_shadows_util.h"
 
+groupshared uint g_FFX_DNSR_Shadows_lane_mask_or;
+
+uint FFX_DNSR_Shadows_GroupReduceOr(uint lane_mask, uint2 gtid)
+{
+#if defined(WAVE_OPS_SUPPORTED) || defined(__spirv__) || defined(__PSSL__) || defined(__XBOX_ENABLE_WAVEOPS)
+    // Prefer native wave reduction when the wave covers the full threadgroup (FFX assumes 64 lanes).
+    if (WaveGetLaneCount() == 64)
+    {
+        return WaveActiveBitOr(lane_mask);
+    }
+#endif // wave intrinsics available
+
+    // Fallback path for platforms (such as Metal) where wave intrinsics either are unavailable
+    // or the wave size does not span the full threadgroup.
+    GroupMemoryBarrierWithGroupSync();
+    if (all(gtid == 0))
+    {
+        g_FFX_DNSR_Shadows_lane_mask_or = 0;
+    }
+    GroupMemoryBarrierWithGroupSync();
+
+    InterlockedOr(g_FFX_DNSR_Shadows_lane_mask_or, lane_mask);
+
+    GroupMemoryBarrierWithGroupSync();
+    return g_FFX_DNSR_Shadows_lane_mask_or;
+}
+
 void FFX_DNSR_Shadows_CopyResult(uint2 gtid, uint2 gid)
 {
     const uint2 did = gid * uint2(8, 4) + gtid;
     const uint linear_tile_index = FFX_DNSR_Shadows_LinearTileIndex(gid, FFX_DNSR_Shadows_GetBufferDimensions().x);
     const bool hit_light = FFX_DNSR_Shadows_HitsLight(did, gtid, gid);
     const uint lane_mask = hit_light ? FFX_DNSR_Shadows_GetBitMaskFromPixelPosition(did) : 0;
-    FFX_DNSR_Shadows_WriteMask(linear_tile_index, WaveActiveBitOr(lane_mask));
+    const uint merged_mask = FFX_DNSR_Shadows_GroupReduceOr(lane_mask, gtid);
+
+    if (all(gtid == 0))
+    {
+        FFX_DNSR_Shadows_WriteMask(linear_tile_index, merged_mask);
+    }
 }
  
 void FFX_DNSR_Shadows_PrepareShadowMask(uint2 gtid, uint2 gid)

@@ -152,6 +152,9 @@ namespace wi::scene
 		std::atomic<uint32_t> skinningAllocator{ 0 };
 
 		// Occlusion query state:
+
+		// Diagnostic: count how many materials were patched this frame to mitigate transmission==0 on Apple
+		std::atomic<uint32_t> material_patched_count{ 0 };
 		struct OcclusionResult
 		{
 			int occlusionQueries[wi::graphics::GraphicsDevice::GetBufferCount()];

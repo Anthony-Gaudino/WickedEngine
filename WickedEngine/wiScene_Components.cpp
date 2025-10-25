@@ -13,6 +13,7 @@
 
 #include "Utility/mikktspace.h"
 #include "Utility/meshoptimizer/meshoptimizer.h"
+#include <limits>
 
 #if __has_include("OpenImageDenoise/oidn.hpp")
 #include "OpenImageDenoise/oidn.hpp"
@@ -311,7 +312,15 @@ namespace wi::scene
 		{
 			material.sheenColor_saturation = pack_half4(XMFLOAT4(sheenColor.x, sheenColor.y, sheenColor.z, saturation));
 		}
-		material.transmission_sheenroughness_clearcoat_clearcoatroughness = pack_half4(transmission, sheenRoughness, clearcoat, clearcoatRoughness);
+		// Temporary hack: force some non-zero transmission on Apple platforms to steer problematic paths away from opaque shading
+		float transmission_for_shader = transmission;
+#if defined(PLATFORM_MACOS) || defined(PLATFORM_IOS)
+	if (transmission_for_shader <= 0.0f)
+	{
+		transmission_for_shader = wi::renderer::TRANSMISSION_PATCH_VALUE;
+	}
+#endif
+	material.transmission_sheenroughness_clearcoat_clearcoatroughness = pack_half4(transmission_for_shader, sheenRoughness, clearcoat, clearcoatRoughness);
 		material.layerMask = layerMask;
 		float _anisotropy_strength = 0;
 		float _anisotropy_rotation_sin = 0;
@@ -469,6 +478,14 @@ namespace wi::scene
 		{
 			return FILTER_TRANSPARENT | FILTER_WATER;
 		}
+	// 	float patched_transmission = transmission;
+	// #if defined(PLATFORM_MACOS) || defined(PLATFORM_IOS)
+	// 	if (patched_transmission <= 0)
+	// 	{
+	// 		// Align filter classification with Apple transmission hack so Metal uses transparent pipeline
+	// 		patched_transmission = wi::renderer::TRANSMISSION_PATCH_VALUE;
+	// 	}
+	// #endif
 		if (transmission > 0 || cloak > 0)
 		{
 			return FILTER_TRANSPARENT;

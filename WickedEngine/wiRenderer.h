@@ -35,6 +35,12 @@ namespace wi::renderer
 	constexpr wi::graphics::Format format_rendertarget_envprobe = wi::graphics::Format::R11G11B10_FLOAT;
 	constexpr wi::graphics::Format format_depthbuffer_envprobe = wi::graphics::Format::D16_UNORM;
 
+#if defined(PLATFORM_MACOS) || defined(PLATFORM_IOS)
+	constexpr float TRANSMISSION_PATCH_VALUE = 0.25f;
+#else
+	constexpr float TRANSMISSION_PATCH_VALUE = 0.0f;
+#endif
+
 	constexpr uint8_t raytracing_inclusion_mask_shadow = 1 << 0;
 	constexpr uint8_t raytracing_inclusion_mask_reflection = 1 << 1;
 
@@ -66,6 +72,7 @@ namespace wi::renderer
 	const wi::graphics::GPUBuffer* GetBuffer(wi::enums::BUFFERTYPES id);
 	const wi::graphics::Texture* GetTexture(wi::enums::TEXTYPES id);
 	bool IsPrimitiveIDSupported();
+	bool IsOcclusionCullingSupported();
 
 	// Returns a buffer preinitialized for quad index buffer laid out as:
 	//	vertexID * 4 + [0, 1, 2, 2, 1, 3]
@@ -207,6 +214,9 @@ namespace wi::renderer
 
 	// Performs frustum culling.
 	void UpdateVisibility(Visibility& vis);
+
+	// Debug: log occlusion results for a visibility instance
+	void DebugLogOcclusionResults(const Visibility& vis);
 	// Prepares the scene for rendering
 	void UpdatePerFrameData(
 		wi::scene::Scene& scene,
@@ -1154,6 +1164,24 @@ namespace wi::renderer
 	bool GetVariableRateShadingClassification();
 	void SetVariableRateShadingClassificationDebug(bool enabled);
 	bool GetVariableRateShadingClassificationDebug();
+
+	// Debug visibility overlay for inspecting visibility resources
+	enum DebugVisibilityView
+	{
+		DEBUGVIS_NONE = 0,
+		DEBUGVIS_NORMALS = 1,
+		DEBUGVIS_ROUGHNESS = 2,
+		DEBUGVIS_PAYLOAD0 = 3,
+		DEBUGVIS_PAYLOAD1 = 4,
+		DEBUGVIS_RTSHADOW = 5,
+		DEBUGVIS_LINEARDEPTH = 6,
+	};
+
+	void SetDebugVisibilityView(DebugVisibilityView view);
+	DebugVisibilityView GetDebugVisibilityView();
+
+	void SetDebugLogOcclusion(bool enabled);
+	bool GetDebugLogOcclusion();
 	void SetOcclusionCullingEnabled(bool enabled);
 	bool GetOcclusionCullingEnabled();
 	void SetTemporalAAEnabled(bool enabled);

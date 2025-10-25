@@ -18,6 +18,40 @@ RWTexture2D<float3> output_normals : register(u1);
 RWStructuredBuffer<uint4> output_tiles : register(u2);
 #endif // RTSHADOW
 
+#ifdef SCREENSPACESHADOW_USE_GROUP_REDUCE_HELPER
+#undef SCREENSPACESHADOW_USE_GROUP_REDUCE_HELPER
+#endif // SCREENSPACESHADOW_USE_GROUP_REDUCE_HELPER
+
+groupshared uint g_screenspace_shadow_bucket_or;
+
+uint ScreenSpaceShadow_GroupReduceOr(uint value, uint groupIndex)
+{
+#if defined(WAVE_OPS_SUPPORTED) || defined(__spirv__) || defined(__PSSL__) || defined(__XBOX_ENABLE_WAVEOPS)
+	// Prefer native wave ops when a single wave covers the whole threadgroup (common on 64-lane hardware).
+	const uint wave_lane_count = WaveGetLaneCount();
+	if (wave_lane_count == POSTPROCESS_BLOCKSIZE * POSTPROCESS_BLOCKSIZE)
+	{
+		return WaveReadLaneFirst(WaveActiveBitOr(value));
+	}
+#endif // hardware waves available
+
+	// Fallback path for platforms where the threadgroup spans multiple waves (Metal typically uses 32 lanes).
+	GroupMemoryBarrierWithGroupSync();
+	if (groupIndex == 0)
+	{
+		g_screenspace_shadow_bucket_or = 0;
+	}
+	GroupMemoryBarrierWithGroupSync();
+
+	if (value != 0)
+	{
+		InterlockedOr(g_screenspace_shadow_bucket_or, value);
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+	return g_screenspace_shadow_bucket_or;
+}
+
 #ifdef RTSHADOW
 inline bool AccumulateShadowLight(
 	uint entity_index,
@@ -330,7 +364,7 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint3 GTid :
 				uint bucket_bits = load_entitytile(flatTileIndex + bucket);
 
 				// Bucket scalarizer - Siggraph 2017 - Improved Culling [Michal Drobot]:
-				bucket_bits = WaveReadLaneFirst(WaveActiveBitOr(bucket_bits));
+				bucket_bits = ScreenSpaceShadow_GroupReduceOr(bucket_bits, groupIndex);
 				
 				bucket_bits = iterator.mask_entity(bucket, bucket_bits);
 

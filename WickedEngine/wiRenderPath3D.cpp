@@ -104,6 +104,7 @@ namespace wi
 		DeleteGPUResources();
 
 		GraphicsDevice* device = wi::graphics::GetDevice();
+		const bool primitiveIDSupported = wi::renderer::IsPrimitiveIDSupported();
 
 		XMUINT2 internalResolution = GetInternalResolution();
 		camera->width = (float)internalResolution.x;
@@ -112,7 +113,7 @@ namespace wi
 		// Render targets:
 
 		{
-			TextureDesc desc;
+			TextureDesc desc = {};
 			desc.format = wi::renderer::format_rendertarget_main;
 			desc.bind_flags = BindFlag::RENDER_TARGET | BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
 			desc.width = internalResolution.x;
@@ -135,7 +136,7 @@ namespace wi
 			}
 		}
 		{
-			TextureDesc desc;
+			TextureDesc desc = {};
 			desc.format = wi::renderer::format_idbuffer;
 			desc.bind_flags = BindFlag::RENDER_TARGET | BindFlag::SHADER_RESOURCE;
 			if (getMSAASampleCount() > 1)
@@ -146,7 +147,7 @@ namespace wi
 			desc.height = internalResolution.y;
 			desc.sample_count = 1;
 			desc.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
-			desc.misc_flags = ResourceMiscFlag::ALIASING_TEXTURE_RT_DS;
+			desc.misc_flags = primitiveIDSupported ? ResourceMiscFlag::ALIASING_TEXTURE_RT_DS : ResourceMiscFlag::NONE;
 			device->CreateTexture(&desc, nullptr, &rtPrimitiveID);
 			device->SetName(&rtPrimitiveID, "rtPrimitiveID");
 
@@ -164,7 +165,7 @@ namespace wi
 			}
 		}
 		{
-			TextureDesc desc;
+			TextureDesc desc = {};
 			desc.bind_flags = BindFlag::RENDER_TARGET | BindFlag::SHADER_RESOURCE;
 			desc.format = Format::R16G16_FLOAT;
 			desc.width = internalResolution.x;
@@ -195,7 +196,14 @@ namespace wi
 			device->CreateTexture(&desc, nullptr, &rtSceneCopy);
 			device->SetName(&rtSceneCopy, "rtSceneCopy");
 			desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS | BindFlag::RENDER_TARGET; // render target for aliasing
-			device->CreateTexture(&desc, nullptr, &rtSceneCopy_tmp, &rtPrimitiveID);
+			if (primitiveIDSupported)
+			{
+				device->CreateTexture(&desc, nullptr, &rtSceneCopy_tmp, &rtPrimitiveID);
+			}
+			else
+			{
+				device->CreateTexture(&desc, nullptr, &rtSceneCopy_tmp);
+			}
 			device->SetName(&rtSceneCopy_tmp, "rtSceneCopy_tmp");
 
 			device->CreateMipgenSubresources(rtSceneCopy);
@@ -213,8 +221,16 @@ namespace wi
 			desc.format = wi::renderer::format_rendertarget_main;
 			desc.width = internalResolution.x;
 			desc.height = internalResolution.y;
-			assert(ComputeTextureMemorySizeInBytes(desc) <= ComputeTextureMemorySizeInBytes(rtPrimitiveID.desc)); // Aliased check
-			device->CreateTexture(&desc, nullptr, &rtPostprocess, &rtPrimitiveID); // Aliased!
+			if (primitiveIDSupported)
+			{
+				assert(ComputeTextureMemorySizeInBytes(desc) <= ComputeTextureMemorySizeInBytes(rtPrimitiveID.desc)); // Aliased check
+				device->CreateTexture(&desc, nullptr, &rtPostprocess, &rtPrimitiveID); // Aliased!
+			}
+			else
+			{
+				desc.misc_flags = ResourceMiscFlag::NONE;
+				device->CreateTexture(&desc, nullptr, &rtPostprocess);
+			}
 			device->SetName(&rtPostprocess, "rtPostprocess");
 		}
 		{
@@ -754,16 +770,31 @@ namespace wi
 		camera->scissor = GetScissorInternalResolution();
 		camera->sample_count = depthBuffer_Main.desc.sample_count;
 		camera->shadercamera_options = SHADERCAMERA_OPTION_NONE;
-		if (!wi::renderer::IsPrimitiveIDSupported())
+		const bool primitive_id_supported = wi::renderer::IsPrimitiveIDSupported();
+		if (!primitive_id_supported)
 		{
 			camera->shadercamera_options |= SHADERCAMERA_OPTION_DISABLE_DEPTH_CULLING;
 		}
-		camera->texture_primitiveID_index = device->GetDescriptorIndex(&rtPrimitiveID, SubresourceType::SRV);
+		camera->texture_primitiveID_index = primitive_id_supported ? device->GetDescriptorIndex(&rtPrimitiveID, SubresourceType::SRV) : -1;
 		camera->texture_depth_index = device->GetDescriptorIndex(&depthBuffer_Copy, SubresourceType::SRV);
 		camera->texture_lineardepth_index = device->GetDescriptorIndex(&rtLinearDepth, SubresourceType::SRV);
 		camera->texture_velocity_index = device->GetDescriptorIndex(&rtVelocity, SubresourceType::SRV);
-		camera->texture_normal_index = device->GetDescriptorIndex(&visibilityResources.texture_normals, SubresourceType::SRV);
-		camera->texture_roughness_index = device->GetDescriptorIndex(&visibilityResources.texture_roughness, SubresourceType::SRV);
+		if (primitive_id_supported && visibilityResources.texture_normals.IsValid())
+		{
+			camera->texture_normal_index = device->GetDescriptorIndex(&visibilityResources.texture_normals, SubresourceType::SRV);
+		}
+		else
+		{
+			camera->texture_normal_index = device->GetDescriptorIndex(wi::texturehelper::getNormalMapDefault(), SubresourceType::SRV);
+		}
+		if (primitive_id_supported && visibilityResources.texture_roughness.IsValid())
+		{
+			camera->texture_roughness_index = device->GetDescriptorIndex(&visibilityResources.texture_roughness, SubresourceType::SRV);
+		}
+		else
+		{
+			camera->texture_roughness_index = device->GetDescriptorIndex(wi::texturehelper::getWhite(), SubresourceType::SRV);
+		}
 		camera->buffer_entitytiles_index = device->GetDescriptorIndex(&tiledLightResources.entityTiles, SubresourceType::SRV);
 		camera->texture_reflection_index = device->GetDescriptorIndex(&rtReflection_resolved, SubresourceType::SRV);
 		camera->texture_reflection_depth_index = device->GetDescriptorIndex(&depthBuffer_Reflection_resolved, SubresourceType::SRV);
@@ -772,7 +803,9 @@ namespace wi
 		camera->texture_ao_index = device->GetDescriptorIndex(&rtAO, SubresourceType::SRV);
 		camera->texture_ssr_index = device->GetDescriptorIndex(&rtSSR, SubresourceType::SRV);
 		camera->texture_ssgi_index = device->GetDescriptorIndex(&rtSSGI, SubresourceType::SRV);
-		if (rtShadow.IsValid())
+		const bool shadow_mask_enabled = rtShadow.IsValid() &&
+			(wi::renderer::GetScreenSpaceShadowsEnabled() || wi::renderer::GetRaytracedShadowsEnabled());
+		if (shadow_mask_enabled)
 		{
 			camera->shadercamera_options |= SHADERCAMERA_OPTION_USE_SHADOW_MASK;
 			camera->texture_rtshadow_index = device->GetDescriptorIndex(&rtShadow, SubresourceType::SRV);
@@ -906,17 +939,21 @@ namespace wi
 			);
 			wi::renderer::UpdateRenderData(visibility_main, frameCB, cmd);
 
-			uint32_t num_barriers = 2;
-			GPUBarrier barriers[] = {
-				GPUBarrier::Image(&debugUAV, debugUAV.desc.layout, ResourceState::UNORDERED_ACCESS),
-				GPUBarrier::Aliasing(&rtPostprocess, &rtPrimitiveID),
-				GPUBarrier::Image(&rtMain, rtMain.desc.layout, ResourceState::SHADER_RESOURCE_COMPUTE), // prepares transition for discard in dx12
-			};
+			GPUBarrier barriers[3];
+			uint32_t num_barriers = 0;
+			barriers[num_barriers++] = GPUBarrier::Image(&debugUAV, debugUAV.desc.layout, ResourceState::UNORDERED_ACCESS);
+			if (wi::renderer::IsPrimitiveIDSupported())
+			{
+				barriers[num_barriers++] = GPUBarrier::Aliasing(&rtPostprocess, &rtPrimitiveID);
+			}
 			if (visibility_shading_in_compute)
 			{
-				num_barriers++;
+				barriers[num_barriers++] = GPUBarrier::Image(&rtMain, rtMain.desc.layout, ResourceState::SHADER_RESOURCE_COMPUTE); // prepares transition for discard in dx12
 			}
-			device->Barrier(barriers, num_barriers, cmd);
+			if (num_barriers > 0)
+			{
+				device->Barrier(barriers, num_barriers, cmd);
+			}
 
 		});
 
@@ -1142,6 +1179,30 @@ namespace wi
 				cmd
 			);
 
+			if (!wi::renderer::IsPrimitiveIDSupported() && visibilityResources.IsValid())
+			{
+				auto clear_visibility_texture = [&](const wi::graphics::Texture& texture, uint32_t clear_value)
+				{
+					if (!texture.IsValid())
+					{
+						return;
+					}
+
+					GPUBarrier to_uav = GPUBarrier::Image(&texture, texture.desc.layout, ResourceState::UNORDERED_ACCESS);
+					device->Barrier(&to_uav, 1, cmd);
+					device->ClearUAV(&texture, clear_value, cmd);
+					GPUBarrier to_srv = GPUBarrier::Image(&texture, ResourceState::UNORDERED_ACCESS, texture.desc.layout);
+					device->Barrier(&to_srv, 1, cmd);
+				};
+
+				// Without primitive IDs the visibility surface pass cannot populate these UAVs.
+				// Clear them each frame so downstream effects sample deterministic fallback data.
+				clear_visibility_texture(visibilityResources.texture_normals, 0);
+				clear_visibility_texture(visibilityResources.texture_roughness, 0xFFFFFFFF);
+				clear_visibility_texture(visibilityResources.texture_payload_0, 0);
+				clear_visibility_texture(visibilityResources.texture_payload_1, 0);
+			}
+
 			if (visibility_shading_in_compute)
 			{
 				wi::renderer::Visibility_Surface(
@@ -1171,10 +1232,24 @@ namespace wi
 
 			if (rtVelocity.IsValid())
 			{
-				wi::renderer::Visibility_Velocity(
-					rtVelocity,
-					cmd
-				);
+				if (wi::renderer::IsPrimitiveIDSupported())
+				{
+					wi::renderer::Visibility_Velocity(
+						rtVelocity,
+						cmd
+					);
+				}
+				else
+				{
+					// Primitive IDs are unavailable (Metal path), so velocity reconstruction
+					// would read invalid primitive data. Instead, clear the velocity buffer
+					// to indicate zero motion and avoid flickering reprojection artifacts.
+					GPUBarrier velocity_to_uav = GPUBarrier::Image(&rtVelocity, rtVelocity.desc.layout, ResourceState::UNORDERED_ACCESS);
+					device->Barrier(&velocity_to_uav, 1, cmd);
+					device->ClearUAV(&rtVelocity, 0, cmd);
+					GPUBarrier velocity_to_srv = GPUBarrier::Image(&rtVelocity, ResourceState::UNORDERED_ACCESS, rtVelocity.desc.layout);
+					device->Barrier(&velocity_to_srv, 1, cmd);
+				}
 			}
 
 			if (wi::renderer::GetSurfelGIEnabled())
@@ -1252,7 +1327,7 @@ namespace wi
 
 		// Occlusion culling:
 		CommandList cmd_occlusionculling;
-		if (getOcclusionCullingEnabled())
+		if (getOcclusionCullingEnabled() && wi::renderer::IsOcclusionCullingSupported())
 		{
 			cmd = device->BeginCommandList();
 			cmd_occlusionculling = cmd;
@@ -1828,6 +1903,12 @@ namespace wi
 
 		wi::jobsystem::Wait(ctx);
 
+		// Debug: optionally log occlusion results after all rendering work was synchronized
+		if (wi::renderer::GetDebugLogOcclusion())
+		{
+			wi::renderer::DebugLogOcclusionResults(visibility_main);
+		}
+
 		first_frame = false;
 	}
 
@@ -1841,6 +1922,12 @@ namespace wi
 		fx.quality = wi::image::QUALITY_LINEAR;
 		fx.enableFullScreen();
 
+		// If occlusion debug logging is enabled, additionally enable the image shader debug execution marker
+		if (wi::renderer::GetDebugLogOcclusion())
+		{
+			fx.enableDebugExecution();
+		}
+
 		wi::image::Draw(GetLastPostprocessRT(), fx, cmd);
 
 		if (
@@ -1852,6 +1939,57 @@ namespace wi
 			fx.enableFullScreen();
 			fx.blendFlag = BLENDMODE_PREMULTIPLIED;
 			wi::image::Draw(&debugUAV, fx, cmd);
+		}
+
+		// Debug visibility overlay
+		auto view = wi::renderer::GetDebugVisibilityView();
+		if (view != wi::renderer::DEBUGVIS_NONE)
+		{
+			const wi::graphics::Texture* tex = nullptr;
+			const bool primitive_id_supported = wi::renderer::IsPrimitiveIDSupported();
+			switch (view)
+			{
+			case wi::renderer::DEBUGVIS_NORMALS:
+				if (primitive_id_supported && visibilityResources.texture_normals.IsValid())
+				{
+					tex = &visibilityResources.texture_normals;
+				}
+				else
+				{
+					tex = wi::texturehelper::getNormalMapDefault();
+				}
+				break;
+			case wi::renderer::DEBUGVIS_ROUGHNESS:
+				if (primitive_id_supported && visibilityResources.texture_roughness.IsValid())
+				{
+					tex = &visibilityResources.texture_roughness;
+				}
+				else
+				{
+					tex = wi::texturehelper::getWhite();
+				}
+				break;
+			case wi::renderer::DEBUGVIS_PAYLOAD0:
+				if (visibilityResources.texture_payload_0.IsValid()) tex = &visibilityResources.texture_payload_0;
+				break;
+			case wi::renderer::DEBUGVIS_PAYLOAD1:
+				if (visibilityResources.texture_payload_1.IsValid()) tex = &visibilityResources.texture_payload_1;
+				break;
+			case wi::renderer::DEBUGVIS_RTSHADOW:
+				if (rtShadow.IsValid()) tex = &rtShadow;
+				break;
+			case wi::renderer::DEBUGVIS_LINEARDEPTH:
+				if (rtLinearDepth.IsValid()) tex = &rtLinearDepth;
+				break;
+			default:
+				break;
+			}
+			if (tex != nullptr)
+			{
+				fx.enableFullScreen();
+				fx.blendFlag = BLENDMODE_OPAQUE;
+				wi::image::Draw(tex, fx, cmd);
+			}
 		}
 
 		device->EventEnd(cmd);
@@ -1929,6 +2067,10 @@ namespace wi
 	}
 	void RenderPath3D::RenderSSR(CommandList cmd) const
 	{
+		if (!wi::renderer::IsPrimitiveIDSupported())
+		{
+			return;
+		}
 		if (getSSREnabled() && !getRaytracedReflectionEnabled())
 		{
 			wi::renderer::Postprocess_SSR(
@@ -1942,6 +2084,10 @@ namespace wi
 	}
 	void RenderPath3D::RenderSSGI(CommandList cmd) const
 	{
+		if (!wi::renderer::IsPrimitiveIDSupported())
+		{
+			return;
+		}
 		if (getSSGIEnabled())
 		{
 			wi::renderer::Postprocess_SSGI(
@@ -2099,11 +2245,18 @@ namespace wi
 		device->EventBegin("RenderSceneMIPChain", cmd);
 
 		{
-			GPUBarrier barriers[] = {
-				GPUBarrier::Aliasing(&rtPrimitiveID, &rtSceneCopy_tmp),
-				GPUBarrier::Image(&rtSceneCopy_tmp, rtSceneCopy_tmp.desc.layout, ResourceState::UNORDERED_ACCESS),
-			};
-			device->Barrier(barriers, arraysize(barriers), cmd);
+			if (wi::renderer::IsPrimitiveIDSupported())
+			{
+				GPUBarrier barriers[] = {
+					GPUBarrier::Aliasing(&rtPrimitiveID, &rtSceneCopy_tmp),
+					GPUBarrier::Image(&rtSceneCopy_tmp, rtSceneCopy_tmp.desc.layout, ResourceState::UNORDERED_ACCESS),
+				};
+				device->Barrier(barriers, arraysize(barriers), cmd);
+			}
+			else
+			{
+				device->Barrier(GPUBarrier::Image(&rtSceneCopy_tmp, rtSceneCopy_tmp.desc.layout, ResourceState::UNORDERED_ACCESS), cmd);
+			}
 			device->ClearUAV(&rtSceneCopy_tmp, 0, cmd);
 		}
 
@@ -2115,7 +2268,14 @@ namespace wi
 		mipopt.gaussian_temp = &rtSceneCopy_tmp;
 		wi::renderer::GenerateMipChain(rtSceneCopy, wi::renderer::MIPGENFILTER_GAUSSIAN, cmd, mipopt);
 
-		device->Barrier(GPUBarrier::Aliasing(&rtSceneCopy_tmp, &rtPrimitiveID), cmd);
+		if (wi::renderer::IsPrimitiveIDSupported())
+		{
+			device->Barrier(GPUBarrier::Aliasing(&rtSceneCopy_tmp, &rtPrimitiveID), cmd);
+		}
+		else
+		{
+			device->Barrier(GPUBarrier::Image(&rtSceneCopy_tmp, ResourceState::UNORDERED_ACCESS, rtSceneCopy_tmp.desc.layout), cmd);
+		}
 
 		device->EventEnd(cmd);
 		wi::profiler::EndRange(range);
@@ -2368,6 +2528,7 @@ namespace wi
 
 		wi::renderer::Postprocess_Downsample4x(rtMain, rtSceneCopy, cmd);
 	}
+
 	void RenderPath3D::RenderPostprocessChain(CommandList cmd) const
 	{
 		GraphicsDevice* device = wi::graphics::GetDevice();
@@ -2381,11 +2542,18 @@ namespace wi
 
 		// rtPostprocess aliasing transition:
 		{
-			GPUBarrier barriers[] = {
-				GPUBarrier::Aliasing(&rtPrimitiveID, &rtPostprocess),
-				GPUBarrier::Image(&rtPostprocess, rtPostprocess.desc.layout, ResourceState::UNORDERED_ACCESS),
-			};
-			device->Barrier(barriers, arraysize(barriers), cmd);
+			if (wi::renderer::IsPrimitiveIDSupported())
+			{
+				GPUBarrier barriers[] = {
+					GPUBarrier::Aliasing(&rtPrimitiveID, &rtPostprocess),
+					GPUBarrier::Image(&rtPostprocess, rtPostprocess.desc.layout, ResourceState::UNORDERED_ACCESS),
+				};
+				device->Barrier(barriers, arraysize(barriers), cmd);
+			}
+			else
+			{
+				device->Barrier(GPUBarrier::Image(&rtPostprocess, rtPostprocess.desc.layout, ResourceState::UNORDERED_ACCESS), cmd);
+			}
 			device->ClearUAV(&rtPostprocess, 0, cmd);
 			device->Barrier(GPUBarrier::Image(&rtPostprocess, ResourceState::UNORDERED_ACCESS, rtPostprocess.desc.layout), cmd);
 		}

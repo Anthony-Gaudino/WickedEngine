@@ -17,10 +17,6 @@ groupshared float tile_Z[TILE_SIZE * TILE_SIZE];
 [numthreads(POSTPROCESS_BLOCKSIZE, POSTPROCESS_BLOCKSIZE, 1)]
 void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint3 GTid : SV_GroupThreadID, uint groupIndex : SV_GroupIndex)
 {
-	uint primitiveID = texture_primitiveID[DTid.xy * 2];
-	if (!any(primitiveID))
-		return;
-
 	uint flatTileIdx = 0;
 	if (GTid.y < 4)
 	{
@@ -31,6 +27,19 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint3 GTid :
 		flatTileIdx = flatten2D(Gid.xy * uint2(1, 2) + uint2(0, 1), (postprocess.resolution + uint2(7, 3)) / uint2(8, 4));
 	}
 	output_tiles[flatTileIdx] = 0;
+
+	if (!PrimitiveIDAvailable())
+	{
+		output_normals[DTid.xy] = 0;
+		return;
+	}
+
+	uint primitiveID = LoadPrimitiveID(DTid.xy * 2);
+	if (!any(primitiveID))
+	{
+		output_normals[DTid.xy] = 0;
+		return;
+	}
 
 	const float2 uv = ((float2)DTid.xy + 0.5) * postprocess.resolution_rcp;
 	float2 clipspace = uv * 2 - 1;

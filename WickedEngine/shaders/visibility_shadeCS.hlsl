@@ -41,7 +41,16 @@ void main(uint Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
 	const float2 uv = ((float2)pixel + 0.5) * GetCamera().internal_resolution_rcp;
 	RayDesc ray = CreateCameraRay(pixel);
 
-	uint primitiveID = texture_primitiveID[pixel];
+	if (!PrimitiveIDAvailable())
+	{
+		return;
+	}
+
+	uint primitiveID = LoadPrimitiveID(pixel);
+	if (!any(primitiveID))
+	{
+		return;
+	}
 	PrimitiveID prim;
 	prim.init();
 	prim.unpack(primitiveID);

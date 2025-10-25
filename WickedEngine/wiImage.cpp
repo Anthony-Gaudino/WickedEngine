@@ -172,6 +172,12 @@ namespace wi::image
 			image.flags |= IMAGE_FLAG_TEXTURE1D_BASE;
 		}
 
+		// Propagate debug execution flag from params to shader image flags
+		if (params.isDebugExecutionEnabled())
+		{
+			image.flags |= IMAGE_FLAG_DEBUG_EXECUTION;
+		}
+
 		image.hdr_scaling_aspect = wi::math::pack_half2(params.hdr_scaling, canvas_aspect);
 		image.bordersoften_saturation = wi::math::pack_half2(params.border_soften, params.saturation);
 		image.mask_alpha_range = wi::math::pack_half2(params.mask_alpha_range_start, params.mask_alpha_range_end);

@@ -40,7 +40,16 @@ void main(uint Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
 
 	[branch] if (!tile.check_thread_valid(groupIndex)) return; // only return after QuadRead operations!
 
-	uint primitiveID = texture_primitiveID[pixel];
+	if (!PrimitiveIDAvailable())
+	{
+		return;
+	}
+
+	uint primitiveID = LoadPrimitiveID(pixel);
+	if (!any(primitiveID))
+	{
+		return;
+	}
 	PrimitiveID prim;
 	prim.init();
 	prim.unpack(primitiveID);

@@ -113,24 +113,39 @@ void main(uint2 Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
 			// sky:
 			depth = 0;
 		}
-
-		if (bin <= SHADERTYPE_BIN_COUNT)
+	}
+	
+	// Always mark this thread as active in the execution mask, even if pixel is outside viewport.
+	// Consumer shaders need to know which threads exist in the group, not just which pixels are valid.
+	// Invalid pixels will be skipped by pixel_valid checks in the consumer, but the execution mask
+	// must represent all participating threads to avoid incorrect early returns.
+	if (bin <= SHADERTYPE_BIN_COUNT)
+	{
+		if (groupIndex < 32)
 		{
-			if (groupIndex < 32)
-			{
-				InterlockedOr(local_bin_execution_mask_0[bin], 1u << groupIndex);
-			}
-			else
-			{
-				InterlockedOr(local_bin_execution_mask_1[bin], 1u << (groupIndex - 32u));
-			}
+			InterlockedOr(local_bin_execution_mask_0[bin], 1u << groupIndex);
+		}
+		else
+		{
+			InterlockedOr(local_bin_execution_mask_1[bin], 1u << (groupIndex - 32u));
 		}
 	}
 
-	uint wave_local_bin_mask = WaveActiveBitOr(1u << bin);
-	if (WaveIsFirstLane())
+	// Accumulate which shader-type bins are used within this threadgroup.
+	// Avoid Wave intrinsics for portability (Metal subgroup behavior can be unreliable),
+	// so perform aggregation on the group leader after all lanes have updated the local execution masks.
+	GroupMemoryBarrierWithGroupSync();
+	if (groupIndex == 0)
 	{
-		InterlockedOr(local_bin_mask, wave_local_bin_mask);
+		uint tmp_mask = 0;
+		for (uint b = 0; b < SHADERTYPE_BIN_COUNT + 1; ++b)
+		{
+			if (local_bin_execution_mask_0[b] != 0 || local_bin_execution_mask_1[b] != 0)
+			{
+				tmp_mask |= 1u << b;
+			}
+		}
+		local_bin_mask = tmp_mask;
 	}
 
 	GroupMemoryBarrierWithGroupSync();
@@ -150,42 +165,45 @@ void main(uint2 Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
 		}
 	}
 
-	// Downsample depths:
-	output_depth_mip0[pixel] = depth;
-	if (GTid.x % 2 == 0 && GTid.y % 2 == 0)
+	// Downsample depths (only write if pixel is valid to avoid out-of-bounds writes):
+	if (pixel_valid)
 	{
-		output_depth_mip1[pixel / 2] = depth;
-	}
-	if (GTid.x % 4 == 0 && GTid.y % 4 == 0)
-	{
-		output_depth_mip2[pixel / 4] = depth;
-	}
-	if (GTid.x % 8 == 0 && GTid.y % 8 == 0)
-	{
-		output_depth_mip3[pixel / 8] = depth;
-	}
-	if (GTid.x % 16 == 0 && GTid.y % 16 == 0)
-	{
-		output_depth_mip4[pixel / 16] = depth;
-	}
+		output_depth_mip0[pixel] = depth;
+		if (GTid.x % 2 == 0 && GTid.y % 2 == 0)
+		{
+			output_depth_mip1[pixel / 2] = depth;
+		}
+		if (GTid.x % 4 == 0 && GTid.y % 4 == 0)
+		{
+			output_depth_mip2[pixel / 4] = depth;
+		}
+		if (GTid.x % 8 == 0 && GTid.y % 8 == 0)
+		{
+			output_depth_mip3[pixel / 8] = depth;
+		}
+		if (GTid.x % 16 == 0 && GTid.y % 16 == 0)
+		{
+			output_depth_mip4[pixel / 16] = depth;
+		}
 
-	float lineardepth = compute_lineardepth(depth) * GetCamera().z_far_rcp;
-	output_lineardepth_mip0[pixel] = lineardepth;
-	if (GTid.x % 2 == 0 && GTid.y % 2 == 0)
-	{
-		output_lineardepth_mip1[pixel / 2] = lineardepth;
-	}
-	if (GTid.x % 4 == 0 && GTid.y % 4 == 0)
-	{
-		output_lineardepth_mip2[pixel / 4] = lineardepth;
-	}
-	if (GTid.x % 8 == 0 && GTid.y % 8 == 0)
-	{
-		output_lineardepth_mip3[pixel / 8] = lineardepth;
-	}
-	if (GTid.x % 16 == 0 && GTid.y % 16 == 0)
-	{
-		output_lineardepth_mip4[pixel / 16] = lineardepth;
+		float lineardepth = compute_lineardepth(depth) * GetCamera().z_far_rcp;
+		output_lineardepth_mip0[pixel] = lineardepth;
+		if (GTid.x % 2 == 0 && GTid.y % 2 == 0)
+		{
+			output_lineardepth_mip1[pixel / 2] = lineardepth;
+		}
+		if (GTid.x % 4 == 0 && GTid.y % 4 == 0)
+		{
+			output_lineardepth_mip2[pixel / 4] = lineardepth;
+		}
+		if (GTid.x % 8 == 0 && GTid.y % 8 == 0)
+		{
+			output_lineardepth_mip3[pixel / 8] = lineardepth;
+		}
+		if (GTid.x % 16 == 0 && GTid.y % 16 == 0)
+		{
+			output_lineardepth_mip4[pixel / 16] = lineardepth;
+		}
 	}
 
 }

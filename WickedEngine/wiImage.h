@@ -62,6 +62,8 @@ namespace wi::image
 			ANGULAR_INVERSE = 1 << 11,
 			DISTORTION_MASK = 1 << 12,
 			HIGHLIGHT = 1 << 13,
+			// Debug execution flag: when set, image shader will output magenta to indicate fragment execution
+			DEBUG_EXECUTION = 1 << 15,
 		};
 		uint32_t _flags = EMPTY;
 
@@ -195,6 +197,11 @@ namespace wi::image
 		constexpr void disableAngularSoftnessInverse() { _flags &= ~ANGULAR_INVERSE; }
 		constexpr void disableDistortionMask() { _flags &= ~DISTORTION_MASK; }
 		constexpr void disableHighlight() { _flags &= ~HIGHLIGHT; }
+
+		// Debug: draw bright magenta everywhere the image shader executes
+		constexpr void enableDebugExecution() { _flags |= DEBUG_EXECUTION; }
+		constexpr void disableDebugExecution() { _flags &= ~DEBUG_EXECUTION; }
+		constexpr bool isDebugExecutionEnabled() const { return (_flags & DEBUG_EXECUTION) != 0; }
 
 		Params() = default;
 

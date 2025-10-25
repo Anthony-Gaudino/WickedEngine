@@ -35,6 +35,13 @@ static const int2 offsets[] = {
 [numthreads(THREADCOUNT, THREADCOUNT, 1)]
 void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint3 GTid : SV_GroupThreadID)
 {
+	if (!PrimitiveIDAvailable())
+	{
+		output_mask[DTid.xy] = half2(0, 0);
+		output_edgemap[DTid.xy] = 0;
+		return;
+	}
+
 	// preload grid cache:
 	//	We only need center pixel for region mask, but we need a padded grid to detect edges, this allows combining both steps into a single pass
 	//	in exchange for some extra computation
@@ -47,7 +54,7 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint3 GTid :
 		
 		const int2 pixel = clamp(tile_upperleft + int2(x, y), 0, postprocess.resolution - 1);
 	
-		uint primitiveID = texture_primitiveID[pixel];
+		uint primitiveID = LoadPrimitiveID(pixel);
 		if (primitiveID == 0)
 			continue;
 		

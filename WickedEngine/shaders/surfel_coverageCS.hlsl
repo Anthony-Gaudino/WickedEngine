@@ -61,7 +61,18 @@ void main(uint3 DTid : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex, uin
 	const float2 clipspace = uv_to_clipspace(uv);
 	RayDesc ray = CreateCameraRay(clipspace);
 
-	uint primitiveID = texture_primitiveID[pixel];
+	if (!PrimitiveIDAvailable())
+	{
+		write_debug(DTid.xy, 0);
+		return;
+	}
+
+	uint primitiveID = LoadPrimitiveID(pixel);
+	if (!any(primitiveID))
+	{
+		write_debug(DTid.xy, 0);
+		return;
+	}
 
 	PrimitiveID prim;
 	prim.init();

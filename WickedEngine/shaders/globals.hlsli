@@ -695,7 +695,33 @@ struct PrimitiveID
 #define texture_depth bindless_textures_float[descriptor_index(GetCamera().texture_depth_index)]
 #define texture_depth_history bindless_textures_float[descriptor_index(GetCamera().texture_depth_index_prev)]
 #define texture_lineardepth bindless_textures_float[descriptor_index(GetCamera().texture_lineardepth_index)]
-#define texture_primitiveID bindless_textures_uint[descriptor_index(GetCamera().texture_primitiveID_index)]
+inline bool PrimitiveIDAvailable()
+{
+	return GetCamera().texture_primitiveID_index >= 0;
+}
+
+inline uint LoadPrimitiveID(int2 pixel)
+{
+	if (!PrimitiveIDAvailable())
+	{
+		return 0;
+	}
+	return bindless_textures_uint[descriptor_index(GetCamera().texture_primitiveID_index)][pixel];
+}
+
+inline uint LoadPrimitiveID(uint2 pixel)
+{
+	return LoadPrimitiveID(int2(pixel));
+}
+
+inline uint LoadPrimitiveID(uint3 pixel)
+{
+	if (!PrimitiveIDAvailable())
+	{
+		return 0;
+	}
+	return bindless_textures_uint[descriptor_index(GetCamera().texture_primitiveID_index)].Load(int3(pixel.xy, pixel.z));
+}
 #define texture_velocity bindless_textures_float2[descriptor_index(GetCamera().texture_velocity_index)]
 #define texture_normal bindless_textures_float2[descriptor_index(GetCamera().texture_normal_index)]
 #define texture_roughness bindless_textures_float[descriptor_index(GetCamera().texture_roughness_index)]

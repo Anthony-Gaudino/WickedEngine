@@ -26,7 +26,13 @@ static const int2 offsets[] = {
 [numthreads(8, 8, 1)]
 void main(uint3 DTid : SV_DispatchThreadID)
 {
-	uint primitiveID = texture_primitiveID[DTid.xy];
+	if (!PrimitiveIDAvailable())
+	{
+		output[DTid.xy] = edgemap[DTid.xy];
+		return;
+	}
+
+	uint primitiveID = LoadPrimitiveID(DTid.xy);
 	if (primitiveID == 0)
 		return;
 	

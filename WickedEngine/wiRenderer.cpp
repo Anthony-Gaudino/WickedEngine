@@ -30,12 +30,14 @@
 #include "shaders/ShaderInterop_DDGI.h"
 #include "shaders/ShaderInterop_VXGI.h"
 #include "shaders/ShaderInterop_FSR2.h"
+#include "shaders/ShaderInterop_Renderer.h"
 #include "shaders/uvsphere.hlsli"
 #include "shaders/cone.hlsli"
 
 #include <algorithm>
 #include <atomic>
 #include <mutex>
+#include <sstream>
 
 using namespace wi::primitive;
 using namespace wi::graphics;
@@ -118,6 +120,15 @@ bool IsAdvancedLightCullingSupported()
 	return IsPrimitiveIDSupported();
 }
 
+bool IsOcclusionCullingSupported()
+{
+#if defined(PLATFORM_MACOS) || defined(PLATFORM_IOS)
+	return false;
+#else
+	return true;
+#endif
+}
+
 bool wireRender = false;
 bool debugBoneLines = false;
 bool debugPartitionTree = false;
@@ -134,7 +145,11 @@ bool variableRateShadingClassification = false;
 bool variableRateShadingClassificationDebug = false;
 float GameSpeed = 1;
 bool debugLightCulling = false;
+#if defined(PLATFORM_MACOS) || defined(PLATFORM_IOS)
+bool occlusionCulling = false;
+#else
 bool occlusionCulling = true;
+#endif
 bool temporalAA = false;
 bool temporalAADEBUG = false;
 uint32_t raytraceBounceCount = 8;
@@ -164,6 +179,10 @@ bool CAPSULE_SHADOW_ENABLED = false;
 float CAPSULE_SHADOW_ANGLE = XM_PIDIV4;
 float CAPSULE_SHADOW_FADE = 0.2f;
 bool SHADOW_LOD_OVERRIDE = true;
+
+// Debug visibility overlay state
+wi::renderer::DebugVisibilityView debugVisibilityView = wi::renderer::DEBUGVIS_NONE;
+bool debugLogOcclusion = false;
 
 Texture shadowMapAtlas;
 Texture shadowMapAtlas_Transparent;
@@ -5101,6 +5120,29 @@ void UpdateRenderData(
 
 	if (vis.scene->materialBuffer.IsValid() && vis.scene->materialArraySize > 0)
 	{
+		// Ensure that transmission is never exactly zero by patching
+		// the mapped upload buffer right before it is copied to the GPU.
+		ShaderMaterial* mapped = (ShaderMaterial*)vis.scene->materialUploadBuffer[device->GetBufferIndex()].mapped_data;
+		if (mapped != nullptr)
+		{
+			const size_t count = vis.scene->materialArraySize;
+			const float fallback_value = wi::renderer::TRANSMISSION_PATCH_VALUE;
+			if (fallback_value > 0.0f)
+			{
+				const uint16_t fallback_half = XMConvertFloatToHalf(fallback_value);
+				for (size_t i = 0; i < count; ++i)
+				{
+					uint32_t lo = mapped[i].transmission_sheenroughness_clearcoat_clearcoatroughness.x;
+					uint16_t trans_half = (uint16_t)(lo & 0xFFFFu);
+					if (trans_half == 0)
+					{
+						lo = (lo & 0xFFFF0000u) | (uint32_t)fallback_half;
+						mapped[i].transmission_sheenroughness_clearcoat_clearcoatroughness.x = lo;
+					}
+				}
+			}
+		}
+
 		device->CopyBuffer(
 			&vis.scene->materialBuffer,
 			0,
@@ -5111,6 +5153,19 @@ void UpdateRenderData(
 		);
 		PushBarrier(GPUBarrier::Buffer(&vis.scene->materialBuffer, ResourceState::COPY_DST, ResourceState::SHADER_RESOURCE));
 	}
+
+#if defined(PLATFORM_MACOS) || defined(PLATFORM_IOS)
+	// If the scene incremented the diagnostic counter for patched materials, log it once per frame:
+	if (vis.scene != nullptr)
+	{
+		auto scene_nonconst = const_cast<wi::scene::Scene*>(vis.scene);
+		if (scene_nonconst->material_patched_count.load() > 0)
+		{
+			wi::backlog::post("[diag] materials patched this frame: " + std::to_string(scene_nonconst->material_patched_count.load()));
+			scene_nonconst->material_patched_count.store(0);
+		}
+	}
+#endif
 
 	if (vis.scene->skinningBuffer.IsValid() && vis.scene->skinningDataSize > 0)
 	{
@@ -5756,7 +5811,7 @@ void OcclusionCulling_Reset(const Visibility& vis, CommandList cmd)
 	{
 		return;
 	}
-	if (vis.visibleObjects.empty() && vis.visibleLights.empty() && !vis.scene->weather.IsOceanEnabled())
+		if (!GetOcclusionCullingEnabled() || !IsOcclusionCullingSupported() || GetFreezeCullingCameraEnabled() || !vis.scene->queryHeap.IsValid())
 	{
 		return;
 	}
@@ -5776,7 +5831,7 @@ void OcclusionCulling_Render(const CameraComponent& camera, const Visibility& vi
 	{
 		return;
 	}
-	if (vis.visibleObjects.empty() && vis.visibleLights.empty() && !vis.scene->weather.IsOceanEnabled())
+		if (!GetOcclusionCullingEnabled() || !IsOcclusionCullingSupported() || GetFreezeCullingCameraEnabled() || !vis.scene->queryHeap.IsValid())
 	{
 		return;
 	}
@@ -5868,7 +5923,7 @@ void OcclusionCulling_Resolve(const Visibility& vis, CommandList cmd)
 	{
 		return;
 	}
-	if (vis.visibleObjects.empty() && vis.visibleLights.empty() && !vis.scene->weather.IsOceanEnabled())
+		if (!GetOcclusionCullingEnabled() || !IsOcclusionCullingSupported() || GetFreezeCullingCameraEnabled() || !vis.scene->queryHeap.IsValid())
 	{
 		return;
 	}
@@ -19000,9 +19055,42 @@ void SetVariableRateShadingClassificationDebug(bool enabled) { variableRateShadi
 bool GetVariableRateShadingClassificationDebug() { return variableRateShadingClassificationDebug; }
 void SetOcclusionCullingEnabled(bool value)
 {
+	if (value && !IsOcclusionCullingSupported())
+	{
+		occlusionCulling = false;
+		wi::backlog::post("Occlusion culling is not supported on this platform and remains disabled.");
+		return;
+	}
 	occlusionCulling = value;
 }
 bool GetOcclusionCullingEnabled() { return occlusionCulling; }
+
+void SetDebugVisibilityView(DebugVisibilityView view) { debugVisibilityView = view; }
+DebugVisibilityView GetDebugVisibilityView() { return debugVisibilityView; }
+
+void SetDebugLogOcclusion(bool enabled) { debugLogOcclusion = enabled; }
+bool GetDebugLogOcclusion() { return debugLogOcclusion; }
+
+void DebugLogOcclusionResults(const Visibility& vis)
+{
+	if (!debugLogOcclusion) return;
+	if (vis.scene == nullptr) return;
+	// Log up to first 32 objects to avoid spam
+	size_t count = std::min<size_t>(vis.visibleObjects.size(), 32);
+	for (size_t i = 0; i < count; ++i)
+	{
+		uint32_t instanceIndex = vis.visibleObjects[i];
+		if (instanceIndex < vis.scene->occlusion_results_objects.size())
+		{
+			const Scene::OcclusionResult& occlusion_result = vis.scene->occlusion_results_objects[instanceIndex];
+			std::ostringstream ss;
+			ss << "Occlusion[" << instanceIndex << "]: queries=" << occlusion_result.occlusionQueries[vis.scene->queryheap_idx]
+				<< " history=0x" << std::hex << occlusion_result.occlusionHistory << std::dec
+				<< " occluded=" << (occlusion_result.IsOccluded() ? 1 : 0);
+			wi::backlog::post(ss.str());
+		}
+	}
+}
 void SetTemporalAAEnabled(bool enabled) { temporalAA = enabled; }
 bool GetTemporalAAEnabled() { return temporalAA; }
 void SetTemporalAADebugEnabled(bool enabled) { temporalAADEBUG = enabled; }
@@ -19080,7 +19168,7 @@ void SetScreenSpaceShadowsEnabled(bool value)
 }
 bool GetScreenSpaceShadowsEnabled()
 {
-	return SCREENSPACESHADOWS;
+	return SCREENSPACESHADOWS && IsPrimitiveIDSupported();
 }
 void SetSurfelGIEnabled(bool value)
 {

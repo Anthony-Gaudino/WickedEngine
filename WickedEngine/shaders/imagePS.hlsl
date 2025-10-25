@@ -175,5 +175,12 @@ float4 main(VertextoPixel input) : SV_TARGET
 		color.rgb = ApplyREC2084Curve(color.rgb * hdrScalar);
 	}
 
+	// Debug: if requested, output bright magenta wherever the image pixel shader executes
+	[branch]
+	if (image.flags & IMAGE_FLAG_DEBUG_EXECUTION)
+	{
+		return float4(1.0f, 0.0f, 1.0f, 1.0f);
+	}
+
 	return color;
 }

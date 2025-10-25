@@ -246,14 +246,14 @@ void main(uint3 Gid : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint3 GTid :
 			continue; // static lights will be skipped here (they are used at lightmap baking)
 		float3 positionVS = mul(GetCamera().view, float4(entity.position, 1)).xyz;
 		Sphere sphere = { positionVS.xyz, entity.GetRange() + entity.GetLength() };
-		if (SphereInsideFrustum(sphere, GroupFrustum, nearClipVS, maxDepthVS))
+		if (disableDepthCulling || SphereInsideFrustum(sphere, GroupFrustum, nearClipVS, maxDepthVS))
 		{
 			AppendEntity_Transparent(i);
 
-			if (SphereIntersectsAABB(sphere, GroupAABB)) // tighter fit than sphere-frustum culling
+			if (disableDepthCulling || SphereIntersectsAABB(sphere, GroupAABB)) // tighter fit than sphere-frustum culling
 			{
 #ifdef ADVANCED_CULLING
-				if (!use_depth_mask || (depth_mask & ConstructEntityMask(minDepthVS, __depthRangeRecip, sphere)))
+				if (disableDepthCulling || !use_depth_mask || (depth_mask & ConstructEntityMask(minDepthVS, __depthRangeRecip, sphere)))
 #endif
 				{
 					AppendEntity_Opaque(i);
@@ -274,14 +274,14 @@ void main(uint3 Gid : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint3 GTid :
 		// Construct a tight fitting sphere around the spotlight cone:
 		const float r = entity.GetRange() * 0.5f / (entity.GetConeAngleCos() * entity.GetConeAngleCos());
 		Sphere sphere = { positionVS - directionVS * r, r };
-		if (SphereInsideFrustum(sphere, GroupFrustum, nearClipVS, maxDepthVS))
+		if (disableDepthCulling || SphereInsideFrustum(sphere, GroupFrustum, nearClipVS, maxDepthVS))
 		{
 			AppendEntity_Transparent(i);
 
-			if (SphereIntersectsAABB(sphere, GroupAABB)) // tighter fit than sphere-frustum culling
+			if (disableDepthCulling || SphereIntersectsAABB(sphere, GroupAABB)) // tighter fit than sphere-frustum culling
 			{
 #ifdef ADVANCED_CULLING
-				if (!use_depth_mask || (depth_mask & ConstructEntityMask(minDepthVS, __depthRangeRecip, sphere)))
+				if (disableDepthCulling || !use_depth_mask || (depth_mask & ConstructEntityMask(minDepthVS, __depthRangeRecip, sphere)))
 #endif
 				{
 					AppendEntity_Opaque(i);
@@ -300,14 +300,14 @@ void main(uint3 Gid : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint3 GTid :
 			continue; // static lights will be skipped here (they are used at lightmap baking)
 		float3 positionVS = mul(GetCamera().view, float4(entity.position, 1)).xyz;
 		Sphere sphere = { positionVS.xyz, max(entity.GetLength(), entity.GetHeight()) + entity.GetRange() };
-		if (SphereInsideFrustum(sphere, GroupFrustum, nearClipVS, maxDepthVS))
+		if (disableDepthCulling || SphereInsideFrustum(sphere, GroupFrustum, nearClipVS, maxDepthVS))
 		{
 			AppendEntity_Transparent(i);
 
-			if (SphereIntersectsAABB(sphere, GroupAABB)) // tighter fit than sphere-frustum culling
+			if (disableDepthCulling || SphereIntersectsAABB(sphere, GroupAABB)) // tighter fit than sphere-frustum culling
 			{
 #ifdef ADVANCED_CULLING
-				if (!use_depth_mask || (depth_mask & ConstructEntityMask(minDepthVS, __depthRangeRecip, sphere)))
+				if (disableDepthCulling || !use_depth_mask || (depth_mask & ConstructEntityMask(minDepthVS, __depthRangeRecip, sphere)))
 #endif
 				{
 					AppendEntity_Opaque(i);
@@ -333,7 +333,7 @@ void main(uint3 Gid : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint3 GTid :
 		ShaderEntity entity = load_entity(i);
 		float3 positionVS = mul(GetCamera().view, float4(entity.position, 1)).xyz;
 		Sphere sphere = { positionVS.xyz, entity.GetRange() };
-		if (SphereInsideFrustum(sphere, GroupFrustum, nearClipVS, maxDepthVS))
+		if (disableDepthCulling || SphereInsideFrustum(sphere, GroupFrustum, nearClipVS, maxDepthVS))
 		{
 			AppendEntity_Transparent(i);
 
@@ -346,10 +346,10 @@ void main(uint3 Gid : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint3 GTid :
 			AABB b = GroupAABB_WS;
 			AABBtransform(b, load_entitymatrix(entity.GetMatrixIndex()));
 
-			if (IntersectAABB(a, b))
+			if (disableDepthCulling || IntersectAABB(a, b))
 			{
 #ifdef ADVANCED_CULLING
-				if (!use_depth_mask || (depth_mask & ConstructEntityMask(minDepthVS, __depthRangeRecip, sphere)))
+				if (disableDepthCulling || !use_depth_mask || (depth_mask & ConstructEntityMask(minDepthVS, __depthRangeRecip, sphere)))
 #endif
 				{
 					AppendEntity_Opaque(i);
@@ -364,7 +364,7 @@ void main(uint3 Gid : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint3 GTid :
 		ShaderEntity entity = load_entity(i);
 		float3 positionVS = mul(GetCamera().view, float4(entity.position, 1)).xyz;
 		Sphere sphere = { positionVS.xyz, entity.GetRange() };
-		if (SphereInsideFrustum(sphere, GroupFrustum, nearClipVS, maxDepthVS))
+		if (disableDepthCulling || SphereInsideFrustum(sphere, GroupFrustum, nearClipVS, maxDepthVS))
 		{
 			AppendEntity_Transparent(i);
 
@@ -377,10 +377,10 @@ void main(uint3 Gid : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint3 GTid :
 			AABB b = GroupAABB_WS;
 			AABBtransform(b, load_entitymatrix(entity.GetMatrixIndex()));
 
-			if (IntersectAABB(a, b))
+			if (disableDepthCulling || IntersectAABB(a, b))
 			{
 #ifdef ADVANCED_CULLING
-				if (!use_depth_mask || (depth_mask & ConstructEntityMask(minDepthVS, __depthRangeRecip, sphere)))
+				if (disableDepthCulling || !use_depth_mask || (depth_mask & ConstructEntityMask(minDepthVS, __depthRangeRecip, sphere)))
 #endif
 				{
 					AppendEntity_Opaque(i);
@@ -406,14 +406,14 @@ void main(uint3 Gid : SV_GroupID, uint3 DTid : SV_DispatchThreadID, uint3 GTid :
 		
 		float3 positionVS = mul(GetCamera().view, float4(center, 1)).xyz;
 		Sphere sphere = { positionVS.xyz, range };
-		if (SphereInsideFrustum(sphere, GroupFrustum, nearClipVS, maxDepthVS))
+		if (disableDepthCulling || SphereInsideFrustum(sphere, GroupFrustum, nearClipVS, maxDepthVS))
 		{
 			AppendEntity_Transparent(i);
 
-			if (SphereIntersectsAABB(sphere, GroupAABB)) // tighter fit than sphere-frustum culling
+			if (disableDepthCulling || SphereIntersectsAABB(sphere, GroupAABB)) // tighter fit than sphere-frustum culling
 			{
 #ifdef ADVANCED_CULLING
-				if (!use_depth_mask || (depth_mask & ConstructEntityMask(minDepthVS, __depthRangeRecip, sphere)))
+				if (disableDepthCulling || !use_depth_mask || (depth_mask & ConstructEntityMask(minDepthVS, __depthRangeRecip, sphere)))
 #endif
 				{
 					AppendEntity_Opaque(i);

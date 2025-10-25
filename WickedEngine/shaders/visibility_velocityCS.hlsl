@@ -22,7 +22,13 @@ void main(uint2 DTid : SV_DispatchThreadID)
 	const float2 clipspace = uv_to_clipspace(uv);
 	RayDesc ray = CreateCameraRay(pixel);
 
-	uint primitiveID = texture_primitiveID[pixel];
+	if (!PrimitiveIDAvailable())
+	{
+		output_velocity[pixel] = 0;
+		return;
+	}
+
+	uint primitiveID = LoadPrimitiveID(pixel);
 
 	float3 pre;
 	[branch]
