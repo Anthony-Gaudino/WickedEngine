@@ -11452,10 +11452,12 @@ void Visibility_Prepare(
 
 	BindCommonResources(cmd);
 
-	// Note: the tile_count here must be valid whether the VisibilityResources was created or not!
-	XMUINT2 tile_count = GetVisibilityTileCount(XMUINT2(input_primitiveID.desc.width, input_primitiveID.desc.height));
+	const bool primitive_id_supported = IsPrimitiveIDSupported();
+	const bool input_valid = input_primitiveID.IsValid() && input_primitiveID.desc.width > 0 && input_primitiveID.desc.height > 0;
+	const bool can_resolve_with_primitive_id = primitive_id_supported && input_valid && input_primitiveID.desc.format != Format::UNKNOWN;
 
-	// Beginning barriers, clears:
+	// Note: the tile_count here must be valid whether the VisibilityResources
+	// was created or not! Beginning barriers, clears:
 	if(res.IsValid())
 	{
 		ShaderTypeBin bins[SHADERTYPE_BIN_COUNT + 1];
@@ -11472,6 +11474,107 @@ void Visibility_Prepare(
 		PushBarrier(GPUBarrier::Buffer(&res.binned_tiles, ResourceState::UNDEFINED, ResourceState::UNORDERED_ACCESS));
 		FlushBarriers(cmd);
 	}
+
+	if (!can_resolve_with_primitive_id)
+	{
+		if (input_valid)
+		{
+			Texture& depth_source = const_cast<Texture&>(input_primitiveID);
+			const ResourceState original_source_state = depth_source.desc.layout;
+			const bool has_depth_output = res.depthbuffer != nullptr;
+			const bool has_linear_output = res.lineardepth != nullptr;
+
+			if (has_depth_output && has_linear_output)
+			{
+				bool transitioned_to_compute = false;
+				if (depth_source.desc.layout != ResourceState::SHADER_RESOURCE_COMPUTE)
+				{
+					GPUBarrier to_compute = GPUBarrier::Image(&depth_source, depth_source.desc.layout, ResourceState::SHADER_RESOURCE_COMPUTE);
+					device->Barrier(&to_compute, 1, cmd);
+					transitioned_to_compute = true;
+				}
+
+				Postprocess_DepthLinear(depth_source, *res.depthbuffer, *res.lineardepth, cmd);
+
+				if (transitioned_to_compute)
+				{
+					GPUBarrier to_original = GPUBarrier::Image(&depth_source, ResourceState::SHADER_RESOURCE_COMPUTE, original_source_state);
+					device->Barrier(&to_original, 1, cmd);
+				}
+			}
+			else
+			{
+				if (has_depth_output && depth_source.desc.format == res.depthbuffer->desc.format)
+				{
+					Texture& depth_target = *const_cast<Texture*>(res.depthbuffer);
+					const ResourceState original_target_state = depth_target.desc.layout;
+
+					GPUBarrier barriers[2];
+					uint32_t barrier_count = 0;
+					if (original_source_state != ResourceState::COPY_SRC)
+					{
+						barriers[barrier_count++] = GPUBarrier::Image(&depth_source, original_source_state, ResourceState::COPY_SRC);
+					}
+					if (original_target_state != ResourceState::COPY_DST)
+					{
+						barriers[barrier_count++] = GPUBarrier::Image(&depth_target, original_target_state, ResourceState::COPY_DST);
+					}
+					if (barrier_count > 0)
+					{
+						device->Barrier(barriers, barrier_count, cmd);
+					}
+
+					device->CopyTexture(
+						&depth_target, 0, 0, 0, 0, 0,
+						&depth_source, 0, 0,
+						cmd,
+						nullptr,
+						ImageAspect::DEPTH,
+						ImageAspect::DEPTH
+					);
+
+					uint32_t revert_count = 0;
+					if (original_target_state != ResourceState::COPY_DST)
+					{
+						barriers[revert_count++] = GPUBarrier::Image(&depth_target, ResourceState::COPY_DST, original_target_state);
+					}
+					if (original_source_state != ResourceState::COPY_SRC)
+					{
+						barriers[revert_count++] = GPUBarrier::Image(&depth_source, ResourceState::COPY_SRC, original_source_state);
+					}
+					if (revert_count > 0)
+					{
+						device->Barrier(barriers, revert_count, cmd);
+					}
+				}
+
+				if (has_linear_output)
+				{
+					const ResourceState before_compute_state = depth_source.desc.layout;
+					const bool transitioned_to_compute = before_compute_state != ResourceState::SHADER_RESOURCE_COMPUTE;
+					if (transitioned_to_compute)
+					{
+						GPUBarrier to_compute = GPUBarrier::Image(&depth_source, before_compute_state, ResourceState::SHADER_RESOURCE_COMPUTE);
+						device->Barrier(&to_compute, 1, cmd);
+					}
+
+					Postprocess_Lineardepth(depth_source, *res.lineardepth, cmd);
+
+					if (transitioned_to_compute)
+					{
+						GPUBarrier to_original = GPUBarrier::Image(&depth_source, ResourceState::SHADER_RESOURCE_COMPUTE, original_source_state);
+						device->Barrier(&to_original, 1, cmd);
+					}
+				}
+			}
+		}
+
+		wi::profiler::EndRange(range);
+		device->EventEnd(cmd);
+		return;
+	}
+
+	XMUINT2 tile_count = GetVisibilityTileCount(XMUINT2(input_primitiveID.desc.width, input_primitiveID.desc.height));
 
 	// Resolve:
 	//	PrimitiveID -> depth, lineardepth

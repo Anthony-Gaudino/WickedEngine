@@ -1085,22 +1085,12 @@ namespace wi
 			}
 			else
 			{
-				GPUBarrier to_compute[] = {
-					GPUBarrier::Image(&depthBuffer_Main, ResourceState::DEPTHSTENCIL, ResourceState::SHADER_RESOURCE_COMPUTE),
-				};
-				device->Barrier(to_compute, arraysize(to_compute), cmd);
-
-				wi::renderer::Postprocess_DepthLinear(
+				// MACOS FIX: fall back to depth-buffer based visibility preparation when primitive IDs are unavailable
+				wi::renderer::Visibility_Prepare(
+					visibilityResources,
 					depthBuffer_Main,
-					depthBuffer_Copy,
-					rtLinearDepth,
 					cmd
 				);
-
-				GPUBarrier to_depth[] = {
-					GPUBarrier::Image(&depthBuffer_Main, ResourceState::SHADER_RESOURCE_COMPUTE, ResourceState::DEPTHSTENCIL),
-				};
-				device->Barrier(to_depth, arraysize(to_depth), cmd);
 			}
 
 			wi::renderer::ComputeTiledLightCulling(
