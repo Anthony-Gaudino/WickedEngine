@@ -30,7 +30,52 @@ RWTexture2D<float> output_lineardepth_mip4 : register(u12);
 
 #ifdef VISIBILITY_MSAA
 RWTexture2D<uint> output_primitiveID : register(u13);
+#else
+RWTexture2D<uint> output_primitiveID : register(u13);
 #endif // VISIBILITY_MSAA
+
+inline bool IntersectsSceneAABB(const RayDesc ray)
+{
+	float3 invdir = rcp(ray.Direction);
+	float3 t0 = (GetScene().aabb_min - ray.Origin) * invdir;
+	float3 t1 = (GetScene().aabb_max - ray.Origin) * invdir;
+	float3 tmin3 = min(t0, t1);
+	float3 tmax3 = max(t0, t1);
+	float tNear = max(max(tmin3.x, tmin3.y), tmin3.z);
+	float tFar = min(min(tmax3.x, tmax3.y), tmax3.z);
+	return tFar >= max(tNear, 0);
+}
+
+bool TracePrimitiveFallback(RayDesc ray, uint2 pixel, uint groupIndex, inout uint primitiveID, out PrimitiveID prim)
+{
+	prim.init();
+	if ((GetFrame().options & OPTION_BIT_PRIMITIVEID_FALLBACK) == 0)
+	{
+		return false;
+	}
+	if (GetScene().BVH_primitives < 0)
+	{
+		return false;
+	}
+	ray.Origin -= ray.Direction * 0.01f;
+	ray.TMin = 0.0f;
+	if (!IntersectsSceneAABB(ray))
+	{
+		return false;
+	}
+
+	RNG rng;
+	rng.init(pixel, GetFrame().frame_count);
+	RayHit hit = TraceRay_Closest(ray, ~0u, rng, groupIndex);
+	if (hit.distance == FLT_MAX)
+	{
+		return false;
+	}
+
+	prim = hit.primitiveID;
+	primitiveID = prim.pack();
+	return true;
+}
 
 [numthreads(VISIBILITY_BLOCKSIZE, VISIBILITY_BLOCKSIZE, 1)]
 void main(uint2 Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
@@ -58,56 +103,84 @@ void main(uint2 Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
 	uint primitiveID = input_primitiveID[pixel];
 #endif // VISIBILITY_MSAA
 
-#ifdef VISIBILITY_MSAA
-	output_primitiveID[pixel] = primitiveID;
-#endif // VISIBILITY_MSAA
-
-	float depth = 1; // invalid
-	uint bin = ~0u; // invalid
+	float depth = 1; // default to far plane when nothing was resolved
+	uint bin = 0;
+	bool lane_has_work = false;
 	if (pixel_valid)
 	{
-		[branch]
-		if (any(primitiveID))
+		PrimitiveID prim;
+		prim.init();
+
+		Surface surface;
+		surface.init();
+
+		bool surface_loaded = false;
+		if (primitiveID != 0)
 		{
-			PrimitiveID prim;
-			prim.init();
 			prim.unpack(primitiveID);
+			surface_loaded = surface.load(prim, ray.Origin, ray.Direction);
+		}
 
-			Surface surface;
+		if (!surface_loaded && TracePrimitiveFallback(ray, pixel, groupIndex, primitiveID, prim))
+		{
 			surface.init();
+			surface_loaded = surface.load(prim, ray.Origin, ray.Direction);
+		}
 
-			[branch]
-			if (surface.load(prim, ray.Origin, ray.Direction))
-			{
-				float4 tmp = mul(GetCamera().view_projection, float4(surface.P, 1));
-				tmp.xyz /= max(0.0001, tmp.w); // max: avoid nan
-				depth = saturate(tmp.z); // saturate: avoid blown up values
+		if (surface_loaded)
+		{
+			depth = compute_inverse_lineardepth(surface.hit_depth);
+			depth = saturate(depth);
+			depth = max(depth, 1e-6);	// keep primary depth distinct from sky (which stays at 0)
 
-				bin = surface.material.GetShaderType();
-			}
+			bin = surface.material.GetShaderType();
+			lane_has_work = true;
 		}
 		else
 		{
-			// sky:
+			// sky or nothing hit
 			depth = 0;
 			bin = SHADERTYPE_BIN_COUNT;
+			lane_has_work = true;
+			primitiveID = 0;
 		}
-		if (groupIndex < 32)
+
+		if (lane_has_work)
 		{
-			InterlockedOr(local_bin_execution_mask_0[bin], 1u << groupIndex);
+			if (groupIndex < 32)
+			{
+				InterlockedOr(local_bin_execution_mask_0[bin], 1u << groupIndex);
+			}
+			else
+			{
+				InterlockedOr(local_bin_execution_mask_1[bin], 1u << (groupIndex - 32u));
+			}
 		}
-		else
-		{
-			InterlockedOr(local_bin_execution_mask_1[bin], 1u << (groupIndex - 32u));
-		}
+
+		#ifdef VISIBILITY_MSAA
+			output_primitiveID[pixel] = primitiveID;
+		#else
+			if (GetFrame().options & OPTION_BIT_PRIMITIVEID_FALLBACK)
+			{
+				output_primitiveID[pixel] = primitiveID;
+			}
+		#endif // VISIBILITY_MSAA
 	}
 
-	uint wave_local_bin_mask = WaveActiveBitOr(1u << bin);
-	if (WaveIsFirstLane())
+	GroupMemoryBarrierWithGroupSync();
+	if (groupIndex == 0)
 	{
-		InterlockedOr(local_bin_mask, wave_local_bin_mask);
+		uint mask = 0;
+		[unroll]
+		for (uint i = 0; i <= SHADERTYPE_BIN_COUNT; ++i)
+		{
+			if ((local_bin_execution_mask_0[i] | local_bin_execution_mask_1[i]) != 0)
+			{
+				mask |= 1u << i;
+			}
+		}
+		local_bin_mask = mask;
 	}
-
 	GroupMemoryBarrierWithGroupSync();
 	if (groupIndex < SHADERTYPE_BIN_COUNT + 1)
 	{
@@ -120,7 +193,8 @@ void main(uint2 Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
 			VisibilityTile tile;
 			tile.visibility_tile_id = pack_pixel(Gid.xy);
 			tile.entity_flat_tile_index = flatten2D(Gid.xy / VISIBILITY_TILED_CULLING_GRANULARITY, GetCamera().entity_culling_tilecount.xy) * SHADER_ENTITY_TILE_BUCKET_COUNT;
-			tile.execution_mask = uint64_t(local_bin_execution_mask_0[groupIndex]) | (uint64_t(local_bin_execution_mask_1[groupIndex]) << uint64_t(32));
+			tile.execution_mask[0] = local_bin_execution_mask_0[groupIndex];
+			tile.execution_mask[1] = local_bin_execution_mask_1[groupIndex];
 			output_binned_tiles[bin_tile_list_offset + tile_offset] = tile;
 		}
 	}

@@ -4325,6 +4325,10 @@ void UpdatePerFrameData(
 	{
 		frameCB.options |= OPTION_BIT_CAPSULE_SHADOW_ENABLED;
 	}
+	if (!IsPrimitiveIDSupported())
+	{
+		frameCB.options |= OPTION_BIT_PRIMITIVEID_FALLBACK;
+	}
 
 	frameCB.scene = vis.scene->shaderscene;
 

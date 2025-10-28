@@ -26,7 +26,7 @@ void main(uint2 DTid : SV_DispatchThreadID)
 
 	float3 pre;
 	[branch]
-	if (any(primitiveID))
+	if (primitiveID != 0)
 	{
 		PrimitiveID prim;
 		prim.init();

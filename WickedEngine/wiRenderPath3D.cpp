@@ -137,13 +137,38 @@ namespace wi
 			device->CreateTexture(&desc, nullptr, &rtPrimitiveID);
 			device->SetName(&rtPrimitiveID, "rtPrimitiveID");
 
-			if (getMSAASampleCount() > 1)
+			const bool primitive_ids_supported = wi::renderer::IsPrimitiveIDSupported();
+			const bool needs_separate_render_target = getMSAASampleCount() > 1 || !primitive_ids_supported;
+			if (needs_separate_render_target)
 			{
-				desc.sample_count = getMSAASampleCount();
-				desc.bind_flags = BindFlag::RENDER_TARGET | BindFlag::SHADER_RESOURCE;
-				desc.misc_flags = ResourceMiscFlag::NONE;
-				device->CreateTexture(&desc, nullptr, &rtPrimitiveID_render);
+				TextureDesc render_desc = desc;
+				render_desc.misc_flags = ResourceMiscFlag::NONE;
+				uint sample_count = getMSAASampleCount();
+				if (sample_count == 0)
+				{
+					sample_count = 1;
+				}
+				render_desc.sample_count = sample_count;
+
+				if (sample_count > 1)
+				{
+					render_desc.bind_flags = BindFlag::RENDER_TARGET | BindFlag::SHADER_RESOURCE;
+				}
+				else
+				{
+					render_desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+				}
+
+				device->CreateTexture(&render_desc, nullptr, &rtPrimitiveID_render);
 				device->SetName(&rtPrimitiveID_render, "rtPrimitiveID_render");
+
+				if (!primitive_ids_supported && has_flag(render_desc.bind_flags, BindFlag::UNORDERED_ACCESS))
+				{
+					CommandList cmd = device->BeginCommandList();
+					device->Barrier(GPUBarrier::Image(&rtPrimitiveID_render, rtPrimitiveID_render.desc.layout, ResourceState::UNORDERED_ACCESS), cmd);
+					device->ClearUAV(&rtPrimitiveID_render, 0, cmd);
+					device->Barrier(GPUBarrier::Image(&rtPrimitiveID_render, ResourceState::UNORDERED_ACCESS, rtPrimitiveID_render.desc.layout), cmd);
+				}
 			}
 			else
 			{
@@ -722,7 +747,7 @@ namespace wi
 
 		visibilityResources.depthbuffer = &depthBuffer_Copy;
 		visibilityResources.lineardepth = &rtLinearDepth;
-		if (getMSAASampleCount() > 1)
+		if (getMSAASampleCount() > 1 || !wi::renderer::IsPrimitiveIDSupported())
 		{
 			visibilityResources.primitiveID_resolved = &rtPrimitiveID;
 		}
@@ -1071,37 +1096,11 @@ namespace wi
 				cmd
 			);
 
-			// MACOS FIX
-			// This is still necessary, otherwise after adding a cube editor crashes with
-			// [Error] Vulkan error: vkQueuePresentKHR failed with VK_ERROR_DEVICE_LOST (wiGraphicsDevice_Vulkan.cpp:1503)
-			// Assertion failed: (false), function submit, file wiGraphicsDevice_Vulkan.cpp, line 1503.
-			if (wi::renderer::IsPrimitiveIDSupported())
-			{
-				wi::renderer::Visibility_Prepare(
-					visibilityResources,
-					rtPrimitiveID_render,
-					cmd
-				);
-			}
-			else
-			{
-				GPUBarrier to_compute[] = {
-					GPUBarrier::Image(&depthBuffer_Main, ResourceState::DEPTHSTENCIL, ResourceState::SHADER_RESOURCE_COMPUTE),
-				};
-				device->Barrier(to_compute, arraysize(to_compute), cmd);
-
-				wi::renderer::Postprocess_DepthLinear(
-					depthBuffer_Main,
-					depthBuffer_Copy,
-					rtLinearDepth,
-					cmd
-				);
-
-				GPUBarrier to_depth[] = {
-					GPUBarrier::Image(&depthBuffer_Main, ResourceState::SHADER_RESOURCE_COMPUTE, ResourceState::DEPTHSTENCIL),
-				};
-				device->Barrier(to_depth, arraysize(to_depth), cmd);
-			}
+			wi::renderer::Visibility_Prepare(
+				visibilityResources,
+				rtPrimitiveID_render,
+				cmd
+			);
 
 			wi::renderer::ComputeTiledLightCulling(
 				tiledLightResources,

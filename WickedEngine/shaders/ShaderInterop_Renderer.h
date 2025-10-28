@@ -478,13 +478,17 @@ static const uint SHADERTYPE_BIN_COUNT = 12;
 
 struct alignas(16) VisibilityTile
 {
-	uint64_t execution_mask;
+	uint execution_mask[2];
 	uint visibility_tile_id;
 	uint entity_flat_tile_index;
 
 	inline bool check_thread_valid(uint groupIndex)
 	{
-		return (execution_mask & (uint64_t(1) << uint64_t(groupIndex))) != 0;
+		const uint word = groupIndex >> 5u;
+		const uint bit = groupIndex & 31u;
+		if (word >= 2u)
+			return false;
+		return (execution_mask[word] & (1u << bit)) != 0;
 	}
 };
 
@@ -1173,6 +1177,7 @@ enum FRAME_OPTIONS
 	OPTION_BIT_REALISTIC_SKY_RECEIVE_SHADOW = 1 << 18,
 	OPTION_BIT_VOLUMETRICCLOUDS_RECEIVE_SHADOW = 1 << 19,
 	OPTION_BIT_CAPSULE_SHADOW_ENABLED = 1 << 20,
+	OPTION_BIT_PRIMITIVEID_FALLBACK = 1 << 21,
 };
 
 // ---------- Common Constant buffers: -----------------

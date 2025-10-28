@@ -43,17 +43,9 @@ void main(uint3 DTid : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex, uin
 	
 	uint2 pixel = DTid.xy * 2;
 
-	const float depth = texture_depth[pixel];
-	if (depth == 0)
-	{
-		write_debug(DTid.xy, 0);
-		return;
-	}
-
 	float4 debug = 0;
 	float4 color = 0;
 
-	float seed = GetFrame().time;
 	RNG rng;
 	rng.init(pixel, GetFrame().frame_count);
 
@@ -62,6 +54,12 @@ void main(uint3 DTid : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex, uin
 	RayDesc ray = CreateCameraRay(clipspace);
 
 	uint primitiveID = texture_primitiveID[pixel];
+	float depth = texture_depth[pixel];
+	if (primitiveID == 0 && depth == 0)
+	{
+		write_debug(DTid.xy, 0);
+		return;
+	}
 
 	PrimitiveID prim;
 	prim.init();
@@ -72,6 +70,14 @@ void main(uint3 DTid : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex, uin
 	if (!surface.load(prim, ray.Origin, ray.Direction))
 	{
 		return;
+	}
+
+	if (depth == 0)
+	{
+		float4 tmp = mul(GetCamera().view_projection, float4(surface.P, 1));
+		tmp.xyz /= max(0.0001, tmp.w);
+		depth = saturate(tmp.z);
+		depth = max(depth, 1e-6);
 	}
 
 	const float3 N = surface.N;
