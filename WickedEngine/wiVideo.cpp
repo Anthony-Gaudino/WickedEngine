@@ -6,6 +6,10 @@
 #include "Utility/minimp4.h"
 #include "Utility/h264.h"
 
+#ifdef PLATFORM_MACOS
+#include "platform/VideoToolboxDecoder.h"
+#endif
+
 //#define DEBUG_DUMP_H264
 static const int dump_frame_count = 100;
 
@@ -195,6 +199,12 @@ namespace wi::video
 						while ((data = MP4D_read_sps(&mp4, ntrack, index, &size)))
 						{
 							const uint8_t* sps_data = (const uint8_t*)data;
+	#ifdef PLATFORM_MACOS
+							if (index == 0)
+							{
+								video->sps_raw.assign(sps_data, sps_data + size);
+							}
+	#endif
 #ifdef DEBUG_DUMP_H264
 							size_t additional_dump_size = sizeof(h264::nal_start_code) + size;
 							dump.resize(dump.size() + additional_dump_size);
@@ -239,6 +249,12 @@ namespace wi::video
 						while ((data = MP4D_read_pps(&mp4, ntrack, index, &size)))
 						{
 							const uint8_t* pps_data = (const uint8_t*)data;
+	#ifdef PLATFORM_MACOS
+							if (index == 0)
+							{
+								video->pps_raw.assign(pps_data, pps_data + size);
+							}
+	#endif
 #ifdef DEBUG_DUMP_H264
 							size_t additional_dump_size = sizeof(h264::nal_start_code) + size;
 							dump.resize(dump.size() + additional_dump_size);
@@ -394,6 +410,7 @@ namespace wi::video
 
 					video->average_frames_per_second = float(double(track.timescale) / double(track_duration) * track.sample_count);
 					video->duration_seconds = float(double(track_duration) * timescale_rcp);
+					video->cpu_bitstream.resize(aligned_size);
 
 					auto copy_video_track = [&](void* dest) {
 						for (uint32_t i = 0; i < track.sample_count; i++)
@@ -401,6 +418,7 @@ namespace wi::video
 							unsigned frame_bytes, timestamp, duration;
 							MP4D_file_offset_t ofs = MP4D_frame_offset(&mp4, ntrack, i, &frame_bytes, &timestamp, &duration);
 							uint8_t* dst_buffer = (uint8_t*)dest + video->frame_infos[i].offset;
+							uint8_t* cpu_buffer = video->cpu_bitstream.data() + video->frame_infos[i].offset;
 							const uint8_t* src_buffer = input_buf + ofs;
 							while (frame_bytes > 0)
 							{
@@ -423,8 +441,14 @@ namespace wi::video
 									continue;
 								}
 
+								const uint64_t slice_size = (uint64_t)video->frame_infos[i].size;
+								const uint64_t padded_size = (slice_size + alignment - 1ull) / alignment * alignment;
+								std::memset(dst_buffer, 0, padded_size);
+								std::memset(cpu_buffer, 0, padded_size);
 								std::memcpy(dst_buffer, h264::nal_start_code, sizeof(h264::nal_start_code));
-								std::memcpy(dst_buffer + sizeof(h264::nal_start_code), src_buffer + 4, size - 4);
+								std::memcpy(cpu_buffer, h264::nal_start_code, sizeof(h264::nal_start_code));
+								std::memcpy(dst_buffer + sizeof(h264::nal_start_code), src_buffer + 4, slice_size - sizeof(h264::nal_start_code));
+								std::memcpy(cpu_buffer + sizeof(h264::nal_start_code), src_buffer + 4, slice_size - sizeof(h264::nal_start_code));
 								break;
 							}
 						}
@@ -570,12 +594,19 @@ namespace wi::video
 
 		// Write the slice datas into the aligned offsets, and store the aligned offsets in frame_infos, from here they will be storing offsets into the bitstream buffer, and not the source file:
 		uint64_t aligned_offset = 0;
+		video->cpu_bitstream.resize(aligned_size);
 		auto copy_video_track = [&](void* dest) {
 			for (Video::FrameInfo& frame_info : video->frame_infos)
 			{
-				std::memcpy((uint8_t*)dest + aligned_offset, filedata + frame_info.offset, frame_info.size);
+				uint8_t* gpu_dst = (uint8_t*)dest + aligned_offset;
+				uint8_t* cpu_dst = video->cpu_bitstream.data() + aligned_offset;
+				const uint64_t padded = align(frame_info.size, alignment);
+				std::memset(gpu_dst, 0, padded);
+				std::memset(cpu_dst, 0, padded);
+				std::memcpy(gpu_dst, filedata + frame_info.offset, frame_info.size);
+				std::memcpy(cpu_dst, filedata + frame_info.offset, frame_info.size);
 				frame_info.offset = aligned_offset;
-				aligned_offset += align(frame_info.size, alignment);
+				aligned_offset += padded;
 			}
 		};
 
@@ -600,8 +631,23 @@ namespace wi::video
 		GraphicsDevice* device = GetDevice();
 		if (video->profile == VideoProfile::H264 && !device->CheckCapability(GraphicsDeviceCapability::VIDEO_DECODE_H264))
 		{
+	#ifdef PLATFORM_MACOS
+			if (video->cpu_bitstream.empty() || video->sps_raw.empty() || video->pps_raw.empty())
+			{
+				wilog_warning("H264 GPU decoding unavailable and CPU fallback is missing required data, disabling video playback.");
+				return false;
+			}
+			instance->cpu_decoder = apple::CreateDecoder(video->width, video->height, video->padded_width, video->padded_height, video->sps_raw, video->pps_raw);
+			if (!instance->cpu_decoder)
+			{
+				wilog_warning("Failed to initialize VideoToolbox decoder fallback on macOS.");
+				return false;
+			}
+			return true;
+	#else
 			wilog_warning("The H264 video decoding implementation is not supported by your GPU!\nYou can attempt to update graphics driver.\nThere is no CPU decoding implemented now, video will be disabled!");
 			return false;
+	#endif
 		}
 		if (video->profile == VideoProfile::H265 && !device->CheckCapability(GraphicsDeviceCapability::VIDEO_DECODE_H265))
 		{
@@ -746,8 +792,19 @@ namespace wi::video
 	}
 	bool IsDecodingRequired(const VideoInstance* instance)
 	{
-		if (!GetDevice()->CheckCapability(GraphicsDeviceCapability::VIDEO_DECODE_H264))
+		const bool hw_decode_supported = GetDevice()->CheckCapability(GraphicsDeviceCapability::VIDEO_DECODE_H264);
+#ifdef PLATFORM_MACOS
+		const bool cpu_decode_available = instance != nullptr && instance->cpu_decoder != nullptr;
+		if (!hw_decode_supported && !cpu_decode_available)
+		{
 			return false;
+		}
+#else
+		if (!hw_decode_supported)
+		{
+			return false;
+		}
+#endif
 		if (instance == nullptr || instance->video == nullptr)
 			return false;
 		if (instance->current_decode_frame >= (int)instance->video->frame_infos.size())
@@ -777,6 +834,120 @@ namespace wi::video
 
 		GraphicsDevice* device = GetDevice();
 		const Video* video = instance->video;
+
+#ifdef PLATFORM_MACOS
+		if (instance->cpu_decoder && !instance->decoder.IsValid())
+		{
+			while (IsDecodingRequired(instance))
+			{
+				if (instance->output_textures_free.empty())
+				{
+					VideoInstance::OutputTexture& output = instance->output_textures_free.emplace_back();
+					TextureDesc td;
+					td.width = video->width;
+					td.height = video->height;
+					td.format = Format::R8G8B8A8_UNORM;
+					if (has_flag(instance->flags, VideoInstance::Flags::Mipmapped))
+					{
+						td.mip_levels = 0;
+					}
+					td.bind_flags = BindFlag::UNORDERED_ACCESS | BindFlag::SHADER_RESOURCE;
+					td.misc_flags = ResourceMiscFlag::TYPED_FORMAT_CASTING;
+					td.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
+					bool success = device->CreateTexture(&td, nullptr, &output.texture);
+					device->SetName(&output.texture, "VideoInstance::OutputTexture");
+					assert(success);
+
+					if (has_flag(instance->flags, VideoInstance::Flags::Mipmapped))
+					{
+						for (uint32_t i = 0; i < output.texture.GetDesc().mip_levels; ++i)
+						{
+							int subresource_index;
+							subresource_index = device->CreateSubresource(&output.texture, SubresourceType::SRV, 0, 1, i, 1);
+							assert(subresource_index == (int)i);
+							subresource_index = device->CreateSubresource(&output.texture, SubresourceType::UAV, 0, 1, i, 1);
+							assert(subresource_index == (int)i);
+						}
+					}
+
+					Format srgb_format = GetFormatSRGB(td.format);
+					output.subresource_srgb = device->CreateSubresource(
+						&output.texture,
+						SubresourceType::SRV,
+						0, -1,
+						0, -1,
+						&srgb_format
+					);
+
+					TextureDesc upload_desc = td;
+					upload_desc.usage = Usage::UPLOAD;
+					upload_desc.bind_flags = BindFlag::NONE;
+					upload_desc.misc_flags = ResourceMiscFlag::NONE;
+					upload_desc.mip_levels = 1;
+					upload_desc.layout = ResourceState::COPY_SRC;
+					success = device->CreateTexture(&upload_desc, nullptr, &output.upload);
+					assert(success);
+					device->SetName(&output.upload, "VideoInstance::OutputTexture::upload");
+				}
+
+				VideoInstance::OutputTexture decode = std::move(instance->output_textures_free.back());
+				instance->output_textures_free.pop_back();
+				int frame_index = clamp(instance->current_decode_frame, 0, (int)video->frame_infos.size() - 1);
+				decode.display_order = video->frame_infos[frame_index].display_order;
+				const bool store_for_display = decode.display_order >= instance->target_display_order;
+				if (!store_for_display)
+				{
+					instance->output_textures_free.push_back(decode);
+				}
+
+				const Video::FrameInfo& frame_info = video->frame_infos[frame_index];
+				const uint8_t* bitstream_data = video->cpu_bitstream.data() + frame_info.offset;
+				const bool is_keyframe = frame_info.type == VideoFrameType::Intra;
+				if (!apple::DecodeFrame(*instance->cpu_decoder, bitstream_data, frame_info.size, is_keyframe, instance->cpu_rgba_cache, video->width, video->height))
+				{
+					instance->current_decode_frame++;
+					continue;
+				}
+
+				if (decode.upload.mapped_subresources == nullptr || decode.upload.mapped_subresource_count == 0)
+				{
+					instance->current_decode_frame++;
+					continue;
+				}
+
+				auto& upload_subresource = decode.upload.mapped_subresources[0];
+				uint8_t* dst_rgba = (uint8_t*)upload_subresource.data_ptr;
+				const size_t src_stride = size_t(video->width) * 4;
+				const uint8_t* src_rgba = instance->cpu_rgba_cache.data();
+				for (uint32_t row = 0; row < video->height; ++row)
+				{
+					std::memcpy(
+						dst_rgba + size_t(row) * upload_subresource.row_pitch,
+						src_rgba + size_t(row) * src_stride,
+						src_stride
+					);
+				}
+
+				device->Barrier(GPUBarrier::Image(&decode.texture, ResourceState::SHADER_RESOURCE_COMPUTE, ResourceState::COPY_DST), cmd);
+				device->Barrier(GPUBarrier::Image(&decode.upload, ResourceState::COPY_SRC, ResourceState::COPY_SRC), cmd);
+				device->CopyTexture(&decode.texture, 0, 0, 0, 0, 0, &decode.upload, 0, 0, cmd);
+				device->Barrier(GPUBarrier::Image(&decode.texture, ResourceState::COPY_DST, ResourceState::SHADER_RESOURCE_COMPUTE), cmd);
+
+				if (has_flag(instance->flags, VideoInstance::Flags::Mipmapped))
+				{
+					wi::renderer::GenerateMipChain(decode.texture, wi::renderer::MIPGENFILTER_LINEAR, cmd);
+				}
+
+				instance->flags |= VideoInstance::Flags::InitialFirstFrameDecoded;
+				if (store_for_display)
+				{
+					instance->output_textures_used.push_back(decode);
+				}
+				instance->current_decode_frame++;
+			}
+			return;
+		}
+#endif
 
 		while (IsDecodingRequired(instance))
 		{
@@ -1006,6 +1177,10 @@ namespace wi::video
 	{
 		if (instance == nullptr || instance->video == nullptr)
 			return;
+#ifdef PLATFORM_MACOS
+		if (instance->cpu_decoder && !instance->decoder.IsValid())
+			return;
+#endif
 		if (!has_flag(instance->flags, VideoInstance::Flags::NeedsResolve))
 			return;
 		instance->flags &= ~VideoInstance::Flags::NeedsResolve;
@@ -1060,6 +1235,12 @@ namespace wi::video
 			instance->output_textures_free.clear();
 			instance->output_textures_used.clear();
 			instance->output_textures_resolve_request.clear();
+#ifdef PLATFORM_MACOS
+			if (instance->cpu_decoder && !instance->decoder.IsValid())
+			{
+				apple::Reset(*instance->cpu_decoder);
+			}
+#endif
 		}
 	}
 }

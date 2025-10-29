@@ -93,6 +93,12 @@ file(GLOB HEADER_FILES CONFIGURE_DEPENDS *.h)
 file(GLOB SOURCE_FILES CONFIGURE_DEPENDS *.cpp)
 list(REMOVE_ITEM SOURCE_FILES ${CMAKE_CURRENT_SOURCE_DIR}/offlineshadercompiler.cpp)
 
+if(APPLE)
+    list(APPEND SOURCE_FILES
+        ${CMAKE_CURRENT_SOURCE_DIR}/platform/macos/VideoToolboxDecoder.mm
+    )
+endif()
+
 add_library(${TARGET_NAME} ${WICKED_LIBRARY_TYPE}
     ${SOURCE_FILES}
     ${HEADER_FILES}
@@ -226,6 +232,18 @@ else ()
     target_link_libraries(${TARGET_NAME} PRIVATE dl)
 
     if(APPLE)
+        find_library(WICKED_VIDEOTOOLBOX_FRAMEWORK VideoToolbox)
+        find_library(WICKED_COREMEDIA_FRAMEWORK CoreMedia)
+        find_library(WICKED_COREVIDEO_FRAMEWORK CoreVideo)
+        find_library(WICKED_FOUNDATION_FRAMEWORK Foundation)
+
+        target_link_libraries(${TARGET_NAME} PRIVATE
+            ${WICKED_VIDEOTOOLBOX_FRAMEWORK}
+            ${WICKED_COREMEDIA_FRAMEWORK}
+            ${WICKED_COREVIDEO_FRAMEWORK}
+            ${WICKED_FOUNDATION_FRAMEWORK}
+        )
+
         set(LIBDXCOMPILER "libdxcompiler.dylib")
     else()
         set(LIBDXCOMPILER "libdxcompiler.so")

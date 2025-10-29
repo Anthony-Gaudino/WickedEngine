@@ -9,6 +9,13 @@
 
 namespace wi::video
 {
+
+#ifdef PLATFORM_MACOS
+	namespace apple
+	{
+		struct Decoder;
+	}
+#endif
 	struct Video
 	{
 		std::string title;
@@ -26,6 +33,9 @@ namespace wi::video
 		wi::vector<uint8_t> sps_datas;
 		wi::vector<uint8_t> pps_datas;
 		wi::vector<uint8_t> slice_header_datas;
+		wi::vector<uint8_t> cpu_bitstream;
+		wi::vector<uint8_t> sps_raw;
+		wi::vector<uint8_t> pps_raw;
 		uint32_t sps_count = 0;
 		uint32_t pps_count = 0;
 		uint32_t slice_header_count = 0;
@@ -71,6 +81,7 @@ namespace wi::video
 			wi::graphics::Texture texture; // resolved RGB image
 			int subresource_srgb = -1;
 			int display_order = -1;
+			wi::graphics::Texture upload; // CPU upload staging resource (optional)
 
 			// Below can be either point to DPB in coincide mode, or separate decoder output in non-coincide mode:
 			wi::graphics::Texture src;
@@ -96,6 +107,11 @@ namespace wi::video
 		};
 		Flags flags = Flags::Empty;
 		inline bool IsValid() const { return decoder.IsValid(); }
+
+#ifdef PLATFORM_MACOS
+		std::shared_ptr<apple::Decoder> cpu_decoder;
+		wi::vector<uint8_t> cpu_rgba_cache;
+#endif
 
 		// Get texture resource of the latest decoded frame that can be displayed:
 		wi::graphics::Texture GetCurrentFrameTexture() const { return output.texture; }
