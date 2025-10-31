@@ -1641,6 +1641,16 @@ namespace wi::scene
 			archive >> oceanParameters.waterHeight;
 			archive >> oceanParameters.surfaceDetail;
 			archive >> oceanParameters.surfaceDisplacementTolerance;
+			if (archive.GetVersion() >= 94)
+			{
+				archive >> oceanParameters.caustics_scale;
+				archive >> oceanParameters.caustics_intensity;
+			}
+			else
+			{
+				oceanParameters.caustics_scale = 1.0f;
+				oceanParameters.caustics_intensity = 1.0f;
+			}
 
 			if (archive.GetVersion() >= 32)
 			{
@@ -1904,6 +1914,11 @@ namespace wi::scene
 			archive << oceanParameters.waterHeight;
 			archive << oceanParameters.surfaceDetail;
 			archive << oceanParameters.surfaceDisplacementTolerance;
+			if (archive.GetVersion() >= 94)
+			{
+				archive << oceanParameters.caustics_scale;
+				archive << oceanParameters.caustics_intensity;
+			}
 
 			if (archive.GetVersion() >= 32)
 			{

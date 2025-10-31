@@ -57,6 +57,8 @@ public:
 	wi::gui::Slider ocean_heightSlider;
 	wi::gui::Slider ocean_detailSlider;
 	wi::gui::Slider ocean_toleranceSlider;
+	wi::gui::Slider ocean_causticsScaleSlider;
+	wi::gui::Slider ocean_causticsIntensitySlider;
 	wi::gui::Button ocean_resetButton;
 
 	wi::gui::ComboBox colorComboBox;

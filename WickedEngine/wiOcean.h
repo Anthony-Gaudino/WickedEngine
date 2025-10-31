@@ -37,6 +37,8 @@ namespace wi
 			float waterHeight = 0.0f;
 			uint32_t surfaceDetail = 4;
 			float surfaceDisplacementTolerance = 2;
+			float caustics_scale = 1.0f;
+			float caustics_intensity = 1.0f;
 		};
 		void Create(const OceanParameters& params);
 

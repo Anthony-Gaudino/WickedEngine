@@ -349,6 +349,8 @@ struct alignas(16) ShaderOcean
 	float patch_size_rcp;
 	int texture_displacementmap;
 	int texture_gradientmap;
+	float caustics_scale;
+	float caustics_intensity;
 
 	bool IsValid() { return texture_displacementmap >= 0; }
 };

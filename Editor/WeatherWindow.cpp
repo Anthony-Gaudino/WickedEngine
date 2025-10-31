@@ -821,6 +821,26 @@ void WeatherWindow::Create(EditorComponent* _editor)
 		});
 	AddWidget(&ocean_patchSizeSlider);
 
+	ocean_causticsScaleSlider.Create(0, 10, editor->GetCurrentScene().weather.oceanParameters.caustics_scale, 10000, "Caustics scale: ");
+	ocean_causticsScaleSlider.SetSize(XMFLOAT2(wid, hei));
+	ocean_causticsScaleSlider.SetPos(XMFLOAT2(x, y += step));
+	ocean_causticsScaleSlider.SetTooltip("Multiplier for caustics UV frequency");
+	ocean_causticsScaleSlider.OnSlide([this](wi::gui::EventArgs args) {
+		auto& weather = GetWeather();
+		weather.oceanParameters.caustics_scale = args.fValue;
+		});
+	AddWidget(&ocean_causticsScaleSlider);
+
+	ocean_causticsIntensitySlider.Create(0, 5, editor->GetCurrentScene().weather.oceanParameters.caustics_intensity, 10000, "Caustics intensity: ");
+	ocean_causticsIntensitySlider.SetSize(XMFLOAT2(wid, hei));
+	ocean_causticsIntensitySlider.SetPos(XMFLOAT2(x, y += step));
+	ocean_causticsIntensitySlider.SetTooltip("Strength of caustic lighting contribution");
+	ocean_causticsIntensitySlider.OnSlide([this](wi::gui::EventArgs args) {
+		auto& weather = GetWeather();
+		weather.oceanParameters.caustics_intensity = args.fValue;
+		});
+	AddWidget(&ocean_causticsIntensitySlider);
+
 	ocean_waveAmplitudeSlider.Create(0, 1000, 1000, 100000, "Wave amplitude: ");
 	ocean_waveAmplitudeSlider.SetSize(XMFLOAT2(wid, hei));
 	ocean_waveAmplitudeSlider.SetPos(XMFLOAT2(x, y += step));
@@ -1125,6 +1145,8 @@ void WeatherWindow::UpdateData()
 
 		ocean_enabledCheckBox.SetCheck(weather.IsOceanEnabled());
 		ocean_patchSizeSlider.SetValue(weather.oceanParameters.patch_length);
+		ocean_causticsScaleSlider.SetValue(weather.oceanParameters.caustics_scale);
+		ocean_causticsIntensitySlider.SetValue(weather.oceanParameters.caustics_intensity);
 		ocean_waveAmplitudeSlider.SetValue(weather.oceanParameters.wave_amplitude);
 		ocean_choppyScaleSlider.SetValue(weather.oceanParameters.choppy_scale);
 		ocean_windDependencySlider.SetValue(weather.oceanParameters.wind_dependency);
@@ -1350,6 +1372,8 @@ void WeatherWindow::ResizeLayout()
 
 	layout.add_right(ocean_enabledCheckBox);
 	layout.add(ocean_patchSizeSlider);
+	layout.add(ocean_causticsScaleSlider);
+	layout.add(ocean_causticsIntensitySlider);
 	layout.add(ocean_waveAmplitudeSlider);
 	layout.add(ocean_choppyScaleSlider);
 	layout.add(ocean_windDependencySlider);

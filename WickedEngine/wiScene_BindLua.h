@@ -1177,6 +1177,8 @@ namespace wi::lua::scene
 			waterHeight = FloatProperty(&parameter->waterHeight);
 			//surfaceDetail = IntProperty(&parameter->surfaceDetail);
 			surfaceDisplacementTolerance = FloatProperty(&parameter->surfaceDisplacementTolerance);
+			causticsScale = FloatProperty(&parameter->caustics_scale);
+			causticsIntensity = FloatProperty(&parameter->caustics_intensity);
 		}
 
 		Weather_OceanParams_BindLua(wi::Ocean::OceanParameters* parameter) :parameter(parameter)
@@ -1200,6 +1202,8 @@ namespace wi::lua::scene
 		FloatProperty waterHeight;
 		IntProperty surfaceDetail;
 		FloatProperty surfaceDisplacementTolerance;
+		FloatProperty causticsScale;
+		FloatProperty causticsIntensity;
 
 		PropertyFunction(dmap_dim)
 		PropertyFunction(patch_length)
@@ -1213,6 +1217,8 @@ namespace wi::lua::scene
 		PropertyFunction(waterHeight)
 		PropertyFunction(surfaceDetail)
 		PropertyFunction(surfaceDisplacementTolerance)
+		PropertyFunction(causticsScale)
+		PropertyFunction(causticsIntensity)
 	};
 	struct Weather_OceanParams_Property
 	{

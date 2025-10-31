@@ -6654,6 +6654,8 @@ Luna<Weather_OceanParams_BindLua>::PropertyType Weather_OceanParams_BindLua::pro
 	lunaproperty(Weather_OceanParams_BindLua, waterHeight),
 	lunaproperty(Weather_OceanParams_BindLua, surfaceDetail),
 	lunaproperty(Weather_OceanParams_BindLua, surfaceDisplacementTolerance),
+	lunaproperty(Weather_OceanParams_BindLua, causticsScale),
+	lunaproperty(Weather_OceanParams_BindLua, causticsIntensity),
 	{ NULL, NULL }
 };
 
