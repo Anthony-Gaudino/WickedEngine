@@ -5,7 +5,14 @@
 PUSHCONSTANT(postprocess, PostProcess);
 
 Texture2DArray<float> input_depth : register(t0);
+#ifndef SSGI_OUTPUT_FP16
+#define SSGI_OUTPUT_FP16 0
+#endif
+#if SSGI_OUTPUT_FP16
+Texture2DArray<float4> input_color : register(t1);
+#else
 Texture2DArray<float3> input_color : register(t1);
+#endif
 Texture2D<float2> input_normal : register(t2);
 
 RWTexture2D<float4> output_diffuse : register(u0);
@@ -20,7 +27,15 @@ static const int TILE_BORDER = 4;
 static const int TILE_SIZE = TILE_BORDER + THREADCOUNT + TILE_BORDER;
 groupshared uint cache_xy[TILE_SIZE * TILE_SIZE];
 groupshared float cache_z[TILE_SIZE * TILE_SIZE];
+#if SSGI_OUTPUT_FP16
+groupshared float3 cache_rgb[TILE_SIZE * TILE_SIZE];
+#define SSGI_STORE_CACHE(idx, value) cache_rgb[idx] = (value)
+#define SSGI_LOAD_CACHE(idx) cache_rgb[idx]
+#else
 groupshared uint cache_rgb[TILE_SIZE * TILE_SIZE];
+#define SSGI_STORE_CACHE(idx, value) cache_rgb[idx] = Pack_R11G11B10_FLOAT((value))
+#define SSGI_LOAD_CACHE(idx) Unpack_R11G11B10_FLOAT(cache_rgb[idx])
+#endif
 groupshared uint group_valid;
 
 inline uint coord_to_cache(int2 coord)
@@ -36,8 +51,8 @@ float3 compute_diffuse(
 )
 {
 	const uint t = coord_to_cache(sampleLoc);
-	uint c = cache_rgb[t];
-	if(c == 0)
+	float3 c = SSGI_LOAD_CACHE(t);
+	if (!any(c))
 		return 0; // early exit if pixel doesn't have lighting
 	float3 sample_position;
 	sample_position.z = cache_z[t];
@@ -82,13 +97,13 @@ float3 compute_diffuse(
 			const float sz = cache_z[tt];
 			if(sz < z - 0.1)
 			{
-				c = cache_rgb[tt];
+				c = SSGI_LOAD_CACHE(tt);
 				break;
 			}
 		}
 	}
 
-    return occlusion * Unpack_R11G11B10_FLOAT(c);
+	return occlusion * c;
 }
 
 [numthreads(THREADCOUNT, THREADCOUNT, 1)]
@@ -121,29 +136,29 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint2 GTid :
 		const float3 P1 = reconstruct_position(uv1, depths.z, GetCamera().inverse_projection);
 		const float3 P2 = reconstruct_position(uv2, depths.x, GetCamera().inverse_projection);
 		const float3 P3 = reconstruct_position(uv3, depths.y, GetCamera().inverse_projection);
-		const uint C0 = Pack_R11G11B10_FLOAT(clamp(float3(reds.w, greens.w, blues.w), 0, 1000));
-		const uint C1 = Pack_R11G11B10_FLOAT(clamp(float3(reds.z, greens.z, blues.z), 0, 1000));
-		const uint C2 = Pack_R11G11B10_FLOAT(clamp(float3(reds.x, greens.x, blues.x), 0, 1000));
-		const uint C3 = Pack_R11G11B10_FLOAT(clamp(float3(reds.y, greens.y, blues.y), 0, 1000));
+		const float3 C0 = clamp(float3(reds.w, greens.w, blues.w), 0, 1000);
+		const float3 C1 = clamp(float3(reds.z, greens.z, blues.z), 0, 1000);
+		const float3 C2 = clamp(float3(reds.x, greens.x, blues.x), 0, 1000);
+		const float3 C3 = clamp(float3(reds.y, greens.y, blues.y), 0, 1000);
 		
 		const uint t = coord_to_cache(int2(x, y));
 		cache_xy[t] = pack_half2(P0.xy);
 		cache_z[t] = P0.z;
-		cache_rgb[t] = C0;
+		SSGI_STORE_CACHE(t, C0);
 		
 		cache_xy[t + 1] = pack_half2(P1.xy);
 		cache_z[t + 1] = P1.z;
-		cache_rgb[t + 1] = C1;
+		SSGI_STORE_CACHE(t + 1, C1);
 		
 		cache_xy[t + TILE_SIZE] = pack_half2(P2.xy);
 		cache_z[t + TILE_SIZE] = P2.z;
-		cache_rgb[t + TILE_SIZE] = C2;
+		SSGI_STORE_CACHE(t + TILE_SIZE, C2);
 		
 		cache_xy[t + TILE_SIZE + 1] = pack_half2(P3.xy);
 		cache_z[t + TILE_SIZE + 1] = P3.z;
-		cache_rgb[t + TILE_SIZE + 1] = C3;
+		SSGI_STORE_CACHE(t + TILE_SIZE + 1, C3);
 		
-		if(C0 || C1 || C2 || C3)
+		if(any(C0) || any(C1) || any(C2) || any(C3))
 			InterlockedOr(group_valid, 1u);
 	}
 	GroupMemoryBarrierWithGroupSync();
@@ -189,3 +204,6 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint2 GTid :
 	// interleave result:
     output_diffuse[interleaved_pixel] = float4(diffuse, 1);
 }
+
+#undef SSGI_STORE_CACHE
+#undef SSGI_LOAD_CACHE

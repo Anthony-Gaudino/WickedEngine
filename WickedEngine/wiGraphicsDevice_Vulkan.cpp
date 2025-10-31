@@ -30,6 +30,9 @@
 #include <cstring>
 #include <iostream>
 #include <algorithm>
+#include <thread>
+#include <sstream>
+#include <iomanip>
 
 namespace wi::graphics
 {
@@ -67,6 +70,150 @@ static VkSampleCountFlagBits wi_clamp_sample_count(VkPhysicalDevice physicalDevi
 		}
 	}
 	return best;
+}
+
+static const char* usage_to_string(Usage usage)
+{
+	switch (usage)
+	{
+	case Usage::DEFAULT:
+		return "DEFAULT";
+	case Usage::UPLOAD:
+		return "UPLOAD";
+	case Usage::READBACK:
+		return "READBACK";
+	default:
+		return "UNKNOWN";
+	}
+}
+
+static const char* texture_type_to_string(TextureDesc::Type type)
+{
+	switch (type)
+	{
+	case TextureDesc::Type::TEXTURE_1D:
+		return "1D";
+	case TextureDesc::Type::TEXTURE_2D:
+		return "2D";
+	case TextureDesc::Type::TEXTURE_3D:
+		return "3D";
+	default:
+		return "UNKNOWN";
+	}
+}
+
+static void append_flag_string(std::string& target, const char* name)
+{
+	if (!target.empty())
+	{
+		target += '|';
+	}
+	target += name;
+}
+
+static std::string bind_flags_to_string(BindFlag flags)
+{
+	if (flags == BindFlag::NONE)
+	{
+		return "NONE";
+	}
+
+	std::string result;
+	if (has_flag(flags, BindFlag::VERTEX_BUFFER)) append_flag_string(result, "VERTEX");
+	if (has_flag(flags, BindFlag::INDEX_BUFFER)) append_flag_string(result, "INDEX");
+	if (has_flag(flags, BindFlag::CONSTANT_BUFFER)) append_flag_string(result, "CONSTANT");
+	if (has_flag(flags, BindFlag::SHADER_RESOURCE)) append_flag_string(result, "SRV");
+	if (has_flag(flags, BindFlag::RENDER_TARGET)) append_flag_string(result, "RTV");
+	if (has_flag(flags, BindFlag::DEPTH_STENCIL)) append_flag_string(result, "DSV");
+	if (has_flag(flags, BindFlag::UNORDERED_ACCESS)) append_flag_string(result, "UAV");
+	if (has_flag(flags, BindFlag::SHADING_RATE)) append_flag_string(result, "SHADING_RATE");
+
+	if (result.empty())
+	{
+		std::ostringstream ss;
+		ss << "0x" << std::hex << std::uppercase << static_cast<uint32_t>(flags);
+		return ss.str();
+	}
+
+	return result;
+}
+
+static std::string misc_flags_to_string(ResourceMiscFlag flags)
+{
+	if (flags == ResourceMiscFlag::NONE)
+	{
+		return "NONE";
+	}
+
+	std::string result;
+	if (has_flag(flags, ResourceMiscFlag::TEXTURECUBE)) append_flag_string(result, "TEXTURECUBE");
+	if (has_flag(flags, ResourceMiscFlag::INDIRECT_ARGS)) append_flag_string(result, "INDIRECT_ARGS");
+	if (has_flag(flags, ResourceMiscFlag::BUFFER_RAW)) append_flag_string(result, "BUFFER_RAW");
+	if (has_flag(flags, ResourceMiscFlag::BUFFER_STRUCTURED)) append_flag_string(result, "BUFFER_STRUCTURED");
+	if (has_flag(flags, ResourceMiscFlag::RAY_TRACING)) append_flag_string(result, "RAY_TRACING");
+	if (has_flag(flags, ResourceMiscFlag::PREDICATION)) append_flag_string(result, "PREDICATION");
+	if (has_flag(flags, ResourceMiscFlag::TRANSIENT_ATTACHMENT)) append_flag_string(result, "TRANSIENT_ATTACHMENT");
+	if (has_flag(flags, ResourceMiscFlag::SPARSE)) append_flag_string(result, "SPARSE");
+	if (has_flag(flags, ResourceMiscFlag::ALIASING_BUFFER)) append_flag_string(result, "ALIASING_BUFFER");
+	if (has_flag(flags, ResourceMiscFlag::ALIASING_TEXTURE_NON_RT_DS)) append_flag_string(result, "ALIASING_TEXTURE_NON_RT_DS");
+	if (has_flag(flags, ResourceMiscFlag::ALIASING_TEXTURE_RT_DS)) append_flag_string(result, "ALIASING_TEXTURE_RT_DS");
+	if (has_flag(flags, ResourceMiscFlag::TYPED_FORMAT_CASTING)) append_flag_string(result, "TYPED_FORMAT_CASTING");
+	if (has_flag(flags, ResourceMiscFlag::TYPELESS_FORMAT_CASTING)) append_flag_string(result, "TYPELESS_FORMAT_CASTING");
+	if (has_flag(flags, ResourceMiscFlag::VIDEO_DECODE)) append_flag_string(result, "VIDEO_DECODE");
+	if (has_flag(flags, ResourceMiscFlag::VIDEO_DECODE_OUTPUT_ONLY)) append_flag_string(result, "VIDEO_DECODE_OUTPUT_ONLY");
+	if (has_flag(flags, ResourceMiscFlag::VIDEO_DECODE_DPB_ONLY)) append_flag_string(result, "VIDEO_DECODE_DPB_ONLY");
+	if (has_flag(flags, ResourceMiscFlag::NO_DEFAULT_DESCRIPTORS)) append_flag_string(result, "NO_DEFAULT_DESCRIPTORS");
+	if (has_flag(flags, ResourceMiscFlag::TEXTURE_COMPATIBLE_COMPRESSION)) append_flag_string(result, "TEXTURE_COMPATIBLE_COMP");
+	if (has_flag(flags, ResourceMiscFlag::SHARED)) append_flag_string(result, "SHARED");
+	if (has_flag(flags, ResourceMiscFlag::VIDEO_COMPATIBILITY_H264)) append_flag_string(result, "VIDEO_COMPATIBILITY_H264");
+	if (has_flag(flags, ResourceMiscFlag::VIDEO_COMPATIBILITY_H265)) append_flag_string(result, "VIDEO_COMPATIBILITY_H265");
+
+	if (result.empty())
+	{
+		std::ostringstream ss;
+		ss << "0x" << std::hex << std::uppercase << static_cast<uint32_t>(flags);
+		return ss.str();
+	}
+
+	return result;
+}
+
+static std::string resource_state_to_string(ResourceState state)
+{
+	if (state == ResourceState::UNDEFINED)
+	{
+		return "UNDEFINED";
+	}
+
+	std::string result;
+	if (has_flag(state, ResourceState::SHADER_RESOURCE)) append_flag_string(result, "SHADER_RESOURCE");
+	if (has_flag(state, ResourceState::SHADER_RESOURCE_COMPUTE)) append_flag_string(result, "SHADER_RESOURCE_COMPUTE");
+	if (has_flag(state, ResourceState::UNORDERED_ACCESS)) append_flag_string(result, "UNORDERED_ACCESS");
+	if (has_flag(state, ResourceState::COPY_SRC)) append_flag_string(result, "COPY_SRC");
+	if (has_flag(state, ResourceState::COPY_DST)) append_flag_string(result, "COPY_DST");
+	if (has_flag(state, ResourceState::RENDERTARGET)) append_flag_string(result, "RENDERTARGET");
+	if (has_flag(state, ResourceState::DEPTHSTENCIL)) append_flag_string(result, "DEPTHSTENCIL");
+	if (has_flag(state, ResourceState::DEPTHSTENCIL_READONLY)) append_flag_string(result, "DEPTHSTENCIL_READONLY");
+	if (has_flag(state, ResourceState::SHADING_RATE_SOURCE)) append_flag_string(result, "SHADING_RATE_SOURCE");
+	if (has_flag(state, ResourceState::VERTEX_BUFFER)) append_flag_string(result, "VERTEX_BUFFER");
+	if (has_flag(state, ResourceState::INDEX_BUFFER)) append_flag_string(result, "INDEX_BUFFER");
+	if (has_flag(state, ResourceState::CONSTANT_BUFFER)) append_flag_string(result, "CONSTANT_BUFFER");
+	if (has_flag(state, ResourceState::INDIRECT_ARGUMENT)) append_flag_string(result, "INDIRECT_ARGUMENT");
+	if (has_flag(state, ResourceState::RAYTRACING_ACCELERATION_STRUCTURE)) append_flag_string(result, "RAYTRACING_ACCEL_STRUCTURE");
+	if (has_flag(state, ResourceState::PREDICATION)) append_flag_string(result, "PREDICATION");
+	if (has_flag(state, ResourceState::VIDEO_DECODE_SRC)) append_flag_string(result, "VIDEO_DECODE_SRC");
+	if (has_flag(state, ResourceState::VIDEO_DECODE_DST)) append_flag_string(result, "VIDEO_DECODE_DST");
+	if (has_flag(state, ResourceState::VIDEO_DECODE_DPB)) append_flag_string(result, "VIDEO_DECODE_DPB");
+	if (has_flag(state, ResourceState::SWAPCHAIN)) append_flag_string(result, "SWAPCHAIN");
+
+	if (result.empty())
+	{
+		std::ostringstream ss;
+		ss << "0x" << std::hex << std::uppercase << static_cast<uint32_t>(state);
+		return ss.str();
+	}
+
+	return result;
 }
 
 namespace vulkan_internal
@@ -1515,23 +1662,24 @@ using namespace vulkan_internal;
 			vkDestroyFence(device->device, x.fence, nullptr);
 		}
 	}
-	GraphicsDevice_Vulkan::CopyAllocator::CopyCMD GraphicsDevice_Vulkan::CopyAllocator::allocate(uint64_t staging_size)
+	GraphicsDevice_Vulkan::CopyAllocator::CopyCMD GraphicsDevice_Vulkan::CopyAllocator::allocate(uint64_t staging_size, const GPUResource* debug_resource, const char* debug_label)
 	{
 		CopyCMD cmd;
 
-		locker.lock();
-		// Try to search for a staging buffer that can fit the request:
-		for (size_t i = 0; i < freelist.size(); ++i)
 		{
-			if (freelist[i].uploadbuffer.desc.size >= staging_size)
+			std::scoped_lock lock(locker);
+			// Try to search for a staging buffer that can fit the request:
+			for (size_t i = 0; i < freelist.size(); ++i)
 			{
-				cmd = std::move(freelist[i]);
-				std::swap(freelist[i], freelist.back());
-				freelist.pop_back();
-				break;
+				if (freelist[i].uploadbuffer.desc.size >= staging_size)
+				{
+					cmd = std::move(freelist[i]);
+					std::swap(freelist[i], freelist.back());
+					freelist.pop_back();
+					break;
+				}
 			}
 		}
-		locker.unlock();
 
 		// If no buffer was found that fits the data, create one:
 		if (!cmd.IsValid())
@@ -1572,6 +1720,23 @@ using namespace vulkan_internal;
 		vulkan_check(vkBeginCommandBuffer(cmd.transferCommandBuffer, &beginInfo));
 
 		vulkan_check(vkResetFences(device->device, 1, &cmd.fence));
+		cmd.debug_resource = debug_resource;
+		if (debug_resource != nullptr)
+		{
+			cmd.debug_resource_name = debug_resource->debug_name;
+		}
+		else
+		{
+			cmd.debug_resource_name.clear();
+		}
+		if (debug_label != nullptr)
+		{
+			cmd.debug_label = debug_label;
+		}
+		else
+		{
+			cmd.debug_label.clear();
+		}
 
 		return cmd;
 	}
@@ -1582,6 +1747,25 @@ using namespace vulkan_internal;
 
 		VkCommandBufferSubmitInfo cbSubmitInfo = {};
 		cbSubmitInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+		cbSubmitInfo.deviceMask = 1;
+
+		const GPUResource* const debug_resource = cmd.debug_resource;
+		const char* const label = cmd.debug_label.empty() ? "?" : cmd.debug_label.c_str();
+		const char* const resource_name = cmd.debug_resource_name.empty() ? "?" : cmd.debug_resource_name.c_str();
+		Buffer_Vulkan* const upload_internal = to_internal(&cmd.uploadbuffer);
+
+		if (cmd.uploadbuffer.mapped_data != nullptr && upload_internal != nullptr && upload_internal->allocation != nullptr && device->allocationhandler != nullptr)
+		{
+			// MoltenVK can place CPU_TO_GPU allocations in non-coherent heaps, so flush writes before GPU consumes the staging buffer.
+			const VkResult flush_result = vmaFlushAllocation(device->allocationhandler->allocator, upload_internal->allocation, 0, VK_WHOLE_SIZE);
+			if (flush_result != VK_SUCCESS)
+			{
+				wilog_error("[CopyAllocator::submit] vmaFlushAllocation failed (res=%d, label=%s, resource_name=%s)",
+					int(flush_result),
+					label,
+					resource_name);
+			}
+		}
 
 		{
 			vulkan_check(vkEndCommandBuffer(cmd.transferCommandBuffer));
@@ -1593,14 +1777,33 @@ using namespace vulkan_internal;
 			vulkan_check(vkQueueSubmit2(device->queue_init.queue, 1, &submitInfo, cmd.fence));
 		}
 
+		int wait_retry_count = 0;
 		while (vulkan_check(vkWaitForFences(device->device, 1, &cmd.fence, VK_TRUE, timeout_value)) == VK_TIMEOUT)
 		{
-			wilog_error("[CopyAllocator::submit] vkWaitForFences resulted in VK_TIMEOUT");
+			const void* resource_internal = debug_resource != nullptr ? debug_resource->internal_state.get() : nullptr;
+			const unsigned resource_type = debug_resource != nullptr ? (unsigned)debug_resource->type : (unsigned)GPUResource::Type::UNKNOWN_TYPE;
+			const void* upload_internal_ptr = upload_internal != nullptr ? (const void*)upload_internal : cmd.uploadbuffer.internal_state.get();
+			const void* resource_ptr = debug_resource;
+			wilog_error("[CopyAllocator::submit] vkWaitForFences resulted in VK_TIMEOUT (retry %d, size=%zu, usage=%u, misc=%u, resource=%p, resource_type=%u, resource_internal=%p, upload_internal=%p, label=%s, resource_name=%s)",
+				wait_retry_count,
+				size_t(cmd.uploadbuffer.desc.size),
+				(unsigned)cmd.uploadbuffer.desc.usage,
+				(unsigned)cmd.uploadbuffer.desc.misc_flags,
+				resource_ptr,
+				resource_type,
+				resource_internal,
+				upload_internal_ptr,
+				label,
+				resource_name);
+			wait_retry_count++;
 			std::this_thread::yield();
 		}
 
+		cmd.debug_resource = nullptr;
+		cmd.debug_resource_name.clear();
+		cmd.debug_label.clear();
 		std::scoped_lock lock(locker);
-		freelist.push_back(cmd);
+		freelist.push_back(std::move(cmd));
 	}
 
 	void GraphicsDevice_Vulkan::DescriptorBinderPool::init(GraphicsDevice_Vulkan* device)
@@ -2852,7 +3055,27 @@ using namespace vulkan_internal;
 			}
 			if (features2.features.shaderStorageImageExtendedFormats == VK_TRUE)
 			{
-				capabilities |= GraphicsDeviceCapability::UAV_LOAD_FORMAT_COMMON;
+				VkFormatProperties rgba16f_props = {};
+				vkGetPhysicalDeviceFormatProperties(physicalDevice, _ConvertFormat(Format::R16G16B16A16_FLOAT), &rgba16f_props);
+				VkFormatProperties rgba8_props = {};
+				vkGetPhysicalDeviceFormatProperties(physicalDevice, _ConvertFormat(Format::R8G8B8A8_UNORM), &rgba8_props);
+				const bool rgba16f_storage = (rgba16f_props.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) != 0;
+				const bool rgba8_storage = (rgba8_props.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) != 0;
+				if (rgba16f_storage && rgba8_storage)
+				{
+					capabilities |= GraphicsDeviceCapability::UAV_LOAD_FORMAT_COMMON;
+				}
+				else
+				{
+					if (!rgba16f_storage)
+					{
+						wilog_warning("Vulkan: shaderStorageImageExtendedFormats reported, but R16G16B16A16_FLOAT lacks storage image support. Common UAV loads will remain disabled.");
+					}
+					if (!rgba8_storage)
+					{
+						wilog_warning("Vulkan: shaderStorageImageExtendedFormats reported, but R8G8B8A8_UNORM lacks storage image support. Common UAV loads will remain disabled.");
+					}
+				}
 			}
 			if (features_1_2.shaderOutputLayer == VK_TRUE && features_1_2.shaderOutputViewportIndex)
 			{
@@ -3200,6 +3423,14 @@ using namespace vulkan_internal;
 			queues[QUEUE_COPY].locker = queue_lockers[copyFamily];
 			queue_init.queue = initQueue;
 			queue_init.locker = queue_lockers[initFamily];
+	#if defined(__APPLE__)
+			// MoltenVK drivers can time out when resource uploads are submitted on a
+			// dedicated transfer queue. Using the graphics queue for initialization
+			// improves stability on macOS without affecting other platforms.
+			initFamily = graphicsFamily;
+			queue_init.queue = graphicsQueue;
+			queue_init.locker = queue_lockers[graphicsFamily];
+	#endif
 			if (videoFamily != VK_QUEUE_FAMILY_IGNORED)
 			{
 				queues[QUEUE_VIDEO_DECODE].queue = videoQueue;
@@ -4174,7 +4405,7 @@ using namespace vulkan_internal;
 			}
 			else
 			{
-				cmd = copyAllocator.allocate(desc->size);
+				cmd = copyAllocator.allocate(desc->size, buffer, "CreateBuffer::init_callback");
 				mapped_data = cmd.uploadbuffer.mapped_data;
 			}
 
@@ -4630,20 +4861,100 @@ using namespace vulkan_internal;
 		{
 			CopyAllocator::CopyCMD cmd;
 			void* mapped_data = nullptr;
+			std::string upload_label_storage;
+			const char* upload_label = nullptr;
 			if (desc->usage == Usage::UPLOAD)
 			{
 				mapped_data = texture->mapped_data;
 			}
 			else
 			{
-				cmd = copyAllocator.allocate(internal_state->allocation->GetSize());
-				mapped_data = cmd.uploadbuffer.mapped_data;
+				{
+					std::ostringstream label_stream;
+					label_stream << "CreateTexture::initial_data";
+					label_stream << " type=" << texture_type_to_string(texture->desc.type);
+					label_stream << " size=" << texture->desc.width << "x" << texture->desc.height;
+					if (texture->desc.depth > 1)
+					{
+						label_stream << "x" << texture->desc.depth;
+					}
+					if (texture->desc.array_size > 1)
+					{
+						label_stream << " layers=" << texture->desc.array_size;
+					}
+					label_stream << " mips=" << texture->desc.mip_levels;
+					label_stream << " samples=" << texture->desc.sample_count;
+					label_stream << " fmt=" << GetFormatString(texture->desc.format);
+					label_stream << " usage=" << usage_to_string(texture->desc.usage);
+					const std::string bind_str = bind_flags_to_string(texture->desc.bind_flags);
+					if (!bind_str.empty())
+					{
+						label_stream << " bind=" << bind_str;
+					}
+					const std::string misc_str = misc_flags_to_string(texture->desc.misc_flags);
+					if (!misc_str.empty() && misc_str != "NONE")
+					{
+						label_stream << " misc=" << misc_str;
+					}
+					const std::string layout_str = resource_state_to_string(texture->desc.layout);
+					if (!layout_str.empty())
+					{
+						label_stream << " layout=" << layout_str;
+					}
+					upload_label_storage = label_stream.str();
+				}
+				upload_label = upload_label_storage.c_str();
 			}
 
 			wi::vector<VkBufferImageCopy> copyRegions;
 
+			const VkDeviceSize optimal_row_alignment = std::max<VkDeviceSize>(properties2.properties.limits.optimalBufferCopyRowPitchAlignment, VkDeviceSize(1));
+			const VkDeviceSize optimal_offset_alignment = std::max<VkDeviceSize>(properties2.properties.limits.optimalBufferCopyOffsetAlignment, VkDeviceSize(4));
+			const VkDeviceSize texel_stride = GetFormatStride(desc->format);
+			const uint32_t block_size = GetFormatBlockSize(desc->format);
+
+			VkDeviceSize required_staging_size = 0;
+			for (uint32_t layer = 0; layer < desc->array_size; ++layer)
+			{
+				uint32_t width = imageInfo.extent.width;
+				uint32_t height = imageInfo.extent.height;
+				uint32_t depth = imageInfo.extent.depth;
+				for (uint32_t mip = 0; mip < desc->mip_levels; ++mip)
+				{
+					const uint32_t num_blocks_x = std::max(1u, width / block_size);
+					const uint32_t num_blocks_y = std::max(1u, height / block_size);
+					const VkDeviceSize dst_rowpitch_bytes = VkDeviceSize(num_blocks_x) * texel_stride;
+					VkDeviceSize aligned_rowpitch_bytes = dst_rowpitch_bytes;
+					if (optimal_row_alignment > 1)
+					{
+						aligned_rowpitch_bytes = AlignTo(aligned_rowpitch_bytes, optimal_row_alignment);
+						const VkDeviceSize remainder = aligned_rowpitch_bytes % texel_stride;
+						if (remainder != 0)
+						{
+							aligned_rowpitch_bytes += texel_stride - remainder;
+						}
+					}
+					const VkDeviceSize dst_slicepitch_bytes = aligned_rowpitch_bytes * num_blocks_y;
+					required_staging_size = AlignTo(required_staging_size, optimal_offset_alignment);
+					required_staging_size += dst_slicepitch_bytes * depth;
+
+					width = std::max(1u, width / 2);
+					height = std::max(1u, height / 2);
+					depth = std::max(1u, depth / 2);
+				}
+			}
+
+			if (desc->usage != Usage::UPLOAD)
+			{
+				required_staging_size = std::max<VkDeviceSize>(required_staging_size, internal_state->allocation->GetSize());
+				cmd = copyAllocator.allocate(required_staging_size, texture, upload_label);
+				mapped_data = cmd.uploadbuffer.mapped_data;
+			}
+
 			VkDeviceSize copyOffset = 0;
+			VkDeviceSize max_required_bytes = 0;
 			uint32_t initDataIdx = 0;
+			bool logged_copy_info = false;
 			for (uint32_t layer = 0; layer < desc->array_size; ++layer)
 			{
 				uint32_t width = imageInfo.extent.width;
@@ -4652,32 +4963,90 @@ using namespace vulkan_internal;
 				for (uint32_t mip = 0; mip < desc->mip_levels; ++mip)
 				{
 					const SubresourceData& subresourceData = initial_data[initDataIdx++];
-					const uint32_t block_size = GetFormatBlockSize(desc->format);
 					const uint32_t num_blocks_x = std::max(1u, width / block_size);
 					const uint32_t num_blocks_y = std::max(1u, height / block_size);
-					const uint32_t dst_rowpitch = num_blocks_x * GetFormatStride(desc->format);
-					const uint32_t dst_slicepitch = dst_rowpitch * num_blocks_y;
-					const uint32_t src_rowpitch = subresourceData.row_pitch;
-					const uint32_t src_slicepitch = subresourceData.slice_pitch;
-					for (uint32_t z = 0; z < depth; ++z)
+					const VkDeviceSize dst_rowpitch_bytes = VkDeviceSize(num_blocks_x) * texel_stride;
+					VkDeviceSize aligned_rowpitch_bytes = dst_rowpitch_bytes;
+					if (optimal_row_alignment > 1)
 					{
-						uint8_t* dst_slice = (uint8_t*)mapped_data + copyOffset + dst_slicepitch * z;
-						uint8_t* src_slice = (uint8_t*)subresourceData.data_ptr + src_slicepitch * z;
-						for (uint32_t y = 0; y < num_blocks_y; ++y)
+						aligned_rowpitch_bytes = AlignTo(aligned_rowpitch_bytes, optimal_row_alignment);
+						const VkDeviceSize remainder = aligned_rowpitch_bytes % texel_stride;
+						if (remainder != 0)
 						{
-							std::memcpy(
-								dst_slice + dst_rowpitch * y,
-								src_slice + src_rowpitch * y,
-								dst_rowpitch
-							);
+							aligned_rowpitch_bytes += texel_stride - remainder;
 						}
+					}
+					const VkDeviceSize dst_slicepitch_bytes = aligned_rowpitch_bytes * num_blocks_y;
+					const uint32_t src_rowpitch = subresourceData.row_pitch != 0 ? subresourceData.row_pitch : uint32_t(dst_rowpitch_bytes);
+					const uint32_t src_slicepitch = subresourceData.slice_pitch != 0 ? subresourceData.slice_pitch : uint32_t(dst_slicepitch_bytes);
+					const size_t dst_bytes_to_fill = size_t(dst_slicepitch_bytes) * depth;
+					uint8_t* dst_base = mapped_data != nullptr ? (uint8_t*)mapped_data + copyOffset : nullptr;
+
+					if (dst_base != nullptr)
+					{
+						if (subresourceData.data_ptr != nullptr && src_rowpitch != 0 && src_slicepitch != 0)
+						{
+							for (uint32_t z = 0; z < depth; ++z)
+							{
+								uint8_t* dst_slice = dst_base + size_t(dst_slicepitch_bytes) * z;
+								const uint8_t* src_slice = (const uint8_t*)subresourceData.data_ptr + size_t(src_slicepitch) * z;
+								for (uint32_t y = 0; y < num_blocks_y; ++y)
+								{
+									uint8_t* dst_row = dst_slice + size_t(aligned_rowpitch_bytes) * y;
+									std::memcpy(dst_row, src_slice + size_t(src_rowpitch) * y, size_t(dst_rowpitch_bytes));
+									const VkDeviceSize padding = aligned_rowpitch_bytes - dst_rowpitch_bytes;
+									if (padding > 0)
+									{
+										std::memset(dst_row + size_t(dst_rowpitch_bytes), 0, size_t(padding));
+									}
+								}
+							}
+						}
+						else if (dst_bytes_to_fill > 0)
+						{
+							std::memset(dst_base, 0, dst_bytes_to_fill);
+						}
+					}
+
+					const VkDeviceSize subresource_bytes = dst_slicepitch_bytes * depth;
+
+					if (!logged_copy_info && texture->debug_name == "wi::font::texture")
+					{
+						wilog("[CreateTexture::initial_data] name=%s width=%u height=%u depth=%u mip=%u layer=%u texel_stride=%zu block_size=%u dst_rowpitch=%zu aligned_rowpitch=%zu dst_slicepitch=%zu src_rowpitch=%u src_slicepitch=%u optimal_row_alignment=%zu optimal_offset_alignment=%zu required_staging=%zu upload_buffer=%zu", 
+							texture->debug_name.c_str(),
+							width,
+							height,
+							depth,
+							mip,
+							layer,
+							size_t(texel_stride),
+							block_size,
+							size_t(dst_rowpitch_bytes),
+							size_t(aligned_rowpitch_bytes),
+							size_t(dst_slicepitch_bytes),
+							src_rowpitch,
+							src_slicepitch,
+							size_t(optimal_row_alignment),
+							size_t(optimal_offset_alignment),
+							size_t(required_staging_size),
+							size_t(cmd.uploadbuffer.desc.size));
+						logged_copy_info = true;
 					}
 
 					if (cmd.IsValid())
 					{
 						VkBufferImageCopy copyRegion = {};
 						copyRegion.bufferOffset = copyOffset;
-						copyRegion.bufferRowLength = 0;
+						if (aligned_rowpitch_bytes == dst_rowpitch_bytes)
+						{
+							copyRegion.bufferRowLength = 0; // tightly packed, let driver infer row length
+						}
+						else
+						{
+							const uint32_t aligned_blocks_x = uint32_t(aligned_rowpitch_bytes / texel_stride);
+							const uint32_t buffer_row_length_texels = aligned_blocks_x * block_size;
+							copyRegion.bufferRowLength = buffer_row_length_texels;
+						}
 						copyRegion.bufferImageHeight = 0;
 
 						copyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -4695,8 +5064,9 @@ using namespace vulkan_internal;
 						copyRegions.push_back(copyRegion);
 					}
 
-					copyOffset += dst_slicepitch * depth;
-					copyOffset = AlignTo(copyOffset, VkDeviceSize(4)); // fix for validation: on transfer queue the srcOffset must be 4-byte aligned
+					max_required_bytes = std::max(max_required_bytes, copyOffset + subresource_bytes);
+					copyOffset += subresource_bytes;
+					copyOffset = AlignTo(copyOffset, optimal_offset_alignment);
 
 					width = std::max(1u, width / 2);
 					height = std::max(1u, height / 2);
@@ -4704,22 +5074,30 @@ using namespace vulkan_internal;
 				}
 			}
 
-			if(cmd.IsValid())
+			if (cmd.IsValid() && max_required_bytes > cmd.uploadbuffer.desc.size)
+			{
+				wilog_error("[CreateTexture] staging upload exceeded buffer size (required=%zu, available=%zu, texture=%s)",
+					size_t(max_required_bytes),
+					size_t(cmd.uploadbuffer.desc.size),
+					texture->debug_name.c_str());
+			}
+
+			if (cmd.IsValid())
 			{
 				VkImageMemoryBarrier2 barrier = {};
 				barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
 				barrier.image = internal_state->resource;
 				barrier.oldLayout = imageInfo.initialLayout;
 				barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-				barrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+				barrier.srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
 				barrier.srcAccessMask = 0;
 				barrier.dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
 				barrier.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
 				barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 				barrier.subresourceRange.baseArrayLayer = 0;
-				barrier.subresourceRange.layerCount = VK_REMAINING_ARRAY_LAYERS;
+				barrier.subresourceRange.layerCount = imageInfo.arrayLayers;
 				barrier.subresourceRange.baseMipLevel = 0;
-				barrier.subresourceRange.levelCount = VK_REMAINING_MIP_LEVELS;
+				barrier.subresourceRange.levelCount = imageInfo.mipLevels;
 				barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 				barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 
@@ -4739,14 +5117,48 @@ using namespace vulkan_internal;
 					copyRegions.data()
 				);
 
+				if (initFamily != graphicsFamily)
+				{
+					VkImageMemoryBarrier2 ownership_barrier = {};
+					ownership_barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+					ownership_barrier.image = internal_state->resource;
+					ownership_barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+					ownership_barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+					ownership_barrier.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+					ownership_barrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+					ownership_barrier.dstStageMask = VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT;
+					ownership_barrier.dstAccessMask = 0;
+					ownership_barrier.subresourceRange = barrier.subresourceRange;
+					ownership_barrier.srcQueueFamilyIndex = initFamily;
+					ownership_barrier.dstQueueFamilyIndex = graphicsFamily;
+
+					VkDependencyInfo ownership_dependency = {};
+					ownership_dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+					ownership_dependency.imageMemoryBarrierCount = 1;
+					ownership_dependency.pImageMemoryBarriers = &ownership_barrier;
+
+					vkCmdPipelineBarrier2(cmd.transferCommandBuffer, &ownership_dependency);
+				}
+
 				copyAllocator.submit(cmd);
 
 				// Note: the copy allocator is done at this point on CPU and GPU, so transition will be safe:
-				std::swap(barrier.srcStageMask, barrier.dstStageMask);
+				barrier.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+				VkPipelineStageFlags2 dst_stage = _ConvertPipelineStage(texture->desc.layout);
+				if (dst_stage == VK_PIPELINE_STAGE_2_NONE)
+				{
+					dst_stage = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+				}
+				barrier.dstStageMask = dst_stage;
 				barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 				barrier.newLayout = _ConvertImageLayout(texture->desc.layout);
 				barrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
 				barrier.dstAccessMask = _ParseResourceState(texture->desc.layout);
+				if (initFamily != graphicsFamily)
+				{
+					barrier.srcQueueFamilyIndex = initFamily;
+					barrier.dstQueueFamilyIndex = graphicsFamily;
+				}
 				std::scoped_lock lck(transitionLocker);
 				init_transitions.push_back(barrier);
 			}
@@ -7186,7 +7598,12 @@ using namespace vulkan_internal;
 	
 	void GraphicsDevice_Vulkan::SetName(GPUResource* pResource, const char* name) const
 	{
-		if (!debugUtils || pResource == nullptr || !pResource->IsValid())
+		if (pResource == nullptr)
+			return;
+
+		pResource->debug_name = name != nullptr ? name : "";
+
+		if (!debugUtils || !pResource->IsValid())
 			return;
 
 		VkDebugUtilsObjectNameInfoEXT info{ VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT };
@@ -7395,6 +7812,7 @@ using namespace vulkan_internal;
 				VkCommandBufferSubmitInfo& cmd_submit = queue.submit_cmds.emplace_back();
 				cmd_submit.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
 				cmd_submit.commandBuffer = transition_handler.commandBuffer;
+				cmd_submit.deviceMask = 1;
 				for (int q = QUEUE_GRAPHICS + 1; q < QUEUE_COUNT; ++q)
 				{
 					if (queues[q].queue == VK_NULL_HANDLE)
@@ -7430,6 +7848,8 @@ using namespace vulkan_internal;
 				VkCommandBufferSubmitInfo& cbSubmitInfo = queue.submit_cmds.emplace_back();
 				cbSubmitInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
 				cbSubmitInfo.commandBuffer = commandlist.GetCommandBuffer();
+				cbSubmitInfo.deviceMask = 1;
+				cbSubmitInfo.deviceMask = 1;
 
 				queue.swapchain_updates = commandlist.prev_swapchains;
 				for (auto& swapchain : commandlist.prev_swapchains)

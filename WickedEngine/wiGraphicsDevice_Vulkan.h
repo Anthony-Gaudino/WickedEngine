@@ -32,6 +32,7 @@
 #include <atomic>
 #include <mutex>
 #include <algorithm>
+#include <string>
 
 #define vulkan_assert(cond, fname) { wilog_assert(cond, "Vulkan error: %s failed with %s (%s:%d)", fname, string_VkResult(res), relative_path(__FILE__), __LINE__); }
 #define vulkan_check(call) [&]() { VkResult res = call; vulkan_assert((res >= VK_SUCCESS), extract_function_name(#call).c_str()); return res; }()
@@ -238,13 +239,16 @@ namespace wi::graphics
 				VkCommandBuffer transferCommandBuffer = VK_NULL_HANDLE;
 				VkFence fence = VK_NULL_HANDLE;
 				GPUBuffer uploadbuffer;
+				const GPUResource* debug_resource = nullptr;
+				std::string debug_resource_name;
+				std::string debug_label;
 				constexpr bool IsValid() const { return transferCommandBuffer != VK_NULL_HANDLE; }
 			};
 			wi::vector<CopyCMD> freelist;
 
 			void init(GraphicsDevice_Vulkan* device);
 			void destroy();
-			CopyCMD allocate(uint64_t staging_size);
+			CopyCMD allocate(uint64_t staging_size, const GPUResource* debug_resource = nullptr, const char* debug_label = nullptr);
 			void submit(CopyCMD cmd);
 		};
 		mutable CopyAllocator copyAllocator;

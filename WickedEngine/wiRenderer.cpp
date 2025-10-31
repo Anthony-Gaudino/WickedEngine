@@ -48,6 +48,35 @@ namespace wi::renderer
 
 GraphicsDevice*& device = GetDevice();
 
+static Format GetSSGIAtlasFormat()
+{
+	static bool initialized = false;
+	static Format atlas_format = Format::R11G11B10_FLOAT;
+	if (!initialized)
+	{
+		initialized = true;
+		const bool r11_uav_load_supported = device->CheckCapability(GraphicsDeviceCapability::UAV_LOAD_FORMAT_R11G11B10_FLOAT);
+		if (!r11_uav_load_supported)
+		{
+			if (device->CheckCapability(GraphicsDeviceCapability::UAV_LOAD_FORMAT_COMMON))
+			{
+				atlas_format = Format::R16G16B16A16_FLOAT;
+				wi::backlog::post("[SSGI] R11 UAV loads unsupported; using R16G16B16A16 atlas for compatibility.");
+			}
+			else
+			{
+				wi::backlog::post("[SSGI] Warning: device lacks UAV support for both R11G11B10 and R16G16B16A16 formats. SSGI will fall back to R11 atlas; results may be unstable.");
+			}
+		}
+	}
+	return atlas_format;
+}
+
+static bool IsSSGIFP16AtlasEnabled()
+{
+	return GetSSGIAtlasFormat() == Format::R16G16B16A16_FLOAT;
+}
+
 Shader				shaders[SHADERTYPE_COUNT];
 Texture				textures[TEXTYPE_COUNT];
 InputLayout			inputLayouts[ILTYPE_COUNT];
@@ -853,6 +882,7 @@ void LoadShaders()
 
 	wi::jobsystem::context ctx;
 
+	GetSSGIAtlasFormat();
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) {
 		LoadShader(ShaderStage::VS, shaders[VSTYPE_OBJECT_DEBUG], "objectVS_debug.cso");
 		});
@@ -1092,11 +1122,48 @@ void LoadShaders()
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_LINEARDEPTH], "lineardepthCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_NORMALSFROMDEPTH], "normalsfromdepthCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_SCREENSPACESHADOW], "screenspaceshadowCS.cso"); });
-	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_SSGI_DEINTERLEAVE], "ssgi_deinterleaveCS.cso"); });
-	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_SSGI], "ssgiCS.cso"); });
-	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_SSGI_WIDE], "ssgiCS.cso", wi::graphics::ShaderModel::SM_5_0, { "WIDE" }); });
-	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_SSGI_UPSAMPLE], "ssgi_upsampleCS.cso"); });
-	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_SSGI_UPSAMPLE_WIDE], "ssgi_upsampleCS.cso", wi::graphics::ShaderModel::SM_5_0, { "WIDE" }); });
+	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) {
+		wi::vector<std::string> defines;
+		if (IsSSGIFP16AtlasEnabled())
+		{
+			defines.push_back("SSGI_OUTPUT_FP16");
+		}
+		LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_SSGI_DEINTERLEAVE], "ssgi_deinterleaveCS.cso", wi::graphics::ShaderModel::SM_5_0, defines);
+	});
+	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) {
+		wi::vector<std::string> defines;
+		if (IsSSGIFP16AtlasEnabled())
+		{
+			defines.push_back("SSGI_OUTPUT_FP16");
+		}
+		LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_SSGI], "ssgiCS.cso", wi::graphics::ShaderModel::SM_5_0, defines);
+	});
+	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) {
+		wi::vector<std::string> defines;
+		if (IsSSGIFP16AtlasEnabled())
+		{
+			defines.push_back("SSGI_OUTPUT_FP16");
+		}
+		defines.push_back("WIDE");
+		LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_SSGI_WIDE], "ssgiCS.cso", wi::graphics::ShaderModel::SM_5_0, defines);
+	});
+	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) {
+		wi::vector<std::string> defines;
+		if (IsSSGIFP16AtlasEnabled())
+		{
+			defines.push_back("SSGI_OUTPUT_FP16");
+		}
+		LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_SSGI_UPSAMPLE], "ssgi_upsampleCS.cso", wi::graphics::ShaderModel::SM_5_0, defines);
+	});
+	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) {
+		wi::vector<std::string> defines;
+		if (IsSSGIFP16AtlasEnabled())
+		{
+			defines.push_back("SSGI_OUTPUT_FP16");
+		}
+		defines.push_back("WIDE");
+		LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_SSGI_UPSAMPLE_WIDE], "ssgi_upsampleCS.cso", wi::graphics::ShaderModel::SM_5_0, defines);
+	});
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_RTDIFFUSE_SPATIAL], "rtdiffuse_spatialCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_RTDIFFUSE_TEMPORAL], "rtdiffuse_temporalCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_RTDIFFUSE_UPSAMPLE], "rtdiffuse_upsampleCS.cso"); });
@@ -13830,7 +13897,8 @@ void CreateSSGIResources(SSGIResources& res, XMUINT2 resolution)
 	desc.type = TextureDesc::Type::TEXTURE_2D;
 	desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
 	desc.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
-	desc.format = Format::R11G11B10_FLOAT;
+
+	const Format ssgi_color_format = GetSSGIAtlasFormat();
 
 	resolution.x = AlignTo(resolution.x, 64u);
 	resolution.y = AlignTo(resolution.y, 64u);
@@ -13841,7 +13909,7 @@ void CreateSSGIResources(SSGIResources& res, XMUINT2 resolution)
 	desc.mip_levels = 4;
 	desc.format = Format::R32_FLOAT;
 	device->CreateTexture(&desc, nullptr, &res.texture_atlas_depth);
-	desc.format = Format::R11G11B10_FLOAT;
+	desc.format = ssgi_color_format;
 	device->CreateTexture(&desc, nullptr, &res.texture_atlas_color);
 
 	desc.array_size = 1;
@@ -13852,7 +13920,7 @@ void CreateSSGIResources(SSGIResources& res, XMUINT2 resolution)
 	device->CreateTexture(&desc, nullptr, &res.texture_depth_mips);
 	desc.format = Format::R16G16_FLOAT;
 	device->CreateTexture(&desc, nullptr, &res.texture_normal_mips);
-	desc.format = Format::R11G11B10_FLOAT;
+	desc.format = ssgi_color_format;
 	device->CreateTexture(&desc, nullptr, &res.texture_diffuse_mips);
 
 	for (uint32_t i = 0; i < 4u; ++i)

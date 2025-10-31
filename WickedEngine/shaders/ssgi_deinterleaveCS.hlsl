@@ -1,28 +1,49 @@
 #include "globals.hlsli"
 #include "ShaderInterop_Postprocess.h"
 
+#ifndef SSGI_OUTPUT_FP16
+#define SSGI_OUTPUT_FP16 0
+#endif
+
 Texture2D<float3> texture_input : register(t0);
 
-RWTexture2DArray<float>		atlas2x_depth : register(u0);
-RWTexture2DArray<float>		atlas4x_depth : register(u1);
-RWTexture2DArray<float>		atlas8x_depth : register(u2);
-RWTexture2DArray<float>		atlas16x_depth : register(u3);
+RWTexture2DArray<float>	atlas2x_depth : register(u0);
+RWTexture2DArray<float>	atlas4x_depth : register(u1);
+RWTexture2DArray<float>	atlas8x_depth : register(u2);
+RWTexture2DArray<float>	atlas16x_depth : register(u3);
+#if SSGI_OUTPUT_FP16
+RWTexture2DArray<float4>	atlas2x_color : register(u4);
+RWTexture2DArray<float4>	atlas4x_color : register(u5);
+RWTexture2DArray<float4>	atlas8x_color : register(u6);
+RWTexture2DArray<float4>	atlas16x_color : register(u7);
+#else
 RWTexture2DArray<float3>	atlas2x_color : register(u4);
 RWTexture2DArray<float3>	atlas4x_color : register(u5);
 RWTexture2DArray<float3>	atlas8x_color : register(u6);
 RWTexture2DArray<float3>	atlas16x_color : register(u7);
-RWTexture2D<float>			regular2x_depth : register(u8);
-RWTexture2D<float>			regular4x_depth : register(u9);
-RWTexture2D<float>			regular8x_depth : register(u10);
-RWTexture2D<float>			regular16x_depth : register(u11);
-RWTexture2D<float2>			regular2x_normal : register(u12);
-RWTexture2D<float2>			regular4x_normal : register(u13);
-RWTexture2D<float2>			regular8x_normal : register(u14);
-RWTexture2D<float2>			regular16x_normal : register(u15);
+#endif
+RWTexture2D<float>		regular2x_depth : register(u8);
+RWTexture2D<float>		regular4x_depth : register(u9);
+RWTexture2D<float>		regular8x_depth : register(u10);
+RWTexture2D<float>		regular16x_depth : register(u11);
+RWTexture2D<float2>		regular2x_normal : register(u12);
+RWTexture2D<float2>		regular4x_normal : register(u13);
+RWTexture2D<float2>		regular8x_normal : register(u14);
+RWTexture2D<float2>		regular16x_normal : register(u15);
 
 groupshared float shared_depths[256];
 groupshared uint shared_normals[256];
+#if SSGI_OUTPUT_FP16
+groupshared float3 shared_colors[256];
+#define SSGI_STORE_SHARED(idx, value) shared_colors[idx] = (value)
+#define SSGI_LOAD_SHARED(idx) shared_colors[idx]
+#define SSGI_WRITE_ATLAS(tex, coord, value) tex[coord] = float4((value), 0)
+#else
 groupshared uint shared_colors[256];
+#define SSGI_STORE_SHARED(idx, value) shared_colors[idx] = Pack_R11G11B10_FLOAT((value))
+#define SSGI_LOAD_SHARED(idx) Unpack_R11G11B10_FLOAT(shared_colors[idx])
+#define SSGI_WRITE_ATLAS(tex, coord, value) tex[coord] = (value)
+#endif
 
 [numthreads(8, 8, 1)]
 void main(uint3 Gid : SV_GroupID, uint groupIndex : SV_GroupIndex, uint3 GTid : SV_GroupThreadID, uint3 DTid : SV_DispatchThreadID)
@@ -55,18 +76,22 @@ void main(uint3 Gid : SV_GroupID, uint groupIndex : SV_GroupIndex, uint3 GTid : 
 	const float2 prevUV1 = uv1 + velocity1;
 	const float2 prevUV2 = uv2 + velocity2;
 	const float2 prevUV3 = uv3 + velocity3;
-    shared_colors[destIdx + 0]		= Pack_R11G11B10_FLOAT(clamp(texture_input.SampleLevel(sampler_linear_clamp, prevUV0, 0), 0, 1000));
-    shared_colors[destIdx + 8]		= Pack_R11G11B10_FLOAT(clamp(texture_input.SampleLevel(sampler_linear_clamp, prevUV1, 0), 0, 1000));
-    shared_colors[destIdx + 128]	= Pack_R11G11B10_FLOAT(clamp(texture_input.SampleLevel(sampler_linear_clamp, prevUV2, 0), 0, 1000));
-    shared_colors[destIdx + 136]	= Pack_R11G11B10_FLOAT(clamp(texture_input.SampleLevel(sampler_linear_clamp, prevUV3, 0), 0, 1000));
+    const float3 sample0 = clamp(texture_input.SampleLevel(sampler_linear_clamp, prevUV0, 0), 0, 1000);
+    const float3 sample1 = clamp(texture_input.SampleLevel(sampler_linear_clamp, prevUV1, 0), 0, 1000);
+    const float3 sample2 = clamp(texture_input.SampleLevel(sampler_linear_clamp, prevUV2, 0), 0, 1000);
+    const float3 sample3 = clamp(texture_input.SampleLevel(sampler_linear_clamp, prevUV3, 0), 0, 1000);
+    SSGI_STORE_SHARED(destIdx + 0, sample0);
+    SSGI_STORE_SHARED(destIdx + 8, sample1);
+    SSGI_STORE_SHARED(destIdx + 128, sample2);
+    SSGI_STORE_SHARED(destIdx + 136, sample3);
 	
     GroupMemoryBarrierWithGroupSync();
 
     uint ldsIndex = (GTid.x << 1) | (GTid.y << 5);
 
-    float depth = shared_depths[ldsIndex];
-    float2 normal = unpack_half2(shared_normals[ldsIndex]);
-    float3 color = Unpack_R11G11B10_FLOAT(shared_colors[ldsIndex]);
+	float depth = shared_depths[ldsIndex];
+	float2 normal = unpack_half2(shared_normals[ldsIndex]);
+	float3 color = SSGI_LOAD_SHARED(ldsIndex);
 
 	color = all(color <= 1) ? 0 : color; // cut out pixels that are not acting as lights
 	color *= 0.96; // accumulation energy loss
@@ -74,8 +99,8 @@ void main(uint3 Gid : SV_GroupID, uint groupIndex : SV_GroupIndex, uint3 GTid : 
 
     uint2 st = DTid.xy;
     uint slice = flatten2D(st % 4, 4);
-    atlas2x_depth[uint3(st >> 2, slice)] = depth;
-    atlas2x_color[uint3(st >> 2, slice)] = color;
+	atlas2x_depth[uint3(st >> 2, slice)] = depth;
+	SSGI_WRITE_ATLAS(atlas2x_color, uint3(st >> 2, slice), color);
     regular2x_depth[st] = depth;
     regular2x_normal[st] = normal;
 
@@ -83,8 +108,8 @@ void main(uint3 Gid : SV_GroupID, uint groupIndex : SV_GroupIndex, uint3 GTid : 
     {
         st = DTid.xy >> 1;
         slice = flatten2D(st % 4, 4);
-        atlas4x_depth[uint3(st >> 2, slice)] = depth;
-        atlas4x_color[uint3(st >> 2, slice)] = color;
+		atlas4x_depth[uint3(st >> 2, slice)] = depth;
+		SSGI_WRITE_ATLAS(atlas4x_color, uint3(st >> 2, slice), color);
 		regular4x_depth[st] = depth;
 		regular4x_normal[st] = normal;
 		
@@ -93,7 +118,7 @@ void main(uint3 Gid : SV_GroupID, uint groupIndex : SV_GroupIndex, uint3 GTid : 
 			st = DTid.xy >> 2;
 			slice = flatten2D(st % 4, 4);
 			atlas8x_depth[uint3(st >> 2, slice)] = depth;
-			atlas8x_color[uint3(st >> 2, slice)] = color;
+			SSGI_WRITE_ATLAS(atlas8x_color, uint3(st >> 2, slice), color);
 			regular8x_depth[st] = depth;
 			regular8x_normal[st] = normal;
 			
@@ -102,7 +127,7 @@ void main(uint3 Gid : SV_GroupID, uint groupIndex : SV_GroupIndex, uint3 GTid : 
 				st = DTid.xy >> 3;
 				slice = flatten2D(st % 4, 4);
 				atlas16x_depth[uint3(st >> 2, slice)] = depth;
-				atlas16x_color[uint3(st >> 2, slice)] = color;
+				SSGI_WRITE_ATLAS(atlas16x_color, uint3(st >> 2, slice), color);
 				regular16x_depth[st] = depth;
 				regular16x_normal[st] = normal;
 			}
@@ -110,3 +135,7 @@ void main(uint3 Gid : SV_GroupID, uint groupIndex : SV_GroupIndex, uint3 GTid : 
     }
 
 }
+
+#undef SSGI_STORE_SHARED
+#undef SSGI_LOAD_SHARED
+#undef SSGI_WRITE_ATLAS

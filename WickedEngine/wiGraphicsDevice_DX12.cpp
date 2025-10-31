@@ -5203,6 +5203,11 @@ std::mutex queue_locker;
 	
 	void GraphicsDevice_DX12::SetName(GPUResource* pResource, const char* name) const
 	{
+		if (pResource == nullptr)
+			return;
+
+		pResource->debug_name = name != nullptr ? name : "";
+
 		wchar_t text[256];
 		if (wi::helper::StringConvert(name, text, arraysize(text)) > 0)
 		{

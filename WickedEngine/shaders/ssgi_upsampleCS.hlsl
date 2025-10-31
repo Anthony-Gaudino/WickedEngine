@@ -21,7 +21,18 @@ static const int TILE_BORDER = 2;
 #endif // WIDE
 static const int TILE_SIZE = TILE_BORDER + THREADCOUNT + TILE_BORDER;
 groupshared float cache_z[TILE_SIZE * TILE_SIZE];
+#ifndef SSGI_OUTPUT_FP16
+#define SSGI_OUTPUT_FP16 0
+#endif
+#if SSGI_OUTPUT_FP16
+groupshared float3 cache_rgb[TILE_SIZE * TILE_SIZE];
+#define SSGI_STORE_CACHE(idx, value) cache_rgb[idx] = (value)
+#define SSGI_LOAD_CACHE(idx) cache_rgb[idx]
+#else
 groupshared uint cache_rgb[TILE_SIZE * TILE_SIZE];
+#define SSGI_STORE_CACHE(idx, value) cache_rgb[idx] = Pack_R11G11B10_FLOAT((value))
+#define SSGI_LOAD_CACHE(idx) Unpack_R11G11B10_FLOAT(cache_rgb[idx])
+#endif
 groupshared uint cache_oct[TILE_SIZE * TILE_SIZE];
 
 inline uint coord_to_cache(int2 coord)
@@ -44,19 +55,19 @@ void main(uint2 Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
 		const int2 pixel = tile_upperleft + int2(x, y);
 		const float2 uv = (pixel + 0.5f) * postprocess.params1.zw;
 		const float4 depths = input_depth_low.GatherRed(sampler_linear_clamp, uv);
-		const float4 reds = input_diffuse_low.GatherRed(sampler_linear_clamp, uv);
-		const float4 greens = input_diffuse_low.GatherGreen(sampler_linear_clamp, uv);
-		const float4 blues = input_diffuse_low.GatherBlue(sampler_linear_clamp, uv);
+	const float4 reds = input_diffuse_low.GatherRed(sampler_linear_clamp, uv);
+	const float4 greens = input_diffuse_low.GatherGreen(sampler_linear_clamp, uv);
+	const float4 blues = input_diffuse_low.GatherBlue(sampler_linear_clamp, uv);
 		const float4 xxxx = input_normal_low.GatherRed(sampler_linear_clamp, uv);
 		const float4 yyyy = input_normal_low.GatherGreen(sampler_linear_clamp, uv);
 		const float Z0 = compute_lineardepth(depths.w);
 		const float Z1 = compute_lineardepth(depths.z);
 		const float Z2 = compute_lineardepth(depths.x);
 		const float Z3 = compute_lineardepth(depths.y);
-		const uint C0 = Pack_R11G11B10_FLOAT(float3(reds.w, greens.w, blues.w));
-		const uint C1 = Pack_R11G11B10_FLOAT(float3(reds.z, greens.z, blues.z));
-		const uint C2 = Pack_R11G11B10_FLOAT(float3(reds.x, greens.x, blues.x));
-		const uint C3 = Pack_R11G11B10_FLOAT(float3(reds.y, greens.y, blues.y));
+		const float3 C0 = float3(reds.w, greens.w, blues.w);
+		const float3 C1 = float3(reds.z, greens.z, blues.z);
+		const float3 C2 = float3(reds.x, greens.x, blues.x);
+		const float3 C3 = float3(reds.y, greens.y, blues.y);
 		const uint OCT0 = pack_half2(float2(xxxx.w, yyyy.w));
 		const uint OCT1 = pack_half2(float2(xxxx.z, yyyy.z));
 		const uint OCT2 = pack_half2(float2(xxxx.x, yyyy.x));
@@ -64,19 +75,19 @@ void main(uint2 Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
 		
 		const uint t = coord_to_cache(int2(x, y));
 		cache_z[t] = Z0;
-		cache_rgb[t] = C0;
+		SSGI_STORE_CACHE(t, C0);
 		cache_oct[t] = OCT0;
 		
 		cache_z[t + 1] = Z1;
-		cache_rgb[t + 1] = C1;
+		SSGI_STORE_CACHE(t + 1, C1);
 		cache_oct[t + 1] = OCT1;
 		
 		cache_z[t + TILE_SIZE] = Z2;
-		cache_rgb[t + TILE_SIZE] = C2;
+		SSGI_STORE_CACHE(t + TILE_SIZE, C2);
 		cache_oct[t + TILE_SIZE] = OCT2;
 		
 		cache_z[t + TILE_SIZE + 1] = Z3;
-		cache_rgb[t + TILE_SIZE + 1] = C3;
+		SSGI_STORE_CACHE(t + TILE_SIZE + 1, C3);
 		cache_oct[t + TILE_SIZE + 1] = OCT3;
 	}
 	GroupMemoryBarrierWithGroupSync();
@@ -118,7 +129,7 @@ void main(uint2 Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
 			const int2 coord = coord_base + int2(x, y) * spread;
 			const uint t = coord_to_cache(coord);
 
-			const float3 sampleDiffuse = Unpack_R11G11B10_FLOAT(cache_rgb[t]);
+			const float3 sampleDiffuse = SSGI_LOAD_CACHE(t);
 			const float sampleLinearDepth = cache_z[t];
 			const float3 sampleN = decode_oct(unpack_half2(cache_oct[t]));
 		
@@ -144,3 +155,6 @@ void main(uint2 Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
 	output[pixel] = output[pixel] + float4(result, 1);
 	//output[pixel] = float4(curve.xxx, 1);
 }
+
+#undef SSGI_STORE_CACHE
+#undef SSGI_LOAD_CACHE
