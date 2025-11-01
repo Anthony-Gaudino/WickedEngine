@@ -1153,6 +1153,8 @@ namespace wi::renderer
 	void SetToDrawVoxelHelper(bool value, int clipmap_level);
 	void SetDebugLightCulling(bool enabled);
 	bool GetDebugLightCulling();
+	void SetCausticsDebugEnabled(bool value);
+	bool GetCausticsDebugEnabled();
 	void SetAdvancedLightCulling(bool enabled);
 	bool GetAdvancedLightCulling();
 	void SetVariableRateShadingClassification(bool enabled);

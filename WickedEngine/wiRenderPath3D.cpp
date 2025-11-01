@@ -1497,6 +1497,11 @@ namespace wi
 		// Main camera opaque color pass:
 		cmd = device->BeginCommandList();
 		device->WaitCommandList(cmd, cmd_maincamera_compute_effects);
+		if (cmd_ocean.IsValid())
+		{
+			// Ensure ocean simulation finished before shading uses displacement data (caustics, fog, wetmaps)
+			device->WaitCommandList(cmd, cmd_ocean);
+		}
 		wi::jobsystem::Execute(ctx, [this, cmd](wi::jobsystem::JobArgs args) {
 
 			GraphicsDevice* device = wi::graphics::GetDevice();
@@ -1818,6 +1823,44 @@ namespace wi
 			fx.enableFullScreen();
 			fx.blendFlag = BLENDMODE_PREMULTIPLIED;
 			wi::image::Draw(&debugUAV, fx, cmd);
+		}
+
+		if (wi::renderer::GetCausticsDebugEnabled())
+		{
+			const wi::graphics::Texture* caustics = wi::renderer::GetTexture(wi::enums::TEXTYPE_2D_CAUSTICS);
+			if (caustics != nullptr && caustics->IsValid())
+			{
+				const auto& desc = caustics->GetDesc();
+				if (desc.width > 0 && desc.height > 0)
+				{
+					wi::image::Params overlay;
+					overlay.blendFlag = BLENDMODE_ALPHA;
+					overlay.quality = wi::image::QUALITY_NEAREST;
+					overlay.color = XMFLOAT4(1, 1, 1, 0.9f);
+					const float margin = 16.0f;
+					float width = (float)desc.width;
+					float height = (float)desc.height;
+					const float maxDimension = std::min(GetLogicalWidth(), GetLogicalHeight()) * 0.35f;
+					if (maxDimension > 0)
+					{
+						const float longest = std::max(width, height);
+						if (longest > 0)
+						{
+							float scale = maxDimension / longest;
+							scale = std::min(scale, 1.0f);
+							width *= scale;
+							height *= scale;
+						}
+					}
+					overlay.siz = XMFLOAT2(width, height);
+					const float posX = std::max(margin, GetLogicalWidth() - width - margin);
+					const float posY = std::max(margin, GetLogicalHeight() - height - margin);
+					overlay.pos = XMFLOAT3(posX, posY, 0);
+					overlay.pivot = XMFLOAT2(0, 0);
+					overlay.opacity = 0.95f;
+					wi::image::Draw(caustics, overlay, cmd);
+				}
+			}
 		}
 
 		device->EventEnd(cmd);

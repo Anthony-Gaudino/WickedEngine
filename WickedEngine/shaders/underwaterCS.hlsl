@@ -71,6 +71,17 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		float3 transmittance = saturate(exp(-water_depth * ocean.extinction_color.rgb * ocean.water_color.a));
 		color.rgb *= transmittance;
 		color.rgb = lerp(ocean.water_color.rgb, color.rgb, waterfog);
+
+		if (ocean.caustics_intensity > 0)
+		{
+			// Reapply caustics after volumetric tint so the pattern remains visible underwater
+			float2 caustics_uv = surface_position.xz * ocean.patch_size_rcp * ocean.caustics_scale;
+			half3 caustic = texture_caustics.SampleLevel(sampler_linear_mirror, caustics_uv, 0).rgb * (half)ocean.caustics_intensity;
+			half depth_fade = (half)saturate(exp(-water_depth * 0.05f));
+			half sun_alignment = saturate(dot(half3(0, 1, 0), -GetSunDirection()));
+			half3 sun_color = GetSunColor();
+			color.rgb += (float3)(caustic * sun_color * depth_fade * sun_alignment) * transmittance;
+		}
 		
 		//color = float4(1, 0, 0, 1);
 	}

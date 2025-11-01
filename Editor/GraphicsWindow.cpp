@@ -429,6 +429,16 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 	debugLightCullingCheckBox.SetCheck(wi::renderer::GetDebugLightCulling());
 	AddWidget(&debugLightCullingCheckBox);
 
+	causticsDebugCheckBox.Create("Caustics Debug: ");
+	causticsDebugCheckBox.SetTooltip("Overlay the generated ocean caustics texture in the viewport for debugging.");
+	causticsDebugCheckBox.SetPos(XMFLOAT2(x, y += step));
+	causticsDebugCheckBox.SetSize(XMFLOAT2(itemheight, itemheight));
+	causticsDebugCheckBox.OnClick([](wi::gui::EventArgs args) {
+		wi::renderer::SetCausticsDebugEnabled(args.bValue);
+	});
+	causticsDebugCheckBox.SetCheck(wi::renderer::GetCausticsDebugEnabled());
+	AddWidget(&causticsDebugCheckBox);
+
 	tessellationCheckBox.Create("Tessellation: ");
 	tessellationCheckBox.SetTooltip("Enable tessellation feature. You also need to specify a tessellation factor for individual objects.");
 	tessellationCheckBox.SetPos(XMFLOAT2(x, y += step));

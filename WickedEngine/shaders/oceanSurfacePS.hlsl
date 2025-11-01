@@ -125,6 +125,7 @@ float4 main(PSIn input) : SV_TARGET
 		color.a = 1;
 	}
 	
+	float causticsFoamFactor = 1;
 #if 1
 	// FOAM:
 	float water_depth_diff = abs(texture_lineardepth[pixel] * GetCamera().z_far - lineardepth); // Note: for the shore foam, this is more accurate than water plane distance
@@ -147,7 +148,20 @@ float4 main(PSIn input) : SV_TARGET
 	surface.albedo = lerp(surface.albedo, 0.6, foam);
 	surface.refraction.a *= 1 - foam;
 	surface.refraction.a = saturate(surface.refraction.a + saturate(exp(-water_depth_diff * 4)));
+	causticsFoamFactor = saturate(1 - foam);
 #endif
+
+	const ShaderOcean oceanParams = GetWeather().ocean;
+	if (oceanParams.caustics_intensity > 0)
+	{
+		float2 caustics_uv = surface.P.xz * oceanParams.patch_size_rcp * oceanParams.caustics_scale;
+		half3 caustic = texture_caustics.SampleLevel(sampler_linear_mirror, caustics_uv, 0).rgb * (half)oceanParams.caustics_intensity;
+		half depthFade = water_depth < FLT_MAX ? (half)saturate(exp(-abs(water_depth) * 0.1f)) : 1;
+		half foamAttenuation = (half)causticsFoamFactor;
+		half ndotlSun = saturate(dot(surface.N, -GetSunDirection()));
+		half3 sunColor = GetSunColor();
+		lighting.direct.diffuse += caustic * sunColor * (half)PI * depthFade * foamAttenuation * ndotlSun;
+	}
 
 	ApplyLighting(surface, lighting, color);
 	

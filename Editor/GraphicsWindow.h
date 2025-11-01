@@ -106,6 +106,7 @@ public:
 	wi::gui::CheckBox variableRateShadingClassificationDebugCheckBox;
 	wi::gui::CheckBox advancedLightCullingCheckBox;
 	wi::gui::CheckBox debugLightCullingCheckBox;
+	wi::gui::CheckBox causticsDebugCheckBox;
 	wi::gui::CheckBox tessellationCheckBox;
 
 	wi::gui::CheckBox meshblendCheckBox;

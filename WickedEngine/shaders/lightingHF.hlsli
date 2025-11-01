@@ -50,8 +50,7 @@ inline void ApplyLighting(in Surface surface, in Lighting lighting, inout half4 
 //#define CASCADE_DITHERING
 inline void light_directional(in ShaderEntity light, in Surface surface, inout Lighting lighting, in half shadow_mask = 1)
 {
-	if (shadow_mask <= 0.001)
-		return; // shadow mask zero
+	bool skip_lighting = shadow_mask <= 0.001;
 	if ((light.layerMask & surface.layerMask) == 0)
 		return; // layer mismatch
 		
@@ -61,15 +60,52 @@ inline void light_directional(in ShaderEntity light, in Surface surface, inout L
 
 	if (!any(surface_to_light.NdotL_sss))
 		return; // facing away from light
-		
+	
+#ifndef WATER
+	const ShaderOcean ocean = GetWeather().ocean;
+	bool surface_below_water = false;
+	half water_depth = 0;
+	half3 caustic_value = half3(0, 0, 0);
+	float2 ocean_uv = surface.P.xz * ocean.patch_size_rcp;
+	float water_height = ocean.water_height;
+	if (ocean.texture_displacementmap >= 0)
+	{
+		Texture2D displacementmap = bindless_textures[descriptor_index(ocean.texture_displacementmap)];
+		float3 displacement = displacementmap.SampleLevel(sampler_linear_wrap, ocean_uv, 0).xzy;
+		water_height += displacement.y;
+	}
+	half depth = (half)(water_height - surface.P.y);
+	surface_below_water = depth > 0;
+	if (surface_below_water)
+	{
+		water_depth = depth;
+		float2 caustics_uv = ocean_uv * ocean.caustics_scale;
+		caustic_value = texture_caustics.SampleLevel(sampler_linear_mirror, caustics_uv, 0).rgb * (half)ocean.caustics_intensity;
+		caustic_value = max(caustic_value, half3(0, 0, 0));
+		caustic_value *= sqr(saturate(depth * 0.5));
+	}
+	if (!surface_below_water && skip_lighting)
+		return;
+#else
+	if (skip_lighting)
+		return;
+#endif // WATER
+	
 	half3 light_color = light.GetColor().rgb * shadow_mask;
+#ifndef WATER
+	half3 caustic_light = surface_below_water ? light.GetColor().rgb : light_color; // keep caustics even when water self-shadows
+#else
+	half3 caustic_light = light_color;
+#endif
 
 	[branch]
 	if (light.IsCastingShadow() && surface.IsReceiveShadow())
 	{
 		if (GetFrame().options & OPTION_BIT_VOLUMETRICCLOUDS_CAST_SHADOW)
 		{
-			light_color *= shadow_2D_volumetricclouds(surface.P);
+			half3 cloud_shadow = shadow_2D_volumetricclouds(surface.P);
+			light_color *= cloud_shadow;
+			caustic_light *= cloud_shadow;
 		}
 
 #if defined(SHADOW_MASK_ENABLED) && !defined(TRANSPARENT)
@@ -100,7 +136,16 @@ inline void light_directional(in ShaderEntity light, in Surface surface, inout L
 					if (cascade_fade > 0 && dither(surface.pixel + GetTemporalAASampleRotation()) < cascade_fade)
 						continue;
 						
-					light_color *= shadow_2D(light, shadow_pos.z, shadow_uv.xy, cascade);
+					half3 shadow_attenuation = shadow_2D(light, shadow_pos.z, shadow_uv.xy, cascade);
+					light_color *= shadow_attenuation;
+#ifndef WATER
+				       if (!surface_below_water)
+				       {
+					       caustic_light *= shadow_attenuation;
+				       }
+#else
+				       caustic_light *= shadow_attenuation;
+#endif
 					break;
 #else
 					const half3 shadow_main = shadow_2D(light, shadow_pos.z, shadow_uv.xy, cascade, surface.pixel);
@@ -115,11 +160,28 @@ inline void light_directional(in ShaderEntity light, in Surface surface, inout L
 						shadow_uv = clipspace_to_uv(shadow_pos);
 						const half3 shadow_fallback = shadow_2D(light, shadow_pos.z, shadow_uv.xy, cascade, surface.pixel);
 
-						light_color *= lerp(shadow_main, shadow_fallback, cascade_fade);
+						half3 shadow_mix = lerp(shadow_main, shadow_fallback, cascade_fade);
+						light_color *= shadow_mix;
+#ifndef WATER
+					       if (!surface_below_water)
+					       {
+						       caustic_light *= shadow_mix;
+					       }
+#else
+					       caustic_light *= shadow_mix;
+#endif
 					}
 					else
 					{
 						light_color *= shadow_main;
+#ifndef WATER
+					       if (!surface_below_water)
+					       {
+						       caustic_light *= shadow_main;
+					       }
+#else
+					       caustic_light *= shadow_main;
+#endif
 					}
 					break;
 #endif // CASCADE_DITHERING
@@ -127,14 +189,32 @@ inline void light_directional(in ShaderEntity light, in Surface surface, inout L
 			}
 		}
 		
+#ifndef WATER
+		if (!surface_below_water && !any(light_color))
+			return; // light color lost after shadow
+#else
 		if (!any(light_color))
 			return; // light color lost after shadow
+#endif
 	}
+#ifndef WATER
+	else if (!surface_below_water && skip_lighting)
+	{
+		return;
+	}
+#else
+	else if (skip_lighting)
+	{
+		return;
+	}
+#endif
 
 	[branch]
 	if (GetFrame().options & OPTION_BIT_REALISTIC_SKY)
 	{
-		light_color *= GetAtmosphericLightTransmittance(GetWeather().atmosphere, surface.P, L, texture_transmittancelut);
+		half3 transmittance = GetAtmosphericLightTransmittance(GetWeather().atmosphere, surface.P, L, texture_transmittancelut);
+		light_color *= transmittance;
+		caustic_light *= transmittance;
 	}
 
 	lighting.direct.diffuse = mad(light_color, BRDF_GetDiffuse(surface, surface_to_light), lighting.direct.diffuse);
@@ -146,26 +226,13 @@ inline void light_directional(in ShaderEntity light, in Surface surface, inout L
 #endif // LIGHTING_SCATTER
 			
 #ifndef WATER
-	// On non-water surfaces there can be procedural caustic if it's under ocean:
-	const ShaderOcean ocean = GetWeather().ocean;
-	if (ocean.texture_displacementmap >= 0)
+	if (surface_below_water)
 	{
-		Texture2D displacementmap = bindless_textures[descriptor_index(ocean.texture_displacementmap)];
-		float2 ocean_uv = surface.P.xz * ocean.patch_size_rcp;
-		float3 displacement = displacementmap.SampleLevel(sampler_linear_wrap, ocean_uv, 0).xzy;
-		float water_height = ocean.water_height + displacement.y;
-		if (surface.P.y < water_height)
+		if (any(caustic_value))
 		{
-			float2 caustics_uv = ocean_uv * ocean.caustics_scale;
-			half3 caustic = texture_caustics.SampleLevel(sampler_linear_mirror, caustics_uv, 0).rgb * (half)ocean.caustics_intensity;
-			caustic *= sqr(saturate((water_height - surface.P.y) * 0.5)); // fade out at shoreline
-			caustic *= light_color;
-			lighting.indirect.diffuse += caustic;
-
-			// fade out specular at depth, it looks weird when specular appears under ocean from wetmap
-			half water_depth = water_height - surface.P.y;
-			lighting.direct.specular *= saturate(exp(-water_depth * 10));
+			lighting.direct.diffuse += caustic_value * caustic_light * (half)PI;
 		}
+		lighting.direct.specular *= saturate(exp(-water_depth * 10));
 	}
 #endif // WATER
 }

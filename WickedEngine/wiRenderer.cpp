@@ -36,6 +36,7 @@
 #include <algorithm>
 #include <atomic>
 #include <mutex>
+#include <string>
 
 using namespace wi::primitive;
 using namespace wi::graphics;
@@ -129,6 +130,7 @@ bool variableRateShadingClassification = false;
 bool variableRateShadingClassificationDebug = false;
 float GameSpeed = 1;
 bool debugLightCulling = false;
+bool debugCaustics = false;
 bool occlusionCulling = true;
 bool temporalAA = false;
 bool temporalAADEBUG = false;
@@ -2229,7 +2231,7 @@ void LoadBuffers()
 	{
 		TextureDesc desc;
 		desc.type = TextureDesc::Type::TEXTURE_2D;
-		desc.format = Format::R8G8B8A8_UNORM;
+		desc.format = Format::R16G16B16A16_FLOAT;
 		desc.width = 256;
 		desc.height = 256;
 		desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
@@ -4339,6 +4341,20 @@ void UpdatePerFrameData(
 	frameCB.texture_wind_index = device->GetDescriptorIndex(&textures[TEXTYPE_3D_WIND], SubresourceType::SRV);
 	frameCB.texture_wind_prev_index = device->GetDescriptorIndex(&textures[TEXTYPE_3D_WIND_PREV], SubresourceType::SRV);
 	frameCB.texture_caustics_index = device->GetDescriptorIndex(&textures[TEXTYPE_2D_CAUSTICS], SubresourceType::SRV);
+	static bool caustics_index_warned = false;
+	if (!caustics_index_warned)
+	{
+		if (frameCB.texture_caustics_index < 0)
+		{
+			caustics_index_warned = true;
+			wi::backlog::post("[Caustics] SRV descriptor index is < 0, using null bindless slot");
+		}
+		else
+		{
+			caustics_index_warned = true;
+			wi::backlog::post("[Caustics] SRV descriptor index = " + std::to_string(frameCB.texture_caustics_index));
+		}
+	}
 
 	// See if indirect debug buffer needs to be resized:
 	if (indirectDebugStatsReadback_available[device->GetBufferIndex()] && indirectDebugStatsReadback[device->GetBufferIndex()].mapped_data != nullptr)
@@ -19010,6 +19026,8 @@ bool GetToDrawVoxelHelper() { return VXGI_DEBUG; }
 void SetToDrawVoxelHelper(bool value, int clipmap_level) { VXGI_DEBUG = value; VXGI_DEBUG_CLIPMAP = clipmap_level; }
 void SetDebugLightCulling(bool enabled) { debugLightCulling = enabled; }
 bool GetDebugLightCulling() { return debugLightCulling; }
+void SetCausticsDebugEnabled(bool value) { debugCaustics = value; }
+bool GetCausticsDebugEnabled() { return debugCaustics; }
 void SetAdvancedLightCulling(bool enabled) { advancedLightCulling = enabled; }
 bool GetAdvancedLightCulling() { return advancedLightCulling; }
 void SetVariableRateShadingClassification(bool enabled) { variableRateShadingClassification = enabled; }
