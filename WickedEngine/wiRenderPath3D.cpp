@@ -4,6 +4,7 @@
 #include "wiHelper.h"
 #include "wiTextureHelper.h"
 #include "wiProfiler.h"
+#include "wiBacklog.h"
 
 using namespace wi::graphics;
 using namespace wi::enums;
@@ -88,247 +89,286 @@ namespace wi
 	void RenderPath3D::ResizeBuffers()
 	{
 		first_frame = true;
-		DeleteGPUResources();
 
 		GraphicsDevice* device = wi::graphics::GetDevice();
 
-		XMUINT2 internalResolution = GetInternalResolution();
-		camera->width = (float)internalResolution.x;
-		camera->height = (float)internalResolution.y;
-
-		// Render targets:
-
+		constexpr uint32_t max_msaa_attempts = 8;
+		uint32_t attempt = 0;
+		while (true)
 		{
-			TextureDesc desc;
-			desc.format = wi::renderer::format_rendertarget_main;
-			desc.bind_flags = BindFlag::RENDER_TARGET | BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
-			desc.width = internalResolution.x;
-			desc.height = internalResolution.y;
-			desc.sample_count = 1;
-			device->CreateTexture(&desc, nullptr, &rtMain);
-			device->SetName(&rtMain, "rtMain");
-
-			if (getMSAASampleCount() > 1)
+			if (attempt >= max_msaa_attempts)
 			{
-				desc.sample_count = getMSAASampleCount();
+				wi::backlog::post("Primitive ID buffer MSAA negotiation failed after repeated attempts; forcing 1x MSAA.", wi::backlog::LogLevel::Error);
+				RenderPath2D::setMSAASampleCount(1);
+				attempt = 0;
+				continue;
+			}
+
+			DeleteGPUResources();
+
+			XMUINT2 internalResolution = GetInternalResolution();
+			camera->width = (float)internalResolution.x;
+			camera->height = (float)internalResolution.y;
+
+			const uint32_t requested_msaa = std::max(1u, getMSAASampleCount());
+			bool msaa_retry = false;
+
+			// Render targets:
+			{
+				TextureDesc desc;
+				desc.format = wi::renderer::format_rendertarget_main;
+				desc.bind_flags = BindFlag::RENDER_TARGET | BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+				desc.width = internalResolution.x;
+				desc.height = internalResolution.y;
+				desc.sample_count = 1;
+				device->CreateTexture(&desc, nullptr, &rtMain);
+				device->SetName(&rtMain, "rtMain");
+
+				if (requested_msaa > 1)
+				{
+					desc.sample_count = requested_msaa;
+					desc.bind_flags = BindFlag::RENDER_TARGET | BindFlag::SHADER_RESOURCE;
+
+					device->CreateTexture(&desc, nullptr, &rtMain_render);
+					device->SetName(&rtMain_render, "rtMain_render");
+				}
+				else
+				{
+					rtMain_render = rtMain;
+				}
+			}
+			{
+				TextureDesc desc;
+				desc.format = wi::renderer::format_idbuffer;
 				desc.bind_flags = BindFlag::RENDER_TARGET | BindFlag::SHADER_RESOURCE;
+				if (requested_msaa > 1)
+				{
+					desc.bind_flags |= BindFlag::UNORDERED_ACCESS;
+				}
+				desc.width = internalResolution.x;
+				desc.height = internalResolution.y;
+				desc.sample_count = 1;
+				desc.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
+				desc.misc_flags = ResourceMiscFlag::ALIASING_TEXTURE_RT_DS;
+				device->CreateTexture(&desc, nullptr, &rtPrimitiveID);
+				device->SetName(&rtPrimitiveID, "rtPrimitiveID");
 
-				device->CreateTexture(&desc, nullptr, &rtMain_render);
-				device->SetName(&rtMain_render, "rtMain_render");
-			}
-			else
-			{
-				rtMain_render = rtMain;
-			}
-		}
-		{
-			TextureDesc desc;
-			desc.format = wi::renderer::format_idbuffer;
-			desc.bind_flags = BindFlag::RENDER_TARGET | BindFlag::SHADER_RESOURCE;
-			if (getMSAASampleCount() > 1)
-			{
-				desc.bind_flags |= BindFlag::UNORDERED_ACCESS;
-			}
-			desc.width = internalResolution.x;
-			desc.height = internalResolution.y;
-			desc.sample_count = 1;
-			desc.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
-			desc.misc_flags = ResourceMiscFlag::ALIASING_TEXTURE_RT_DS;
-			device->CreateTexture(&desc, nullptr, &rtPrimitiveID);
-			device->SetName(&rtPrimitiveID, "rtPrimitiveID");
+				if (requested_msaa > 1)
+				{
+					desc.sample_count = requested_msaa;
+					desc.bind_flags = BindFlag::RENDER_TARGET;
+					desc.layout = ResourceState::RENDERTARGET;
+					desc.misc_flags = ResourceMiscFlag::NONE;
+					device->CreateTexture(&desc, nullptr, &rtPrimitiveID_render);
+					device->SetName(&rtPrimitiveID_render, "rtPrimitiveID_render");
 
-			if (getMSAASampleCount() > 1)
+					const uint32_t actual_msaa = std::max(1u, rtPrimitiveID_render.desc.sample_count);
+					if (actual_msaa != requested_msaa)
+					{
+						if (actual_msaa < requested_msaa)
+						{
+							static bool logged_msaa_clamp = false;
+							if (!logged_msaa_clamp)
+							{
+								wi::backlog::post("Primitive ID buffer MSAA clamped to " + std::to_string(actual_msaa) + "x due to device limitations.", wi::backlog::LogLevel::Warning);
+								logged_msaa_clamp = true;
+							}
+						}
+						RenderPath2D::setMSAASampleCount(actual_msaa);
+						msaa_retry = true;
+					}
+				}
+				else
+				{
+					rtPrimitiveID_render = rtPrimitiveID;
+				}
+			}
 			{
-				desc.sample_count = getMSAASampleCount();
+				TextureDesc desc;
 				desc.bind_flags = BindFlag::RENDER_TARGET | BindFlag::SHADER_RESOURCE;
-				desc.misc_flags = ResourceMiscFlag::NONE;
-				device->CreateTexture(&desc, nullptr, &rtPrimitiveID_render);
-				device->SetName(&rtPrimitiveID_render, "rtPrimitiveID_render");
+				desc.format = Format::R16G16_FLOAT;
+				desc.width = internalResolution.x;
+				desc.height = internalResolution.y;
+				desc.sample_count = 1;
+				desc.misc_flags = ResourceMiscFlag::ALIASING_TEXTURE_RT_DS;
+				device->CreateTexture(&desc, nullptr, &rtParticleDistortion);
+				device->SetName(&rtParticleDistortion, "rtParticleDistortion");
+				if (requested_msaa > 1)
+				{
+					desc.sample_count = requested_msaa;
+					desc.misc_flags = ResourceMiscFlag::NONE;
+					device->CreateTexture(&desc, nullptr, &rtParticleDistortion_render);
+					device->SetName(&rtParticleDistortion_render, "rtParticleDistortion_render");
+				}
+				else
+				{
+					rtParticleDistortion_render = rtParticleDistortion;
+				}
 			}
-			else
+			if (msaa_retry)
 			{
-				rtPrimitiveID_render = rtPrimitiveID;
+				++attempt;
+				continue;
 			}
-		}
-		{
-			TextureDesc desc;
-			desc.bind_flags = BindFlag::RENDER_TARGET | BindFlag::SHADER_RESOURCE;
-			desc.format = Format::R16G16_FLOAT;
-			desc.width = internalResolution.x;
-			desc.height = internalResolution.y;
-			desc.sample_count = 1;
-			desc.misc_flags = ResourceMiscFlag::ALIASING_TEXTURE_RT_DS;
-			device->CreateTexture(&desc, nullptr, &rtParticleDistortion);
-			device->SetName(&rtParticleDistortion, "rtParticleDistortion");
-			if (getMSAASampleCount() > 1)
 			{
-				desc.sample_count = getMSAASampleCount();
-				desc.misc_flags = ResourceMiscFlag::NONE;
-				device->CreateTexture(&desc, nullptr, &rtParticleDistortion_render);
-				device->SetName(&rtParticleDistortion_render, "rtParticleDistortion_render");
+				TextureDesc desc;
+				desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+				desc.format = wi::renderer::format_rendertarget_main;
+				desc.width = internalResolution.x / 4;
+				desc.height = internalResolution.y / 4;
+				desc.mip_levels = std::min(8u, (uint32_t)std::log2(std::max(desc.width, desc.height)));
+				device->CreateTexture(&desc, nullptr, &rtSceneCopy);
+				device->SetName(&rtSceneCopy, "rtSceneCopy");
+				desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS | BindFlag::RENDER_TARGET; // render target for aliasing
+				device->CreateTexture(&desc, nullptr, &rtSceneCopy_tmp, &rtPrimitiveID);
+				device->SetName(&rtSceneCopy_tmp, "rtSceneCopy_tmp");
+
+				device->CreateMipgenSubresources(rtSceneCopy);
+				device->CreateMipgenSubresources(rtSceneCopy_tmp);
+
+				// because this is used by SSR and SSGI before it gets a chance to be normally rendered, it MUST be cleared!
+				CommandList cmd = device->BeginCommandList();
+				device->Barrier(GPUBarrier::Image(&rtSceneCopy, rtSceneCopy.desc.layout, ResourceState::UNORDERED_ACCESS), cmd);
+				device->ClearUAV(&rtSceneCopy, 0, cmd);
+				device->Barrier(GPUBarrier::Image(&rtSceneCopy, ResourceState::UNORDERED_ACCESS, rtSceneCopy.desc.layout), cmd);
 			}
-			else
 			{
-				rtParticleDistortion_render = rtParticleDistortion;
+				TextureDesc desc;
+				desc.bind_flags = BindFlag::RENDER_TARGET | BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+				desc.format = wi::renderer::format_rendertarget_main;
+				desc.width = internalResolution.x;
+				desc.height = internalResolution.y;
+				assert(ComputeTextureMemorySizeInBytes(desc) <= ComputeTextureMemorySizeInBytes(rtPrimitiveID.desc)); // Aliased check
+				device->CreateTexture(&desc, nullptr, &rtPostprocess, &rtPrimitiveID); // Aliased!
+				device->SetName(&rtPostprocess, "rtPostprocess");
 			}
-		}
-		{
-			TextureDesc desc;
-			desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
-			desc.format = wi::renderer::format_rendertarget_main;
-			desc.width = internalResolution.x / 4;
-			desc.height = internalResolution.y / 4;
-			desc.mip_levels = std::min(8u, (uint32_t)std::log2(std::max(desc.width, desc.height)));
-			device->CreateTexture(&desc, nullptr, &rtSceneCopy);
-			device->SetName(&rtSceneCopy, "rtSceneCopy");
-			desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS | BindFlag::RENDER_TARGET; // render target for aliasing
-			device->CreateTexture(&desc, nullptr, &rtSceneCopy_tmp, &rtPrimitiveID);
-			device->SetName(&rtSceneCopy_tmp, "rtSceneCopy_tmp");
-
-			device->CreateMipgenSubresources(rtSceneCopy);
-			device->CreateMipgenSubresources(rtSceneCopy_tmp);
-
-			// because this is used by SSR and SSGI before it gets a chance to be normally rendered, it MUST be cleared!
-			CommandList cmd = device->BeginCommandList();
-			device->Barrier(GPUBarrier::Image(&rtSceneCopy, rtSceneCopy.desc.layout, ResourceState::UNORDERED_ACCESS), cmd);
-			device->ClearUAV(&rtSceneCopy, 0, cmd);
-			device->Barrier(GPUBarrier::Image(&rtSceneCopy, ResourceState::UNORDERED_ACCESS, rtSceneCopy.desc.layout), cmd);
-		}
-		{
-			TextureDesc desc;
-			desc.bind_flags = BindFlag::RENDER_TARGET | BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
-			desc.format = wi::renderer::format_rendertarget_main;
-			desc.width = internalResolution.x;
-			desc.height = internalResolution.y;
-			assert(ComputeTextureMemorySizeInBytes(desc) <= ComputeTextureMemorySizeInBytes(rtPrimitiveID.desc)); // Aliased check
-			device->CreateTexture(&desc, nullptr, &rtPostprocess, &rtPrimitiveID); // Aliased!
-			device->SetName(&rtPostprocess, "rtPostprocess");
-		}
-		{
-			TextureDesc desc;
-			desc.bind_flags = BindFlag::RENDER_TARGET | BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
-			desc.format = Format::R10G10B10A2_UNORM;
-			desc.width = internalResolution.x / 4;
-			desc.height = internalResolution.y / 4;
-			desc.bind_flags = BindFlag::UNORDERED_ACCESS | BindFlag::SHADER_RESOURCE;
-			device->CreateTexture(&desc, nullptr, &rtGUIBlurredBackground[0]);
-			device->SetName(&rtGUIBlurredBackground[0], "rtGUIBlurredBackground[0]");
-
-			desc.width /= 4;
-			desc.height /= 4;
-			device->CreateTexture(&desc, nullptr, &rtGUIBlurredBackground[1]);
-			device->SetName(&rtGUIBlurredBackground[1], "rtGUIBlurredBackground[1]");
-			device->CreateTexture(&desc, nullptr, &rtGUIBlurredBackground[2]);
-			device->SetName(&rtGUIBlurredBackground[2], "rtGUIBlurredBackground[2]");
-		}
-		if (device->CheckCapability(GraphicsDeviceCapability::VARIABLE_RATE_SHADING_TIER2) &&
-			wi::renderer::GetVariableRateShadingClassification())
-		{
-			uint32_t tileSize = device->GetVariableRateShadingTileSize();
-
-			TextureDesc desc;
-			desc.layout = ResourceState::UNORDERED_ACCESS;
-			desc.bind_flags = BindFlag::UNORDERED_ACCESS | BindFlag::SHADING_RATE;
-			desc.format = Format::R8_UINT;
-			desc.width = (internalResolution.x + tileSize - 1) / tileSize;
-			desc.height = (internalResolution.y + tileSize - 1) / tileSize;
-
-			device->CreateTexture(&desc, nullptr, &rtShadingRate);
-			device->SetName(&rtShadingRate, "rtShadingRate");
-		}
-
-		// Depth buffers:
-		{
-			TextureDesc desc;
-			desc.width = internalResolution.x;
-			desc.height = internalResolution.y;
-
-			desc.sample_count = getMSAASampleCount();
-			desc.layout = ResourceState::DEPTHSTENCIL;
-			desc.format = wi::renderer::format_depthbuffer_main;
-			desc.bind_flags = BindFlag::DEPTH_STENCIL | BindFlag::SHADER_RESOURCE;
-			device->CreateTexture(&desc, nullptr, &depthBuffer_Main);
-			device->SetName(&depthBuffer_Main, "depthBuffer_Main");
-
-			desc.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
-			desc.format = Format::R32_FLOAT;
-			desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
-			desc.sample_count = 1;
-			desc.mip_levels = 5;
-			device->CreateTexture(&desc, nullptr, &depthBuffer_Copy);
-			device->SetName(&depthBuffer_Copy, "depthBuffer_Copy");
-			device->CreateTexture(&desc, nullptr, &depthBuffer_Copy1);
-			device->SetName(&depthBuffer_Copy1, "depthBuffer_Copy1");
-
-			for (uint32_t i = 0; i < depthBuffer_Copy.desc.mip_levels; ++i)
 			{
-				int subresource = 0;
-				subresource = device->CreateSubresource(&depthBuffer_Copy, SubresourceType::SRV, 0, 1, i, 1);
-				assert(subresource == i);
-				subresource = device->CreateSubresource(&depthBuffer_Copy, SubresourceType::UAV, 0, 1, i, 1);
-				assert(subresource == i);
-				subresource = device->CreateSubresource(&depthBuffer_Copy1, SubresourceType::SRV, 0, 1, i, 1);
-				assert(subresource == i);
-				subresource = device->CreateSubresource(&depthBuffer_Copy1, SubresourceType::UAV, 0, 1, i, 1);
-				assert(subresource == i);
-			}
-		}
-		{
-			TextureDesc desc;
-			desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
-			desc.format = Format::R32_FLOAT;
-			desc.width = internalResolution.x;
-			desc.height = internalResolution.y;
-			desc.mip_levels = 5;
-			desc.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
-			device->CreateTexture(&desc, nullptr, &rtLinearDepth);
-			device->SetName(&rtLinearDepth, "rtLinearDepth");
+				TextureDesc desc;
+				desc.bind_flags = BindFlag::RENDER_TARGET | BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+				desc.format = Format::R10G10B10A2_UNORM;
+				desc.width = internalResolution.x / 4;
+				desc.height = internalResolution.y / 4;
+				desc.bind_flags = BindFlag::UNORDERED_ACCESS | BindFlag::SHADER_RESOURCE;
+				device->CreateTexture(&desc, nullptr, &rtGUIBlurredBackground[0]);
+				device->SetName(&rtGUIBlurredBackground[0], "rtGUIBlurredBackground[0]");
 
-			for (uint32_t i = 0; i < desc.mip_levels; ++i)
+				desc.width /= 4;
+				desc.height /= 4;
+				device->CreateTexture(&desc, nullptr, &rtGUIBlurredBackground[1]);
+				device->SetName(&rtGUIBlurredBackground[1], "rtGUIBlurredBackground[1]");
+				device->CreateTexture(&desc, nullptr, &rtGUIBlurredBackground[2]);
+				device->SetName(&rtGUIBlurredBackground[2], "rtGUIBlurredBackground[2]");
+			}
+			if (device->CheckCapability(GraphicsDeviceCapability::VARIABLE_RATE_SHADING_TIER2) &&
+				wi::renderer::GetVariableRateShadingClassification())
 			{
-				int subresource_index;
-				subresource_index = device->CreateSubresource(&rtLinearDepth, SubresourceType::SRV, 0, 1, i, 1);
-				assert(subresource_index == i);
-				subresource_index = device->CreateSubresource(&rtLinearDepth, SubresourceType::UAV, 0, 1, i, 1);
-				assert(subresource_index == i);
+				uint32_t tileSize = device->GetVariableRateShadingTileSize();
+
+				TextureDesc desc;
+				desc.layout = ResourceState::UNORDERED_ACCESS;
+				desc.bind_flags = BindFlag::UNORDERED_ACCESS | BindFlag::SHADING_RATE;
+				desc.format = Format::R8_UINT;
+				desc.width = (internalResolution.x + tileSize - 1) / tileSize;
+				desc.height = (internalResolution.y + tileSize - 1) / tileSize;
+
+				device->CreateTexture(&desc, nullptr, &rtShadingRate);
+				device->SetName(&rtShadingRate, "rtShadingRate");
 			}
+
+			// Depth buffers:
+			{
+				TextureDesc desc;
+				desc.width = internalResolution.x;
+				desc.height = internalResolution.y;
+
+				desc.sample_count = requested_msaa;
+				desc.layout = ResourceState::DEPTHSTENCIL;
+				desc.format = wi::renderer::format_depthbuffer_main;
+				desc.bind_flags = BindFlag::DEPTH_STENCIL | BindFlag::SHADER_RESOURCE;
+				device->CreateTexture(&desc, nullptr, &depthBuffer_Main);
+				device->SetName(&depthBuffer_Main, "depthBuffer_Main");
+
+				desc.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
+				desc.format = Format::R32_FLOAT;
+				desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+				desc.sample_count = 1;
+				desc.mip_levels = 5;
+				device->CreateTexture(&desc, nullptr, &depthBuffer_Copy);
+				device->SetName(&depthBuffer_Copy, "depthBuffer_Copy");
+				device->CreateTexture(&desc, nullptr, &depthBuffer_Copy1);
+				device->SetName(&depthBuffer_Copy1, "depthBuffer_Copy1");
+
+				for (uint32_t i = 0; i < depthBuffer_Copy.desc.mip_levels; ++i)
+				{
+					int subresource = 0;
+					subresource = device->CreateSubresource(&depthBuffer_Copy, SubresourceType::SRV, 0, 1, i, 1);
+					assert(subresource == i);
+					subresource = device->CreateSubresource(&depthBuffer_Copy, SubresourceType::UAV, 0, 1, i, 1);
+					assert(subresource == i);
+					subresource = device->CreateSubresource(&depthBuffer_Copy1, SubresourceType::SRV, 0, 1, i, 1);
+					assert(subresource == i);
+					subresource = device->CreateSubresource(&depthBuffer_Copy1, SubresourceType::UAV, 0, 1, i, 1);
+					assert(subresource == i);
+				}
+			}
+			{
+				TextureDesc desc;
+				desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+				desc.format = Format::R32_FLOAT;
+				desc.width = internalResolution.x;
+				desc.height = internalResolution.y;
+				desc.mip_levels = 5;
+				desc.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
+				device->CreateTexture(&desc, nullptr, &rtLinearDepth);
+				device->SetName(&rtLinearDepth, "rtLinearDepth");
+
+				for (uint32_t i = 0; i < desc.mip_levels; ++i)
+				{
+					int subresource_index;
+					subresource_index = device->CreateSubresource(&rtLinearDepth, SubresourceType::SRV, 0, 1, i, 1);
+					assert(subresource_index == i);
+					subresource_index = device->CreateSubresource(&rtLinearDepth, SubresourceType::UAV, 0, 1, i, 1);
+					assert(subresource_index == i);
+				}
+			}
+
+			// Other resources:
+			{
+				TextureDesc desc;
+				desc.width = internalResolution.x;
+				desc.height = internalResolution.y;
+				desc.mip_levels = 1;
+				desc.array_size = 1;
+				desc.format = Format::R8G8B8A8_UNORM;
+				desc.sample_count = 1;
+				desc.usage = Usage::DEFAULT;
+				desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+				desc.layout = ResourceState::SHADER_RESOURCE;
+
+				device->CreateTexture(&desc, nullptr, &debugUAV);
+				device->SetName(&debugUAV, "debugUAV");
+			}
+			wi::renderer::CreateTiledLightResources(tiledLightResources, internalResolution);
+			wi::renderer::CreateScreenSpaceShadowResources(screenspaceshadowResources, internalResolution);
+
+			// These can trigger resource creations if needed:
+			setAO(ao);
+			setSSREnabled(ssrEnabled);
+			setSSGIEnabled(ssgiEnabled);
+			setRaytracedReflectionsEnabled(raytracedReflectionsEnabled);
+			setRaytracedDiffuseEnabled(raytracedDiffuseEnabled);
+			setFSREnabled(fsrEnabled);
+			setFSR2Enabled(fsr2Enabled);
+			setEyeAdaptionEnabled(eyeAdaptionEnabled);
+			setReflectionsEnabled(reflectionsEnabled);
+			setBloomEnabled(bloomEnabled);
+			setVolumeLightsEnabled(volumeLightsEnabled);
+			setLightShaftsEnabled(lightShaftsEnabled);
+			setOutlineEnabled(outlineEnabled);
+
+			RenderPath2D::ResizeBuffers();
+			return;
 		}
-
-		// Other resources:
-		{
-			TextureDesc desc;
-			desc.width = internalResolution.x;
-			desc.height = internalResolution.y;
-			desc.mip_levels = 1;
-			desc.array_size = 1;
-			desc.format = Format::R8G8B8A8_UNORM;
-			desc.sample_count = 1;
-			desc.usage = Usage::DEFAULT;
-			desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
-			desc.layout = ResourceState::SHADER_RESOURCE;
-
-			device->CreateTexture(&desc, nullptr, &debugUAV);
-			device->SetName(&debugUAV, "debugUAV");
-		}
-		wi::renderer::CreateTiledLightResources(tiledLightResources, internalResolution);
-		wi::renderer::CreateScreenSpaceShadowResources(screenspaceshadowResources, internalResolution);
-
-		// These can trigger resource creations if needed:
-		setAO(ao);
-		setSSREnabled(ssrEnabled);
-		setSSGIEnabled(ssgiEnabled);
-		setRaytracedReflectionsEnabled(raytracedReflectionsEnabled);
-		setRaytracedDiffuseEnabled(raytracedDiffuseEnabled);
-		setFSREnabled(fsrEnabled);
-		setFSR2Enabled(fsr2Enabled);
-		setEyeAdaptionEnabled(eyeAdaptionEnabled);
-		setReflectionsEnabled(reflectionsEnabled);
-		setBloomEnabled(bloomEnabled);
-		setVolumeLightsEnabled(volumeLightsEnabled);
-		setLightShaftsEnabled(lightShaftsEnabled);
-		setOutlineEnabled(outlineEnabled);
-
-		RenderPath2D::ResizeBuffers();
 	}
 
 	void RenderPath3D::PreUpdate()
@@ -722,7 +762,7 @@ namespace wi
 
 		visibilityResources.depthbuffer = &depthBuffer_Copy;
 		visibilityResources.lineardepth = &rtLinearDepth;
-		if (getMSAASampleCount() > 1)
+		if (wi::renderer::IsPrimitiveIDSupported() && getMSAASampleCount() > 1)
 		{
 			visibilityResources.primitiveID_resolved = &rtPrimitiveID;
 		}
@@ -1110,29 +1150,43 @@ namespace wi
 				cmd
 			);
 
-			if (visibility_shading_in_compute)
-			{
-				wi::renderer::Visibility_Surface(
-					visibilityResources,
-					rtMain,
-					cmd
-				);
-			}
-			else if (
+			const bool visibility_surface_supported = wi::renderer::IsPrimitiveIDSupported();
+			const bool needs_visibility_surface =
 				getSSREnabled() ||
 				getSSGIEnabled() ||
 				getRaytracedReflectionEnabled() ||
 				getRaytracedDiffuseEnabled() ||
 				wi::renderer::GetScreenSpaceShadowsEnabled() ||
 				wi::renderer::GetRaytracedShadowsEnabled() ||
-				wi::renderer::GetVXGIEnabled()
-				)
+				wi::renderer::GetVXGIEnabled();
+
+			if (visibility_surface_supported)
 			{
-				// These post effects require surface normals and/or roughness
-				wi::renderer::Visibility_Surface_Reduced(
-					visibilityResources,
-					cmd
-				);
+				if (visibility_shading_in_compute)
+				{
+					wi::renderer::Visibility_Surface(
+						visibilityResources,
+						rtMain,
+						cmd
+					);
+				}
+				else if (needs_visibility_surface)
+				{
+					// These post effects require surface normals and/or roughness
+					wi::renderer::Visibility_Surface_Reduced(
+						visibilityResources,
+						cmd
+					);
+				}
+			}
+			else if (visibility_shading_in_compute || needs_visibility_surface)
+			{
+				static bool logged_visibility_warning = false;
+				if (!logged_visibility_warning)
+				{
+					wi::backlog::post("Visibility compute passes are unavailable on this platform because primitive IDs are not supported.", wi::backlog::LogLevel::Warning);
+					logged_visibility_warning = true;
+				}
 			}
 
 			if (rtVelocity.IsValid())
@@ -1531,7 +1585,7 @@ namespace wi
 				);
 			}
 
-			if (getRaytracedReflectionEnabled())
+			if (getRaytracedReflectionEnabled() && wi::renderer::IsPrimitiveIDSupported())
 			{
 				wi::renderer::Postprocess_RTReflection(
 					rtreflectionResources,
@@ -1542,7 +1596,7 @@ namespace wi
 					getReflectionRoughnessCutoff()
 				);
 			}
-			if (getRaytracedDiffuseEnabled())
+			if (getRaytracedDiffuseEnabled() && wi::renderer::IsPrimitiveIDSupported())
 			{
 				wi::renderer::Postprocess_RTDiffuse(
 					rtdiffuseResources,
@@ -1895,7 +1949,7 @@ namespace wi
 	}
 	void RenderPath3D::RenderSSR(CommandList cmd) const
 	{
-		if (getSSREnabled() && !getRaytracedReflectionEnabled())
+		if (getSSREnabled() && wi::renderer::IsPrimitiveIDSupported() && !getRaytracedReflectionEnabled())
 		{
 			wi::renderer::Postprocess_SSR(
 				ssrResources,
@@ -1908,7 +1962,7 @@ namespace wi
 	}
 	void RenderPath3D::RenderSSGI(CommandList cmd) const
 	{
-		if (getSSGIEnabled())
+		if (getSSGIEnabled() && wi::renderer::IsPrimitiveIDSupported())
 		{
 			wi::renderer::Postprocess_SSGI(
 				ssgiResources,
@@ -2861,6 +2915,24 @@ namespace wi
 	}
 	void RenderPath3D::setSSREnabled(bool value)
 	{
+		if (value && !wi::renderer::IsPrimitiveIDSupported())
+		{
+			wi::renderer::RestorePrimitiveIDSupport("Primitive ID buffer re-enabled to attempt Screen Space Reflections.");
+		}
+		if (value && !wi::renderer::IsPrimitiveIDSupported())
+		{
+			static bool logged = false;
+			if (!logged)
+			{
+				wi::backlog::post("Screen Space Reflections require primitive ID support and will be disabled on this platform.", wi::backlog::LogLevel::Warning);
+				logged = true;
+			}
+			value = false;
+		}
+
+		if (ssrEnabled == value)
+			return;
+
 		ssrEnabled = value;
 
 		if (value)
@@ -2888,6 +2960,24 @@ namespace wi
 	}
 	void RenderPath3D::setSSGIEnabled(bool value)
 	{
+		if (value && !wi::renderer::IsPrimitiveIDSupported())
+		{
+			wi::renderer::RestorePrimitiveIDSupport("Primitive ID buffer re-enabled to attempt Screen Space Global Illumination.");
+		}
+		if (value && !wi::renderer::IsPrimitiveIDSupported())
+		{
+			static bool logged = false;
+			if (!logged)
+			{
+				wi::backlog::post("Screen Space Global Illumination requires primitive ID support and will be disabled on this platform.", wi::backlog::LogLevel::Warning);
+				logged = true;
+			}
+			value = false;
+		}
+
+		if (ssgiEnabled == value)
+			return;
+
 		ssgiEnabled = value;
 
 		if (value)
@@ -2915,6 +3005,24 @@ namespace wi
 	}
 	void RenderPath3D::setRaytracedReflectionsEnabled(bool value)
 	{
+		if (value && !wi::renderer::IsPrimitiveIDSupported())
+		{
+			wi::renderer::RestorePrimitiveIDSupport("Primitive ID buffer re-enabled to attempt ray traced reflections.");
+		}
+		if (value && !wi::renderer::IsPrimitiveIDSupported())
+		{
+			static bool logged = false;
+			if (!logged)
+			{
+				wi::backlog::post("Ray traced reflections require primitive ID support and will be disabled on this platform.", wi::backlog::LogLevel::Warning);
+				logged = true;
+			}
+			value = false;
+		}
+
+		if (raytracedReflectionsEnabled == value)
+			return;
+
 		raytracedReflectionsEnabled = value;
 
 		if (value)
@@ -2941,6 +3049,24 @@ namespace wi
 	}
 	void RenderPath3D::setRaytracedDiffuseEnabled(bool value)
 	{
+		if (value && !wi::renderer::IsPrimitiveIDSupported())
+		{
+			wi::renderer::RestorePrimitiveIDSupport("Primitive ID buffer re-enabled to attempt ray traced diffuse GI.");
+		}
+		if (value && !wi::renderer::IsPrimitiveIDSupported())
+		{
+			static bool logged = false;
+			if (!logged)
+			{
+				wi::backlog::post("Ray traced diffuse GI requires primitive ID support and will be disabled on this platform.", wi::backlog::LogLevel::Warning);
+				logged = true;
+			}
+			value = false;
+		}
+
+		if (raytracedDiffuseEnabled == value)
+			return;
+
 		raytracedDiffuseEnabled = value;
 
 		if (value)

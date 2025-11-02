@@ -104,13 +104,53 @@ void PushBarrier(const GPUBarrier& barrier)
 	barrier_stack.push_back(barrier);
 }
 
+static std::atomic_bool primitive_id_supported{ true };
+static void InvalidatePrimitiveIDPipelines();
+extern wi::jobsystem::context object_pso_job_ctx;
+
+static void DisablePrimitiveIDSupport(const char* reason)
+{
+	bool expected = true;
+	if (primitive_id_supported.compare_exchange_strong(expected, false))
+	{
+		wi::eventhandler::Subscribe_Once(wi::eventhandler::EVENT_THREAD_SAFE_POINT, [](uint64_t) {
+			wi::jobsystem::Wait(object_pso_job_ctx);
+			InvalidatePrimitiveIDPipelines();
+		});
+		wi::backlog::post(reason, wi::backlog::LogLevel::Warning);
+	}
+}
+
 bool IsPrimitiveIDSupported()
 {
-#if defined(PLATFORM_MACOS) || defined(PLATFORM_IOS)
-	return false;
-#else
+	// Primitive ID usage in Wicked Engine no longer depends on native SV_PrimitiveID
+	// support. Meshes always generate the auxiliary provoking vertex and reorder
+	// buffers during CPU-side preprocessing, allowing the prepass to emulate
+	// primitive identifiers reliably across backends (including Metal/MoltenVK).
+	// With this emulation in place we can expose the feature uniformly so the
+	// visibility pipeline and dependent effects remain enabled.
+	return primitive_id_supported.load(std::memory_order_relaxed);
+}
+
+bool RestorePrimitiveIDSupport(const char* reason)
+{
+	bool expected = false;
+	if (!primitive_id_supported.compare_exchange_strong(expected, true))
+	{
+		// Already enabled.
+		return true;
+	}
+
+	wi::eventhandler::Subscribe_Once(wi::eventhandler::EVENT_THREAD_SAFE_POINT, [](uint64_t) {
+		wi::jobsystem::Wait(object_pso_job_ctx);
+		InvalidatePrimitiveIDPipelines();
+	});
+
+	if (reason && reason[0] != '\0')
+	{
+		wi::backlog::post(reason, wi::backlog::LogLevel::Default);
+	}
 	return true;
-#endif
 }
 
 bool wireRender = false;
@@ -390,10 +430,27 @@ union ObjectRenderingVariant
 	uint32_t value;
 };
 static_assert(sizeof(ObjectRenderingVariant) == sizeof(uint32_t));
+static wi::unordered_map<uint32_t, PipelineState> g_object_pso_cache[RENDERPASS_COUNT][MaterialComponent::SHADERTYPE_COUNT][OBJECT_MESH_SHADER_PSO_COUNT];
 inline PipelineState* GetObjectPSO(ObjectRenderingVariant variant)
 {
-	static wi::unordered_map<uint32_t, PipelineState> PSO_object[RENDERPASS_COUNT][MaterialComponent::SHADERTYPE_COUNT][OBJECT_MESH_SHADER_PSO_COUNT];
-	return &PSO_object[variant.bits.renderpass][variant.bits.shadertype][variant.bits.mesh_shader][variant.value];
+	return &g_object_pso_cache[variant.bits.renderpass][variant.bits.shadertype][variant.bits.mesh_shader][variant.value];
+}
+
+static void ClearObjectPSOCache(RENDERPASS renderpass)
+{
+	for (uint32_t shadertype = 0; shadertype < MaterialComponent::SHADERTYPE_COUNT; ++shadertype)
+	{
+		for (uint32_t mesh_shader = 0; mesh_shader < OBJECT_MESH_SHADER_PSO_COUNT; ++mesh_shader)
+		{
+			g_object_pso_cache[renderpass][shadertype][mesh_shader].clear();
+		}
+	}
+}
+
+static void InvalidatePrimitiveIDPipelines()
+{
+	ClearObjectPSOCache(RENDERPASS_PREPASS);
+	ClearObjectPSOCache(RENDERPASS_PREPASS_DEPTHONLY);
 }
 wi::jobsystem::context mesh_shader_ctx;
 wi::jobsystem::context object_pso_job_ctx;
@@ -1850,9 +1907,6 @@ void LoadShaders()
 		SHADERTYPE realVS = GetVSTYPE(RENDERPASS_MAIN, false, false, true);
 
 		PipelineStateDesc desc;
-		desc.vs = &shaders[realVS];
-		desc.ps = &shaders[PSTYPE_OBJECT_HOLOGRAM];
-
 		desc.bs = &blendStates[BSTYPE_ADDITIVE];
 		desc.rs = &rasterizers[RSTYPE_FRONT];
 		desc.dss = &depthStencils[DSSTYPE_HOLOGRAM];
@@ -1959,6 +2013,9 @@ void LoadShaders()
 									{
 									case RENDERPASS_SHADOW:
 										desc.bs = &blendStates[transparency ? BSTYPE_TRANSPARENTSHADOW : BSTYPE_COLORWRITEDISABLE];
+										break;
+									case RENDERPASS_PREPASS:
+										desc.bs = &blendStates[BSTYPE_OPAQUE_IDBUFFER];
 										break;
 									case RENDERPASS_RAINBLOCKER:
 										desc.bs = &blendStates[BSTYPE_COLORWRITEDISABLE];
@@ -2092,10 +2149,21 @@ void LoadShaders()
 										const uint32_t msaa_support[] = { 1,2,4,8 };
 										for (uint32_t msaa : msaa_support)
 										{
+											if (renderpass_info.rt_count > 0 && renderpass_info.rt_formats[0] == format_idbuffer && !IsPrimitiveIDSupported())
+											{
+												break;
+											}
 											variant.bits.sample_count = msaa;
 											renderpass_info.sample_count = msaa;
 											PipelineState pso;
-											device->CreatePipelineState(&desc, &pso, &renderpass_info);
+											if (!device->CreatePipelineState(&desc, &pso, &renderpass_info))
+											{
+												if (renderpass_info.rt_count > 0 && renderpass_info.rt_formats[0] == format_idbuffer)
+												{
+													DisablePrimitiveIDSupport("Primitive ID buffer disabled: render target format unsupported on this device.");
+												}
+												continue;
+											}
 											wi::eventhandler::Subscribe_Once(wi::eventhandler::EVENT_THREAD_SAFE_POINT, [=](uint64_t userdata) {
 												*GetObjectPSO(variant) = pso;
 												});
@@ -2485,6 +2553,10 @@ void SetUpStates()
 	bd.alpha_to_coverage_enable = false;
 	bd.independent_blend_enable = false;
 	blendStates[BSTYPE_OPAQUE] = bd;
+
+	BlendState bd_idbuffer = bd;
+	bd_idbuffer.render_target[0].render_target_write_mask = ColorWrite::ENABLE_RED;
+	blendStates[BSTYPE_OPAQUE_IDBUFFER] = bd_idbuffer;
 
 	bd.render_target[0].src_blend = Blend::SRC_ALPHA;
 	bd.render_target[0].dest_blend = Blend::INV_SRC_ALPHA;

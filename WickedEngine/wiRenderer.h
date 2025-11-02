@@ -66,6 +66,7 @@ namespace wi::renderer
 	const wi::graphics::GPUBuffer* GetBuffer(wi::enums::BUFFERTYPES id);
 	const wi::graphics::Texture* GetTexture(wi::enums::TEXTYPES id);
 	bool IsPrimitiveIDSupported();
+	bool RestorePrimitiveIDSupport(const char* reason = nullptr);
 
 	// Returns a buffer preinitialized for quad index buffer laid out as:
 	//	vertexID * 4 + [0, 1, 2, 2, 1, 3]

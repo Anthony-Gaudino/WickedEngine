@@ -7,6 +7,8 @@
 #include "wiVersion.h"
 #include "wiTimer.h"
 #include "wiUnorderedSet.h"
+#include "wiUnorderedMap.h"
+#include "wiBacklog.h"
 
 #include "Utility/vulkan/vk_video/vulkan_video_codec_h264std_decode.h"
 #include "Utility/h264.h"
@@ -30,21 +32,30 @@
 #include <cstring>
 #include <iostream>
 #include <algorithm>
+#include <functional>
+#include <mutex>
+#include <sstream>
+#include <iomanip>
 
 namespace wi::graphics
 {
 
+static constexpr VkSampleCountFlags WI_SAMPLECOUNT_ALL =
+	VK_SAMPLE_COUNT_1_BIT |
+	VK_SAMPLE_COUNT_2_BIT |
+	VK_SAMPLE_COUNT_4_BIT |
+	VK_SAMPLE_COUNT_8_BIT |
+	VK_SAMPLE_COUNT_16_BIT |
+	VK_SAMPLE_COUNT_32_BIT |
+	VK_SAMPLE_COUNT_64_BIT;
+
 // Helper to clamp requested MSAA sample count to what the physical device
 // supports. This prevents pipeline creation failures when requesting
 // unsupported counts (eg. 8x on MoltenVK GPU only supporting 4x).
-static VkSampleCountFlagBits wi_clamp_sample_count(VkPhysicalDevice physicalDevice, VkSampleCountFlagBits requested)
+static VkSampleCountFlagBits wi_clamp_sample_count_from_mask(VkSampleCountFlags supported, VkSampleCountFlagBits requested)
 {
 	if (requested == 0)
 		requested = VK_SAMPLE_COUNT_1_BIT;
-
-	VkPhysicalDeviceProperties props = {};
-	vkGetPhysicalDeviceProperties(physicalDevice, &props);
-	VkSampleCountFlags supported = props.limits.framebufferColorSampleCounts & props.limits.framebufferDepthSampleCounts;
 
 	const VkSampleCountFlagBits order[] = {
 		VK_SAMPLE_COUNT_64_BIT,
@@ -67,6 +78,221 @@ static VkSampleCountFlagBits wi_clamp_sample_count(VkPhysicalDevice physicalDevi
 		}
 	}
 	return best;
+}
+
+static VkSampleCountFlags wi_get_device_sample_mask(VkPhysicalDevice physicalDevice)
+{
+	VkPhysicalDeviceProperties props = {};
+	vkGetPhysicalDeviceProperties(physicalDevice, &props);
+	return props.limits.framebufferColorSampleCounts & props.limits.framebufferDepthSampleCounts;
+}
+
+static VkSampleCountFlagBits wi_clamp_sample_count(VkPhysicalDevice physicalDevice, VkSampleCountFlagBits requested)
+{
+	VkSampleCountFlags supported = wi_get_device_sample_mask(physicalDevice);
+	return wi_clamp_sample_count_from_mask(supported, requested);
+}
+
+static VkSampleCountFlags wi_get_device_integer_sample_mask(VkPhysicalDevice physicalDevice)
+{
+	VkSampleCountFlags mask = 0;
+
+#if defined(VK_VERSION_1_2)
+	VkPhysicalDeviceProperties2 props2 = {};
+	props2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+	VkPhysicalDeviceVulkan12Properties props12 = {};
+	props12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES;
+	props2.pNext = &props12;
+	vkGetPhysicalDeviceProperties2(physicalDevice, &props2);
+	mask = props12.framebufferIntegerColorSampleCounts;
+	if (mask == 0)
+	{
+		mask = props2.properties.limits.framebufferColorSampleCounts;
+	}
+#else
+	VkPhysicalDeviceProperties props = {};
+	vkGetPhysicalDeviceProperties(physicalDevice, &props);
+	mask = props.limits.framebufferColorSampleCounts;
+#endif
+
+	if (mask == 0)
+	{
+		mask = VK_SAMPLE_COUNT_1_BIT;
+	}
+	return mask;
+}
+
+static bool wi_is_integer_format(Format format)
+{
+	switch (format)
+	{
+	case Format::R32G32B32A32_UINT:
+	case Format::R32G32B32A32_SINT:
+	case Format::R32G32B32_UINT:
+	case Format::R32G32B32_SINT:
+	case Format::R16G16B16A16_UINT:
+	case Format::R16G16B16A16_SINT:
+	case Format::R32G32_UINT:
+	case Format::R32G32_SINT:
+	case Format::R10G10B10A2_UINT:
+	case Format::R8G8B8A8_UINT:
+	case Format::R8G8B8A8_SINT:
+	case Format::R16G16_UINT:
+	case Format::R16G16_SINT:
+	case Format::R32_UINT:
+	case Format::R32_SINT:
+	case Format::R8G8_UINT:
+	case Format::R8G8_SINT:
+	case Format::R16_UINT:
+	case Format::R16_SINT:
+	case Format::R8_UINT:
+	case Format::R8_SINT:
+		return true;
+	default:
+		return false;
+	}
+}
+
+struct FormatSampleCountCacheKey
+{
+	uint64_t value = 0;
+	FormatSampleCountCacheKey() = default;
+	FormatSampleCountCacheKey(VkFormat f, VkImageUsageFlags u)
+	{
+		value = (uint64_t(uint32_t(f)) << 32u) | uint64_t(u);
+	}
+	constexpr bool operator==(const FormatSampleCountCacheKey& other) const { return value == other.value; }
+};
+
+struct FormatSampleCountCacheHasher
+{
+	constexpr size_t operator()(const FormatSampleCountCacheKey& key) const
+	{
+		return std::hash<uint64_t>{}(key.value);
+	}
+};
+
+static VkSampleCountFlags wi_get_format_sample_counts(VkPhysicalDevice physicalDevice, VkFormat format, VkImageUsageFlags usage)
+{
+	if (format == VK_FORMAT_UNDEFINED)
+	{
+		return WI_SAMPLECOUNT_ALL;
+	}
+
+	static std::mutex cache_mutex;
+	static wi::unordered_map<FormatSampleCountCacheKey, VkSampleCountFlags, FormatSampleCountCacheHasher> cache;
+
+	FormatSampleCountCacheKey key(format, usage);
+	{
+		std::scoped_lock lock(cache_mutex);
+		auto it = cache.find(key);
+		if (it != cache.end())
+		{
+			return it->second;
+		}
+	}
+
+	VkImageFormatProperties props = {};
+	VkSampleCountFlags supported = VK_SAMPLE_COUNT_1_BIT;
+	VkResult result = vkGetPhysicalDeviceImageFormatProperties(
+		physicalDevice,
+		format,
+		VK_IMAGE_TYPE_2D,
+		VK_IMAGE_TILING_OPTIMAL,
+		usage,
+		0,
+		&props
+	);
+	if (result == VK_SUCCESS)
+	{
+		if (props.sampleCounts != 0)
+		{
+			supported = props.sampleCounts;
+		}
+	}
+	else
+	{
+		supported = VK_SAMPLE_COUNT_1_BIT;
+	}
+
+	{
+		std::scoped_lock lock(cache_mutex);
+		cache[key] = supported;
+	}
+
+	return supported;
+}
+
+namespace vulkan_internal
+{
+	constexpr VkFormat _ConvertFormat(Format value);
+}
+
+static VkSampleCountFlags wi_get_renderpass_sample_mask(
+	VkPhysicalDevice physicalDevice,
+	const RenderPassInfo* renderpass_info,
+	VkSampleCountFlagBits requested)
+{
+	VkSampleCountFlags mask = WI_SAMPLECOUNT_ALL;
+	bool has_attachment = false;
+ 	VkSampleCountFlags integer_mask = wi_get_device_integer_sample_mask(physicalDevice);
+
+	auto accumulate = [&](Format format, bool depth_attachment)
+	{
+		if (format == Format::UNKNOWN)
+			return;
+
+		VkFormat vk_format = vulkan_internal::_ConvertFormat(format);
+		VkImageUsageFlags usage = depth_attachment ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+		if (depth_attachment)
+		{
+			usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
+		}
+		else
+		{
+			const bool allow_sampled = format != Format::R32_UINT || requested <= VK_SAMPLE_COUNT_1_BIT;
+			if (allow_sampled)
+			{
+				usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
+			}
+			if (format == Format::R32_UINT && requested <= VK_SAMPLE_COUNT_1_BIT)
+			{
+				usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+			}
+		}
+
+		VkSampleCountFlags format_mask = wi_get_format_sample_counts(physicalDevice, vk_format, usage);
+		mask &= format_mask;
+		if (!depth_attachment && wi_is_integer_format(format))
+		{
+			mask &= integer_mask;
+		}
+		has_attachment = true;
+	};
+
+	if (renderpass_info != nullptr)
+	{
+		for (uint32_t i = 0; i < renderpass_info->rt_count; ++i)
+		{
+			accumulate(renderpass_info->rt_formats[i], false);
+		}
+		if (renderpass_info->ds_format != Format::UNKNOWN)
+		{
+			accumulate(renderpass_info->ds_format, true);
+		}
+	}
+
+	VkSampleCountFlags device_mask = wi_get_device_sample_mask(physicalDevice);
+	mask &= device_mask;
+	if (!has_attachment)
+	{
+		mask = device_mask;
+	}
+	if (mask == 0)
+	{
+		mask = VK_SAMPLE_COUNT_1_BIT;
+	}
+	return mask;
 }
 
 namespace vulkan_internal
@@ -2188,16 +2414,30 @@ using namespace vulkan_internal;
 				VkPipelineMultisampleStateCreateInfo multisampling = {};
 				multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
 				multisampling.sampleShadingEnable = VK_FALSE;
+				VkSampleCountFlags supported_mask = 0;
+				VkSampleCountFlagBits requested_samples = VK_SAMPLE_COUNT_1_BIT;
 				{
-					VkSampleCountFlagBits requested = (VkSampleCountFlagBits)commandlist.renderpass_info.sample_count;
-					multisampling.rasterizationSamples = wi_clamp_sample_count(physicalDevice, requested);
+					requested_samples = (VkSampleCountFlagBits)std::max<uint32_t>(1u, commandlist.renderpass_info.sample_count);
+					supported_mask = wi_get_renderpass_sample_mask(physicalDevice, &commandlist.renderpass_info, requested_samples);
+					if (supported_mask == 0)
+					{
+						supported_mask = wi_get_device_sample_mask(physicalDevice);
+					}
+					multisampling.rasterizationSamples = wi_clamp_sample_count_from_mask(supported_mask, requested_samples);
 				}
 				if (pso->desc.rs != nullptr)
 				{
 					const RasterizerState& desc = *pso->desc.rs;
 					if (desc.forced_sample_count > 1)
 					{
-						multisampling.rasterizationSamples = wi_clamp_sample_count(physicalDevice, (VkSampleCountFlagBits)desc.forced_sample_count);
+						VkSampleCountFlagBits forced = (VkSampleCountFlagBits)desc.forced_sample_count;
+						VkSampleCountFlags forced_mask = wi_get_renderpass_sample_mask(physicalDevice, &commandlist.renderpass_info, forced);
+						forced_mask &= supported_mask;
+						if (forced_mask == 0)
+						{
+							forced_mask = supported_mask;
+						}
+						multisampling.rasterizationSamples = wi_clamp_sample_count_from_mask(forced_mask, forced);
 					}
 				}
 				multisampling.minSampleShading = 1.0f;
@@ -2343,7 +2583,26 @@ using namespace vulkan_internal;
 				}
 				pipelineInfo.pNext = &renderingInfo;
 
-				vulkan_check(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineInfo, nullptr, &pipeline));
+				VkResult pipeline_result = vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineInfo, nullptr, &pipeline);
+				if (pipeline_result != VK_SUCCESS)
+				{
+					std::ostringstream ss;
+					ss << "vkCreateGraphicsPipelines failed (dynamic) res=" << pipeline_result
+						<< " requested=" << static_cast<uint32_t>(requested_samples)
+						<< " resolved=" << static_cast<uint32_t>(multisampling.rasterizationSamples)
+						<< " renderpass_samples=" << commandlist.renderpass_info.sample_count
+						<< " supported_mask=0x" << std::hex << supported_mask << std::dec
+						<< " rt_count=" << commandlist.renderpass_info.rt_count;
+					for (uint32_t i = 0; i < commandlist.renderpass_info.rt_count; ++i)
+					{
+						ss << " rt" << i << "=f" << static_cast<int>(commandlist.renderpass_info.rt_formats[i]);
+					}
+					ss << " ds=f" << static_cast<int>(commandlist.renderpass_info.ds_format);
+					wi::backlog::post(ss.str(), wi::backlog::LogLevel::Error);
+					commandlist.prev_pipeline_hash = pipeline_hash;
+					commandlist.dirty_pso = false;
+					return;
+				}
 
 				commandlist.pipelines_worker.push_back(std::make_pair(pipeline_hash, pipeline));
 			}
@@ -4235,8 +4494,7 @@ using namespace vulkan_internal;
 		texture->desc = *desc;
 
 		uint32_t requested_samples = std::max(1u, texture->desc.sample_count);
-		VkSampleCountFlagBits clamped_samples = wi_clamp_sample_count(physicalDevice, (VkSampleCountFlagBits)requested_samples);
-		texture->desc.sample_count = (uint32_t)clamped_samples;
+		VkSampleCountFlagBits requested_bits = (VkSampleCountFlagBits)requested_samples;
 
 		if (texture->desc.mip_levels == 0)
 		{
@@ -4251,17 +4509,17 @@ using namespace vulkan_internal;
 		imageInfo.format = _ConvertFormat(texture->desc.format);
 		imageInfo.arrayLayers = texture->desc.array_size;
 		imageInfo.mipLevels = texture->desc.mip_levels;
-		imageInfo.samples = clamped_samples;
+		imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
 		imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 		imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-		imageInfo.usage = 0;
+		VkImageUsageFlags usage = 0;
 		if (has_flag(texture->desc.bind_flags, BindFlag::SHADER_RESOURCE))
 		{
-			imageInfo.usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
+			usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
 		}
 		if (has_flag(texture->desc.bind_flags, BindFlag::UNORDERED_ACCESS))
 		{
-			imageInfo.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+			usage |= VK_IMAGE_USAGE_STORAGE_BIT;
 
 			if (IsFormatSRGB(texture->desc.format))
 			{
@@ -4270,27 +4528,38 @@ using namespace vulkan_internal;
 		}
 		if (has_flag(texture->desc.bind_flags, BindFlag::RENDER_TARGET))
 		{
-			imageInfo.usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+			usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 		}
 		if (has_flag(texture->desc.bind_flags, BindFlag::DEPTH_STENCIL))
 		{
-			imageInfo.usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+			usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
 		}
 		if (has_flag(texture->desc.bind_flags, BindFlag::SHADING_RATE))
 		{
-			imageInfo.usage |= VK_IMAGE_USAGE_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR;
+			usage |= VK_IMAGE_USAGE_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR;
 		}
 #ifndef PLATFORM_LINUX
 		if (has_flag(texture->desc.misc_flags, ResourceMiscFlag::TRANSIENT_ATTACHMENT))
 		{
-			imageInfo.usage |= VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
+			usage |= VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
 		}
 		else
 #endif // PLATFORM_LINUX
 		{
-			imageInfo.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-			imageInfo.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+			usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+			usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 		}
+		imageInfo.usage = usage;
+
+		VkSampleCountFlags usage_mask = wi_get_format_sample_counts(physicalDevice, imageInfo.format, usage);
+		VkSampleCountFlags combined_mask = usage_mask & wi_get_device_sample_mask(physicalDevice);
+		if (combined_mask == 0)
+		{
+			combined_mask = VK_SAMPLE_COUNT_1_BIT;
+		}
+		VkSampleCountFlagBits clamped_samples = wi_clamp_sample_count_from_mask(combined_mask, requested_bits);
+		texture->desc.sample_count = (uint32_t)clamped_samples;
+		imageInfo.samples = clamped_samples;
 
 		imageInfo.flags = 0;
 		if (has_flag(texture->desc.misc_flags, ResourceMiscFlag::TEXTURECUBE))
@@ -5887,21 +6156,30 @@ using namespace vulkan_internal;
 			VkPipelineMultisampleStateCreateInfo multisampling = {};
 			multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
 			multisampling.sampleShadingEnable = VK_FALSE;
-			// MACOS
-			// [Error] Vulkan error: vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineInfo, nullptr, &internal_state->pipeline) failed with VK_ERROR_INITIALIZATION_FAILED (wiGraphicsDevice_Vulkan.cpp:6120)
-			// Assertion failed: ((res >= VK_SUCCESS)), function operator(), file wiGraphicsDevice_Vulkan.cpp, line 6120.
+			VkSampleCountFlagBits requested_samples = (VkSampleCountFlagBits)std::max<uint32_t>(1u, renderpass_info->sample_count);
+			VkSampleCountFlags supported_mask = wi_get_renderpass_sample_mask(physicalDevice, renderpass_info, requested_samples);
+			if (supported_mask == 0)
 			{
-				VkSampleCountFlagBits requested = (VkSampleCountFlagBits)renderpass_info->sample_count;
-				multisampling.rasterizationSamples = wi_clamp_sample_count(physicalDevice, requested);
+				supported_mask = wi_get_device_sample_mask(physicalDevice);
 			}
+			VkSampleCountFlagBits resolved_samples = wi_clamp_sample_count_from_mask(supported_mask, requested_samples);
 			if (pso->desc.rs != nullptr)
 			{
-				const RasterizerState& desc = *pso->desc.rs;
-				if (desc.forced_sample_count > 1)
+				const RasterizerState& raster_desc = *pso->desc.rs;
+				if (raster_desc.forced_sample_count > 1)
 				{
-					multisampling.rasterizationSamples = wi_clamp_sample_count(physicalDevice, (VkSampleCountFlagBits)desc.forced_sample_count);
+					VkSampleCountFlagBits forced = (VkSampleCountFlagBits)raster_desc.forced_sample_count;
+					VkSampleCountFlags forced_mask = wi_get_renderpass_sample_mask(physicalDevice, renderpass_info, forced);
+					forced_mask &= supported_mask;
+					if (forced_mask == 0)
+					{
+						forced_mask = supported_mask;
+					}
+					resolved_samples = wi_clamp_sample_count_from_mask(forced_mask, forced);
 				}
 			}
+
+			multisampling.rasterizationSamples = resolved_samples;
 			multisampling.minSampleShading = 1.0f;
 			VkSampleMask samplemask = internal_state->samplemask;
 			samplemask = pso->desc.sample_mask;
@@ -6045,7 +6323,24 @@ using namespace vulkan_internal;
 			}
 			pipelineInfo.pNext = &renderingInfo;
 
-			vulkan_check(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineInfo, nullptr, &internal_state->pipeline));
+			VkResult pipeline_result = vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineInfo, nullptr, &internal_state->pipeline);
+			if (pipeline_result != VK_SUCCESS)
+			{
+				std::ostringstream ss;
+				ss << "vkCreateGraphicsPipelines failed (static) res=" << pipeline_result
+					<< " requested=" << static_cast<uint32_t>(requested_samples)
+					<< " resolved=" << static_cast<uint32_t>(resolved_samples)
+					<< " renderpass_samples=" << renderpass_info->sample_count
+					<< " supported_mask=0x" << std::hex << supported_mask << std::dec
+					<< " rt_count=" << renderpass_info->rt_count;
+				for (uint32_t i = 0; i < renderpass_info->rt_count; ++i)
+				{
+					ss << " rt" << i << "=f" << static_cast<int>(renderpass_info->rt_formats[i]);
+				}
+				ss << " ds=f" << static_cast<int>(renderpass_info->ds_format);
+				wi::backlog::post(ss.str(), wi::backlog::LogLevel::Error);
+				return false;
+			}
 		}
 
 		return res == VK_SUCCESS;
