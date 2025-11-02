@@ -113,6 +113,34 @@ bool IsPrimitiveIDSupported()
 #endif
 }
 
+bool IsR11G11B10UAVSupported()
+{
+	bool supports = device->CheckCapability(GraphicsDeviceCapability::UAV_LOAD_FORMAT_R11G11B10_FLOAT);
+
+#if defined(PLATFORM_MACOS) || defined(PLATFORM_IOS)
+	return false;
+#else
+	if (supports)
+	{
+		const std::string& driver = device->GetDriverDescription();
+		if (driver.find("MoltenVK") != std::string::npos)
+		{
+			return false;
+		}
+	}
+	return supports;
+#endif
+}
+
+Format GetDefaultColorFormat(uint32_t bind_flags)
+{
+	if ((bind_flags & static_cast<uint32_t>(BindFlag::UNORDERED_ACCESS)) != 0 && !IsR11G11B10UAVSupported())
+	{
+		return Format::R16G16B16A16_FLOAT;
+	}
+	return format_rendertarget_main;
+}
+
 bool wireRender = false;
 bool debugBoneLines = false;
 bool debugPartitionTree = false;
@@ -1097,6 +1125,11 @@ void LoadShaders()
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_SSGI_WIDE], "ssgiCS.cso", wi::graphics::ShaderModel::SM_5_0, { "WIDE" }); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_SSGI_UPSAMPLE], "ssgi_upsampleCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_SSGI_UPSAMPLE_WIDE], "ssgi_upsampleCS.cso", wi::graphics::ShaderModel::SM_5_0, { "WIDE" }); });
+	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_SSGI_DEINTERLEAVE_RGBA16F], "ssgi_deinterleaveCS.cso", wi::graphics::ShaderModel::SM_5_0, { "SSGI_USE_RGBA16F" }); });
+	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_SSGI_RGBA16F], "ssgiCS.cso", wi::graphics::ShaderModel::SM_5_0, { "SSGI_USE_RGBA16F" }); });
+	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_SSGI_WIDE_RGBA16F], "ssgiCS.cso", wi::graphics::ShaderModel::SM_5_0, { "WIDE", "SSGI_USE_RGBA16F" }); });
+	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_SSGI_UPSAMPLE_RGBA16F], "ssgi_upsampleCS.cso", wi::graphics::ShaderModel::SM_5_0, { "SSGI_USE_RGBA16F" }); });
+	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_SSGI_UPSAMPLE_WIDE_RGBA16F], "ssgi_upsampleCS.cso", wi::graphics::ShaderModel::SM_5_0, { "WIDE", "SSGI_USE_RGBA16F" }); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_RTDIFFUSE_SPATIAL], "rtdiffuse_spatialCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_RTDIFFUSE_TEMPORAL], "rtdiffuse_temporalCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_RTDIFFUSE_UPSAMPLE], "rtdiffuse_upsampleCS.cso"); });
@@ -4112,8 +4145,8 @@ void UpdatePerFrameData(
 			desc.type = TextureDesc::Type::TEXTURE_2D;
 			desc.width = 512;
 			desc.height = 512;
-			desc.format = Format::R11G11B10_FLOAT;
 			desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+			desc.format = GetDefaultColorFormat((uint32_t)desc.bind_flags);
 			desc.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
 			device->CreateTexture(&desc, nullptr, &textures[TEXTYPE_2D_VOLUMETRICCLOUDS_SHADOW]);
 			device->SetName(&textures[TEXTYPE_2D_VOLUMETRICCLOUDS_SHADOW], "textures[TEXTYPE_2D_VOLUMETRICCLOUDS_SHADOW]");
@@ -9708,7 +9741,7 @@ void CreateVXGIResources(VXGIResources& res, XMUINT2 resolution)
 
 	desc.width = resolution.x;
 	desc.height = resolution.y;
-	desc.format = Format::R11G11B10_FLOAT;
+	desc.format = GetDefaultColorFormat((uint32_t)desc.bind_flags);
 	device->CreateTexture(&desc, nullptr, &res.diffuse);
 	device->SetName(&res.diffuse, "vxgi.diffuse");
 
@@ -11254,7 +11287,7 @@ void CreateBloomResources(BloomResources& res, XMUINT2 resolution)
 {
 	TextureDesc desc;
 	desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
-	desc.format = Format::R11G11B10_FLOAT;
+	desc.format = GetDefaultColorFormat((uint32_t)desc.bind_flags);
 	desc.width = resolution.x / 4;
 	desc.height = resolution.y / 4;
 	desc.mip_levels = std::min(5u, (uint32_t)std::log2(std::max(desc.width, desc.height)));
@@ -11776,8 +11809,8 @@ void Visibility_Velocity(
 void CreateSurfelGIResources(SurfelGIResources& res, XMUINT2 resolution)
 {
 	TextureDesc desc;
-	desc.format = Format::R11G11B10_FLOAT;
 	desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+	desc.format = GetDefaultColorFormat((uint32_t)desc.bind_flags);
 	desc.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
 	desc.width = resolution.x / 2;
 	desc.height = resolution.y / 2;
@@ -13281,7 +13314,7 @@ void CreateRTAOResources(RTAOResources& res, XMUINT2 resolution)
 	desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
 	desc.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
 
-	desc.format = Format::R11G11B10_FLOAT;
+	desc.format = GetDefaultColorFormat((uint32_t)desc.bind_flags);
 	device->CreateTexture(&desc, nullptr, &res.normals);
 	device->SetName(&res.normals, "rtao_normals");
 
@@ -13307,7 +13340,7 @@ void CreateRTAOResources(RTAOResources& res, XMUINT2 resolution)
 	device->CreateTexture(&desc, nullptr, &res.scratch[1]);
 	device->SetName(&res.scratch[1], "rtao_scratch[1]");
 
-	desc.format = Format::R11G11B10_FLOAT;
+	desc.format = GetDefaultColorFormat((uint32_t)desc.bind_flags);
 	device->CreateTexture(&desc, nullptr, &res.moments[0]);
 	device->SetName(&res.moments[0], "rtao_moments[0]");
 	device->CreateTexture(&desc, nullptr, &res.moments[1]);
@@ -13588,10 +13621,10 @@ void CreateRTDiffuseResources(RTDiffuseResources& res, XMUINT2 resolution)
 	desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
 	desc.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
 
-	desc.format = Format::R11G11B10_FLOAT;
+	desc.format = GetDefaultColorFormat((uint32_t)desc.bind_flags);
 	device->CreateTexture(&desc, nullptr, &res.texture_rayIndirectDiffuse);
 
-	desc.format = Format::R11G11B10_FLOAT;
+	desc.format = GetDefaultColorFormat((uint32_t)desc.bind_flags);
 	device->CreateTexture(&desc, nullptr, &res.texture_spatial);
 	device->CreateTexture(&desc, nullptr, &res.texture_temporal[0]);
 	device->CreateTexture(&desc, nullptr, &res.texture_temporal[1]);
@@ -13829,12 +13862,13 @@ void Postprocess_RTDiffuse(
 void CreateSSGIResources(SSGIResources& res, XMUINT2 resolution)
 {
 	res.cleared = false;
+	res.high_precision = !IsR11G11B10UAVSupported();
 
 	TextureDesc desc;
 	desc.type = TextureDesc::Type::TEXTURE_2D;
 	desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
 	desc.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
-	desc.format = Format::R11G11B10_FLOAT;
+	Format color_format = res.high_precision ? Format::R16G16B16A16_FLOAT : format_rendertarget_main;
 
 	resolution.x = AlignTo(resolution.x, 64u);
 	resolution.y = AlignTo(resolution.y, 64u);
@@ -13845,7 +13879,7 @@ void CreateSSGIResources(SSGIResources& res, XMUINT2 resolution)
 	desc.mip_levels = 4;
 	desc.format = Format::R32_FLOAT;
 	device->CreateTexture(&desc, nullptr, &res.texture_atlas_depth);
-	desc.format = Format::R11G11B10_FLOAT;
+	desc.format = color_format;
 	device->CreateTexture(&desc, nullptr, &res.texture_atlas_color);
 
 	desc.array_size = 1;
@@ -13856,7 +13890,7 @@ void CreateSSGIResources(SSGIResources& res, XMUINT2 resolution)
 	device->CreateTexture(&desc, nullptr, &res.texture_depth_mips);
 	desc.format = Format::R16G16_FLOAT;
 	device->CreateTexture(&desc, nullptr, &res.texture_normal_mips);
-	desc.format = Format::R11G11B10_FLOAT;
+	desc.format = color_format;
 	device->CreateTexture(&desc, nullptr, &res.texture_diffuse_mips);
 
 	for (uint32_t i = 0; i < 4u; ++i)
@@ -13931,9 +13965,15 @@ void Postprocess_SSGI(
 
 	PostProcess postprocess = {};
 
+	const Shader* shader_ssgi_deinterleave = &shaders[res.high_precision ? CSTYPE_POSTPROCESS_SSGI_DEINTERLEAVE_RGBA16F : CSTYPE_POSTPROCESS_SSGI_DEINTERLEAVE];
+	const Shader* shader_ssgi_main = &shaders[res.high_precision ? CSTYPE_POSTPROCESS_SSGI_RGBA16F : CSTYPE_POSTPROCESS_SSGI];
+	const Shader* shader_ssgi_main_wide = &shaders[res.high_precision ? CSTYPE_POSTPROCESS_SSGI_WIDE_RGBA16F : CSTYPE_POSTPROCESS_SSGI_WIDE];
+	const Shader* shader_ssgi_upsample = &shaders[res.high_precision ? CSTYPE_POSTPROCESS_SSGI_UPSAMPLE_RGBA16F : CSTYPE_POSTPROCESS_SSGI_UPSAMPLE];
+	const Shader* shader_ssgi_upsample_wide = &shaders[res.high_precision ? CSTYPE_POSTPROCESS_SSGI_UPSAMPLE_WIDE_RGBA16F : CSTYPE_POSTPROCESS_SSGI_UPSAMPLE_WIDE];
+
 	{
 		device->EventBegin("SSGI - deinterleave", cmd);
-		device->BindComputeShader(&shaders[CSTYPE_POSTPROCESS_SSGI_DEINTERLEAVE], cmd);
+		device->BindComputeShader(shader_ssgi_deinterleave, cmd);
 
 		device->BindResource(&input, 0, cmd);
 
@@ -13984,7 +14024,7 @@ void Postprocess_SSGI(
 		postprocess.params0.w = 1.0f / depthRejection;
 
 		// Wide sampling passes:
-		device->BindComputeShader(&shaders[CSTYPE_POSTPROCESS_SSGI_WIDE], cmd);
+		device->BindComputeShader(shader_ssgi_main_wide, cmd);
 
 		// 16x:
 		{
@@ -14038,7 +14078,7 @@ void Postprocess_SSGI(
 		}
 
 		// Narrow sampling passes:
-		device->BindComputeShader(&shaders[CSTYPE_POSTPROCESS_SSGI], cmd);
+		device->BindComputeShader(shader_ssgi_main, cmd);
 
 		// 4x:
 		{
@@ -14105,7 +14145,7 @@ void Postprocess_SSGI(
 	{
 		device->EventBegin("SSGI - upsample", cmd);
 
-		device->BindComputeShader(&shaders[CSTYPE_POSTPROCESS_SSGI_UPSAMPLE_WIDE], cmd);
+		device->BindComputeShader(shader_ssgi_upsample_wide, cmd);
 
 		// 16x -> 8x
 		{
@@ -14181,7 +14221,7 @@ void Postprocess_SSGI(
 			}
 		}
 
-		device->BindComputeShader(&shaders[CSTYPE_POSTPROCESS_SSGI_UPSAMPLE], cmd);
+		device->BindComputeShader(shader_ssgi_upsample, cmd);
 
 		// 4x -> 2x
 		{
@@ -15108,7 +15148,7 @@ void CreateRTShadowResources(RTShadowResources& res, XMUINT2 resolution)
 	device->CreateTexture(&desc, nullptr, &res.temporal[1]);
 	device->SetName(&res.temporal[1], "rtshadow_temporal[1]");
 
-	desc.format = Format::R11G11B10_FLOAT;
+	desc.format = GetDefaultColorFormat((uint32_t)desc.bind_flags);
 	device->CreateTexture(&desc, nullptr, &res.normals);
 	device->SetName(&res.normals, "rtshadow_normals");
 
@@ -15132,7 +15172,7 @@ void CreateRTShadowResources(RTShadowResources& res, XMUINT2 resolution)
 		device->CreateTexture(&desc, nullptr, &res.scratch[i][1]);
 		device->SetName(&res.scratch[i][1], "rtshadow_scratch[i][1]");
 
-		desc.format = Format::R11G11B10_FLOAT;
+		desc.format = GetDefaultColorFormat((uint32_t)desc.bind_flags);
 		device->CreateTexture(&desc, nullptr, &res.moments[i][0]);
 		device->SetName(&res.moments[i][0], "rtshadow_moments[i][0]");
 		device->CreateTexture(&desc, nullptr, &res.moments[i][1]);
@@ -15745,8 +15785,8 @@ void CreateDepthOfFieldResources(DepthOfFieldResources& res, XMUINT2 resolution)
 	presort_desc.type = TextureDesc::Type::TEXTURE_2D;
 	presort_desc.width = resolution.x / 2;
 	presort_desc.height = resolution.y / 2;
-	presort_desc.format = Format::R11G11B10_FLOAT;
 	presort_desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+	presort_desc.format = GetDefaultColorFormat((uint32_t)presort_desc.bind_flags);
 	device->CreateTexture(&presort_desc, nullptr, &res.texture_presort);
 	device->CreateTexture(&presort_desc, nullptr, &res.texture_prefilter);
 	device->CreateTexture(&presort_desc, nullptr, &res.texture_main);
@@ -16762,7 +16802,7 @@ void CreateTemporalAAResources(TemporalAAResources& res, XMUINT2 resolution)
 
 	TextureDesc desc;
 	desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
-	desc.format = Format::R11G11B10_FLOAT;
+	desc.format = GetDefaultColorFormat((uint32_t)desc.bind_flags);
 	desc.width = resolution.x;
 	desc.height = resolution.y;
 	device->CreateTexture(&desc, nullptr, &res.texture_temporal[0]);
@@ -17284,7 +17324,7 @@ void CreateFSR2Resources(FSR2Resources& res, XMUINT2 render_resolution, XMUINT2 
 
 	desc.width = presentation_resolution.x;
 	desc.height = presentation_resolution.y;
-	desc.format = Format::R11G11B10_FLOAT;
+	desc.format = GetDefaultColorFormat((uint32_t)desc.bind_flags);
 	success = device->CreateTexture(&desc, nullptr, &res.lock_status[0]);
 	assert(success);
 	device->SetName(&res.lock_status[0], "fsr2::lock_status[0]");
@@ -18195,7 +18235,7 @@ void CreateMeshBlendResources(MeshBlendResources& res, XMUINT2 resolution)
 	device->CreateTexture(&desc, nullptr, &res.expand[1]);
 	device->SetName(&res.expand[1], "MeshBlend expand[1]");
 
-	desc.format = Format::R11G11B10_FLOAT;
+	desc.format = GetDefaultColorFormat((uint32_t)desc.bind_flags);
 	device->CreateTexture(&desc, nullptr, &res.tmp, &res.expand[meshblend_final_write]); // aliased! Need to take into account the ping-ponging indices!
 	device->SetName(&res.tmp, "MeshBlend temp");
 }

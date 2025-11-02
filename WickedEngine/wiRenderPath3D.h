@@ -86,6 +86,8 @@ namespace wi
 		bool fsr2Enabled = false;
 		bool mesh_blend = true;
 		bool crtFilterEnabled = false;
+		bool sceneCopyAliased = false;
+		bool postprocessAliased = false;
 
 		mutable bool first_frame = true;
 		mutable bool prerender_happened = false;

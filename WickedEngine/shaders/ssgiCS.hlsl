@@ -4,8 +4,14 @@
 
 PUSHCONSTANT(postprocess, PostProcess);
 
+#ifdef SSGI_USE_RGBA16F
+#define SSGI_COLOR_TYPE float4
+#else
+#define SSGI_COLOR_TYPE float3
+#endif
+
 Texture2DArray<float> input_depth : register(t0);
-Texture2DArray<float3> input_color : register(t1);
+Texture2DArray<SSGI_COLOR_TYPE> input_color : register(t1);
 Texture2D<float2> input_normal : register(t2);
 
 RWTexture2D<float4> output_diffuse : register(u0);

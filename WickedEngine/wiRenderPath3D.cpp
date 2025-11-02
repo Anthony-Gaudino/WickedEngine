@@ -83,6 +83,8 @@ namespace wi
 		fsr2Resources = {};
 		vxgiResources = {};
 		meshblendResources = {};
+		sceneCopyAliased = false;
+		postprocessAliased = false;
 	}
 
 	void RenderPath3D::ResizeBuffers()
@@ -100,8 +102,8 @@ namespace wi
 
 		{
 			TextureDesc desc;
-			desc.format = wi::renderer::format_rendertarget_main;
 			desc.bind_flags = BindFlag::RENDER_TARGET | BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+			desc.format = wi::renderer::GetDefaultColorFormat((uint32_t)desc.bind_flags);
 			desc.width = internalResolution.x;
 			desc.height = internalResolution.y;
 			desc.sample_count = 1;
@@ -112,6 +114,7 @@ namespace wi
 			{
 				desc.sample_count = getMSAASampleCount();
 				desc.bind_flags = BindFlag::RENDER_TARGET | BindFlag::SHADER_RESOURCE;
+				desc.format = wi::renderer::GetDefaultColorFormat((uint32_t)desc.bind_flags);
 
 				device->CreateTexture(&desc, nullptr, &rtMain_render);
 				device->SetName(&rtMain_render, "rtMain_render");
@@ -175,14 +178,25 @@ namespace wi
 		{
 			TextureDesc desc;
 			desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
-			desc.format = wi::renderer::format_rendertarget_main;
+			desc.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
+
+			sceneCopyAliased = wi::renderer::IsR11G11B10UAVSupported();
+			desc.format = wi::renderer::GetDefaultColorFormat((uint32_t)desc.bind_flags);
 			desc.width = internalResolution.x / 4;
 			desc.height = internalResolution.y / 4;
 			desc.mip_levels = std::min(8u, (uint32_t)std::log2(std::max(desc.width, desc.height)));
 			device->CreateTexture(&desc, nullptr, &rtSceneCopy);
 			device->SetName(&rtSceneCopy, "rtSceneCopy");
 			desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS | BindFlag::RENDER_TARGET; // render target for aliasing
-			device->CreateTexture(&desc, nullptr, &rtSceneCopy_tmp, &rtPrimitiveID);
+			desc.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
+			if (sceneCopyAliased)
+			{
+				device->CreateTexture(&desc, nullptr, &rtSceneCopy_tmp, &rtPrimitiveID);
+			}
+			else
+			{
+				device->CreateTexture(&desc, nullptr, &rtSceneCopy_tmp);
+			}
 			device->SetName(&rtSceneCopy_tmp, "rtSceneCopy_tmp");
 
 			device->CreateMipgenSubresources(rtSceneCopy);
@@ -197,11 +211,21 @@ namespace wi
 		{
 			TextureDesc desc;
 			desc.bind_flags = BindFlag::RENDER_TARGET | BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
-			desc.format = wi::renderer::format_rendertarget_main;
+			postprocessAliased = wi::renderer::IsR11G11B10UAVSupported();
+			desc.format = wi::renderer::GetDefaultColorFormat((uint32_t)desc.bind_flags);
 			desc.width = internalResolution.x;
 			desc.height = internalResolution.y;
-			assert(ComputeTextureMemorySizeInBytes(desc) <= ComputeTextureMemorySizeInBytes(rtPrimitiveID.desc)); // Aliased check
-			device->CreateTexture(&desc, nullptr, &rtPostprocess, &rtPrimitiveID); // Aliased!
+			desc.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
+
+			if (postprocessAliased)
+			{
+				assert(ComputeTextureMemorySizeInBytes(desc) <= ComputeTextureMemorySizeInBytes(rtPrimitiveID.desc)); // Aliased check
+				device->CreateTexture(&desc, nullptr, &rtPostprocess, &rtPrimitiveID); // Aliased!
+			}
+			else
+			{
+				device->CreateTexture(&desc, nullptr, &rtPostprocess);
+			}
 			device->SetName(&rtPostprocess, "rtPostprocess");
 		}
 		{
@@ -881,17 +905,18 @@ namespace wi
 			);
 			wi::renderer::UpdateRenderData(visibility_main, frameCB, cmd);
 
-			uint32_t num_barriers = 2;
-			GPUBarrier barriers[] = {
-				GPUBarrier::Image(&debugUAV, debugUAV.desc.layout, ResourceState::UNORDERED_ACCESS),
-				GPUBarrier::Aliasing(&rtPostprocess, &rtPrimitiveID),
-				GPUBarrier::Image(&rtMain, rtMain.desc.layout, ResourceState::SHADER_RESOURCE_COMPUTE), // prepares transition for discard in dx12
-			};
+			GPUBarrier barriers[3];
+			uint32_t barrier_count = 0;
+			barriers[barrier_count++] = GPUBarrier::Image(&debugUAV, debugUAV.desc.layout, ResourceState::UNORDERED_ACCESS);
+			if (postprocessAliased)
+			{
+				barriers[barrier_count++] = GPUBarrier::Aliasing(&rtPostprocess, &rtPrimitiveID);
+			}
 			if (visibility_shading_in_compute)
 			{
-				num_barriers++;
+				barriers[barrier_count++] = GPUBarrier::Image(&rtMain, rtMain.desc.layout, ResourceState::SHADER_RESOURCE_COMPUTE); // prepares transition for discard in dx12
 			}
-			device->Barrier(barriers, num_barriers, cmd);
+			device->Barrier(barriers, barrier_count, cmd);
 
 		});
 
@@ -2064,14 +2089,19 @@ namespace wi
 		auto range = wi::profiler::BeginRangeGPU("Scene MIP Chain", cmd);
 		device->EventBegin("RenderSceneMIPChain", cmd);
 
+		if (sceneCopyAliased)
 		{
 			GPUBarrier barriers[] = {
 				GPUBarrier::Aliasing(&rtPrimitiveID, &rtSceneCopy_tmp),
 				GPUBarrier::Image(&rtSceneCopy_tmp, rtSceneCopy_tmp.desc.layout, ResourceState::UNORDERED_ACCESS),
 			};
 			device->Barrier(barriers, arraysize(barriers), cmd);
-			device->ClearUAV(&rtSceneCopy_tmp, 0, cmd);
 		}
+		else
+		{
+			device->Barrier(GPUBarrier::Image(&rtSceneCopy_tmp, rtSceneCopy_tmp.desc.layout, ResourceState::UNORDERED_ACCESS), cmd);
+		}
+		device->ClearUAV(&rtSceneCopy_tmp, 0, cmd);
 
 		wi::renderer::Postprocess_Downsample4x(rtMain, rtSceneCopy, cmd);
 
@@ -2081,7 +2111,10 @@ namespace wi
 		mipopt.gaussian_temp = &rtSceneCopy_tmp;
 		wi::renderer::GenerateMipChain(rtSceneCopy, wi::renderer::MIPGENFILTER_GAUSSIAN, cmd, mipopt);
 
-		device->Barrier(GPUBarrier::Aliasing(&rtSceneCopy_tmp, &rtPrimitiveID), cmd);
+		if (sceneCopyAliased)
+		{
+			device->Barrier(GPUBarrier::Aliasing(&rtSceneCopy_tmp, &rtPrimitiveID), cmd);
+		}
 
 		device->EventEnd(cmd);
 		wi::profiler::EndRange(range);
@@ -2344,17 +2377,28 @@ namespace wi
 		const Texture* rt_first = nullptr; // not ping-ponged with read / write
 		const Texture* rt_read = &rtMain;
 		const Texture* rt_write = &rtPostprocess;
+		const bool supports_r11_uav = wi::renderer::IsR11G11B10UAVSupported();
 
 		// rtPostprocess aliasing transition:
+		if (postprocessAliased)
 		{
 			GPUBarrier barriers[] = {
 				GPUBarrier::Aliasing(&rtPrimitiveID, &rtPostprocess),
 				GPUBarrier::Image(&rtPostprocess, rtPostprocess.desc.layout, ResourceState::UNORDERED_ACCESS),
 			};
 			device->Barrier(barriers, arraysize(barriers), cmd);
-			device->ClearUAV(&rtPostprocess, 0, cmd);
-			device->Barrier(GPUBarrier::Image(&rtPostprocess, ResourceState::UNORDERED_ACCESS, rtPostprocess.desc.layout), cmd);
 		}
+		else
+		{
+			device->Barrier(GPUBarrier::Image(&rtPostprocess, rtPostprocess.desc.layout, ResourceState::UNORDERED_ACCESS), cmd);
+		}
+
+		if (supports_r11_uav)
+		{
+			device->ClearUAV(&rtPostprocess, 0, cmd);
+		}
+
+		device->Barrier(GPUBarrier::Image(&rtPostprocess, ResourceState::UNORDERED_ACCESS, rtPostprocess.desc.layout), cmd);
 
 		// 1.) HDR post process chain
 		{
@@ -2599,8 +2643,8 @@ namespace wi
 				TextureDesc desc;
 				desc.width = camera.render_to_texture.resolution.x;
 				desc.height = camera.render_to_texture.resolution.y;
-				desc.format = wi::renderer::format_rendertarget_main;
 				desc.bind_flags = BindFlag::RENDER_TARGET | BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+				desc.format = wi::renderer::GetDefaultColorFormat((uint32_t)desc.bind_flags);
 				desc.mip_levels = 0;
 				bool success = device->CreateTexture(&desc, nullptr, &camera.render_to_texture.rendertarget_render);
 				assert(success);
@@ -2978,7 +3022,7 @@ namespace wi
 
 			TextureDesc desc;
 			desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
-			desc.format = wi::renderer::format_rendertarget_main;
+			desc.format = wi::renderer::GetDefaultColorFormat((uint32_t)desc.bind_flags);
 			desc.width = GetPhysicalWidth();
 			desc.height = GetPhysicalHeight();
 			device->CreateTexture(&desc, nullptr, &rtFSR[0]);
@@ -3015,7 +3059,7 @@ namespace wi
 
 			TextureDesc desc;
 			desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
-			desc.format = wi::renderer::format_rendertarget_main;
+			desc.format = wi::renderer::GetDefaultColorFormat((uint32_t)desc.bind_flags);
 			desc.width = displayResolution.x;
 			desc.height = displayResolution.y;
 			device->CreateTexture(&desc, nullptr, &rtFSR[0]);
@@ -3192,6 +3236,7 @@ namespace wi
 			device->SetName(&rtSun[0], "rtSun[0]");
 
 			desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+			desc.format = wi::renderer::GetDefaultColorFormat((uint32_t)desc.bind_flags);
 			desc.sample_count = 1;
 			desc.width = internalResolution.x / 4;
 			desc.height = internalResolution.y / 4;

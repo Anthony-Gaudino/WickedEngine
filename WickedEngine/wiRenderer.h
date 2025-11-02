@@ -66,6 +66,8 @@ namespace wi::renderer
 	const wi::graphics::GPUBuffer* GetBuffer(wi::enums::BUFFERTYPES id);
 	const wi::graphics::Texture* GetTexture(wi::enums::TEXTYPES id);
 	bool IsPrimitiveIDSupported();
+	bool IsR11G11B10UAVSupported();
+	wi::graphics::Format GetDefaultColorFormat(uint32_t bind_flags);
 
 	// Returns a buffer preinitialized for quad index buffer laid out as:
 	//	vertexID * 4 + [0, 1, 2, 2, 1, 3]
@@ -614,6 +616,7 @@ namespace wi::renderer
 	struct SSGIResources
 	{
 		mutable bool cleared = false;
+		bool high_precision = false;
 		wi::graphics::Texture texture_atlas_depth;
 		wi::graphics::Texture texture_atlas_color;
 		wi::graphics::Texture texture_depth_mips;

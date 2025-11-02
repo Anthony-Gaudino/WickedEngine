@@ -3,14 +3,22 @@
 
 Texture2D<float3> texture_input : register(t0);
 
-RWTexture2DArray<float>		atlas2x_depth : register(u0);
-RWTexture2DArray<float>		atlas4x_depth : register(u1);
-RWTexture2DArray<float>		atlas8x_depth : register(u2);
-RWTexture2DArray<float>		atlas16x_depth : register(u3);
-RWTexture2DArray<float3>	atlas2x_color : register(u4);
-RWTexture2DArray<float3>	atlas4x_color : register(u5);
-RWTexture2DArray<float3>	atlas8x_color : register(u6);
-RWTexture2DArray<float3>	atlas16x_color : register(u7);
+#ifdef SSGI_USE_RGBA16F
+#define SSGI_COLOR_TYPE float4
+#define SSGI_STORE_COLOR(value) float4(value, 0)
+#else
+#define SSGI_COLOR_TYPE float3
+#define SSGI_STORE_COLOR(value) (value)
+#endif
+
+RWTexture2DArray<float>	atlas2x_depth : register(u0);
+RWTexture2DArray<float>	atlas4x_depth : register(u1);
+RWTexture2DArray<float>	atlas8x_depth : register(u2);
+RWTexture2DArray<float>	atlas16x_depth : register(u3);
+RWTexture2DArray<SSGI_COLOR_TYPE>	atlas2x_color : register(u4);
+RWTexture2DArray<SSGI_COLOR_TYPE>	atlas4x_color : register(u5);
+RWTexture2DArray<SSGI_COLOR_TYPE>	atlas8x_color : register(u6);
+RWTexture2DArray<SSGI_COLOR_TYPE>	atlas16x_color : register(u7);
 RWTexture2D<float>			regular2x_depth : register(u8);
 RWTexture2D<float>			regular4x_depth : register(u9);
 RWTexture2D<float>			regular8x_depth : register(u10);
@@ -75,7 +83,7 @@ void main(uint3 Gid : SV_GroupID, uint groupIndex : SV_GroupIndex, uint3 GTid : 
     uint2 st = DTid.xy;
     uint slice = flatten2D(st % 4, 4);
     atlas2x_depth[uint3(st >> 2, slice)] = depth;
-    atlas2x_color[uint3(st >> 2, slice)] = color;
+	atlas2x_color[uint3(st >> 2, slice)] = SSGI_STORE_COLOR(color);
     regular2x_depth[st] = depth;
     regular2x_normal[st] = normal;
 
@@ -84,7 +92,7 @@ void main(uint3 Gid : SV_GroupID, uint groupIndex : SV_GroupIndex, uint3 GTid : 
         st = DTid.xy >> 1;
         slice = flatten2D(st % 4, 4);
         atlas4x_depth[uint3(st >> 2, slice)] = depth;
-        atlas4x_color[uint3(st >> 2, slice)] = color;
+		atlas4x_color[uint3(st >> 2, slice)] = SSGI_STORE_COLOR(color);
 		regular4x_depth[st] = depth;
 		regular4x_normal[st] = normal;
 		
@@ -93,7 +101,7 @@ void main(uint3 Gid : SV_GroupID, uint groupIndex : SV_GroupIndex, uint3 GTid : 
 			st = DTid.xy >> 2;
 			slice = flatten2D(st % 4, 4);
 			atlas8x_depth[uint3(st >> 2, slice)] = depth;
-			atlas8x_color[uint3(st >> 2, slice)] = color;
+			atlas8x_color[uint3(st >> 2, slice)] = SSGI_STORE_COLOR(color);
 			regular8x_depth[st] = depth;
 			regular8x_normal[st] = normal;
 			
@@ -102,7 +110,7 @@ void main(uint3 Gid : SV_GroupID, uint groupIndex : SV_GroupIndex, uint3 GTid : 
 				st = DTid.xy >> 3;
 				slice = flatten2D(st % 4, 4);
 				atlas16x_depth[uint3(st >> 2, slice)] = depth;
-				atlas16x_color[uint3(st >> 2, slice)] = color;
+				atlas16x_color[uint3(st >> 2, slice)] = SSGI_STORE_COLOR(color);
 				regular16x_depth[st] = depth;
 				regular16x_normal[st] = normal;
 			}

@@ -128,7 +128,7 @@ namespace wi
 		{
 			TextureDesc desc;
 			desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
-			desc.format = Format::R11G11B10_FLOAT;
+			desc.format = wi::renderer::GetDefaultColorFormat((uint32_t)desc.bind_flags);
 			desc.width = internalResolution.x;
 			desc.height = internalResolution.y;
 			device->CreateTexture(&desc, nullptr, &rtPostprocess);
