@@ -205,6 +205,9 @@ namespace wi::lua::scene
 		int Component_Detach(lua_State* L);
 		int Component_DetachChildren(lua_State* L);
 
+		int Fire_Ignite(lua_State* L);
+		int Fire_Extinguish(lua_State* L);
+
 		int GetBounds(lua_State* L);
 
 		int GetWeather(lua_State* L);

@@ -699,6 +699,8 @@ Luna<Scene_BindLua>::FunctionType Scene_BindLua::methods[] = {
 	lunamethod(Scene_BindLua, Component_Attach),
 	lunamethod(Scene_BindLua, Component_Detach),
 	lunamethod(Scene_BindLua, Component_DetachChildren),
+	lunamethod(Scene_BindLua, Fire_Ignite),
+	lunamethod(Scene_BindLua, Fire_Extinguish),
 
 	lunamethod(Scene_BindLua, GetBounds),
 	lunamethod(Scene_BindLua, GetWeather),
@@ -1874,6 +1876,52 @@ int Scene_BindLua::Component_GetSpring(lua_State* L)
 	}
 	return 0;
 }
+int Scene_BindLua::Fire_Ignite(lua_State* L)
+{
+	if (scene == nullptr)
+	{
+		return 0;
+	}
+	const int argc = wi::lua::SGetArgCount(L);
+	if (argc < 1)
+	{
+		wi::lua::SError(L, "Fire_Ignite(Entity entity, opt float intensity) not enough arguments!");
+		return 0;
+	}
+
+	const Entity entity = (Entity)wi::lua::SGetLongLong(L, 1);
+	float intensity = 1.0f;
+	if (argc > 1)
+	{
+		intensity = wi::lua::SGetFloat(L, 2);
+	}
+	scene->Fire_Ignite(entity, intensity);
+	return 0;
+}
+
+int Scene_BindLua::Fire_Extinguish(lua_State* L)
+{
+	if (scene == nullptr)
+	{
+		return 0;
+	}
+	const int argc = wi::lua::SGetArgCount(L);
+	if (argc < 1)
+	{
+		wi::lua::SError(L, "Fire_Extinguish(Entity entity, opt bool force) not enough arguments!");
+		return 0;
+	}
+
+	const Entity entity = (Entity)wi::lua::SGetLongLong(L, 1);
+	bool force = false;
+	if (argc > 1)
+	{
+		force = wi::lua::SGetBool(L, 2);
+	}
+	scene->Fire_Extinguish(entity, force);
+	return 0;
+}
+
 int Scene_BindLua::Component_GetScript(lua_State* L)
 {
 	int argc = wi::lua::SGetArgCount(L);

@@ -2235,6 +2235,69 @@ namespace wi::scene
 			}
 		}
 	}
+	void FlammableComponent::Serialize(wi::Archive& archive, EntitySerializer& seri)
+	{
+		SerializeEntity(archive, fireEmitter, seri);
+		SerializeEntity(archive, smokeEmitter, seri);
+		if (seri.GetVersion() >= 94)
+		{
+			SerializeEntity(archive, distortionEmitter, seri);
+			SerializeEntity(archive, sparksEmitter, seri);
+		}
+		else if (archive.IsReadMode())
+		{
+			distortionEmitter = wi::ecs::INVALID_ENTITY;
+			sparksEmitter = wi::ecs::INVALID_ENTITY;
+		}
+
+		if (archive.IsReadMode())
+		{
+			archive >> _flags;
+			archive >> flammability;
+			archive >> fuel;
+			archive >> initialFuel;
+			archive >> burnRate;
+			archive >> ignition;
+			archive >> heat;
+			archive >> heatDissipation;
+			archive >> spreadRadius;
+			archive >> spreadRate;
+			archive >> windSensitivity;
+			archive >> smokeAmount;
+			archive >> scorchFactor;
+			archive >> scorchApplied;
+			archive >> damage;
+			archive >> cooldown;
+			archive >> timeSinceIgnition;
+
+			incomingHeat = 0.0f;
+			intensity = 0.0f;
+			cooldown = std::max(0.0f, cooldown);
+			heat = std::max(0.0f, heat);
+			fuel = std::max(0.0f, fuel);
+			initialFuel = std::max(initialFuel, fuel);
+		}
+		else
+		{
+			archive << _flags;
+			archive << flammability;
+			archive << fuel;
+			archive << initialFuel;
+			archive << burnRate;
+			archive << ignition;
+			archive << heat;
+			archive << heatDissipation;
+			archive << spreadRadius;
+			archive << spreadRate;
+			archive << windSensitivity;
+			archive << smokeAmount;
+			archive << scorchFactor;
+			archive << scorchApplied;
+			archive << damage;
+			archive << cooldown;
+			archive << timeSinceIgnition;
+		}
+	}
 	void ColliderComponent::Serialize(wi::Archive& archive, EntitySerializer& seri)
 	{
 		if (archive.IsReadMode())

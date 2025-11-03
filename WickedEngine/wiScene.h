@@ -53,6 +53,7 @@ namespace wi::scene
 		wi::ecs::ComponentManager<InverseKinematicsComponent>& inverse_kinematics = componentLibrary.Register<InverseKinematicsComponent>("wi::scene::Scene::inverse_kinematics");
 		wi::ecs::ComponentManager<SpringComponent>& springs = componentLibrary.Register<SpringComponent>("wi::scene::Scene::springs", 1); // version = 1
 		wi::ecs::ComponentManager<ColliderComponent>& colliders = componentLibrary.Register<ColliderComponent>("wi::scene::Scene::colliders", 2); // version = 2
+		wi::ecs::ComponentManager<FlammableComponent>& flammables = componentLibrary.Register<FlammableComponent>("wi::scene::Scene::flammables", 1);
 		wi::ecs::ComponentManager<ScriptComponent>& scripts = componentLibrary.Register<ScriptComponent>("wi::scene::Scene::scripts");
 		wi::ecs::ComponentManager<ExpressionComponent>& expressions = componentLibrary.Register<ExpressionComponent>("wi::scene::Scene::expressions");
 		wi::ecs::ComponentManager<HumanoidComponent>& humanoids = componentLibrary.Register<HumanoidComponent>("wi::scene::Scene::humanoids", 3); // version = 3
@@ -471,7 +472,10 @@ namespace wi::scene
 		void RunMeshUpdateSystem(wi::jobsystem::context& ctx);
 		void RunMaterialUpdateSystem(wi::jobsystem::context& ctx);
 		void RunImpostorUpdateSystem(wi::jobsystem::context& ctx);
+		void RunFirePropagationUpdateSystem(wi::jobsystem::context& ctx);
 		void RunObjectUpdateSystem(wi::jobsystem::context& ctx);
+		void Fire_Ignite(wi::ecs::Entity entity, float intensity = 1.0f);
+		void Fire_Extinguish(wi::ecs::Entity entity, bool force = false);
 		void RunCameraUpdateSystem(wi::jobsystem::context& ctx);
 		void RunDecalUpdateSystem(wi::jobsystem::context& ctx);
 		void RunProbeUpdateSystem(wi::jobsystem::context& ctx);

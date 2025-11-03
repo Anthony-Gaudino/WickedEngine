@@ -2690,6 +2690,7 @@ void EditorComponent::Update(float dt)
 		componentsWnd.objectWnd.SetEntity(INVALID_ENTITY);
 		componentsWnd.emitterWnd.SetEntity(INVALID_ENTITY);
 		componentsWnd.hairWnd.SetEntity(INVALID_ENTITY);
+		componentsWnd.flammableWnd.SetEntity(INVALID_ENTITY);
 		componentsWnd.meshWnd.SetEntity(INVALID_ENTITY, -1);
 		componentsWnd.materialWnd.SetEntity(INVALID_ENTITY);
 		componentsWnd.soundWnd.SetEntity(INVALID_ENTITY);
@@ -2729,6 +2730,7 @@ void EditorComponent::Update(float dt)
 		cameraWnd.SetEntity(picked.entity);
 		componentsWnd.emitterWnd.SetEntity(picked.entity);
 		componentsWnd.hairWnd.SetEntity(picked.entity);
+		componentsWnd.flammableWnd.SetEntity(picked.entity);
 		componentsWnd.lightWnd.SetEntity(picked.entity);
 		componentsWnd.soundWnd.SetEntity(picked.entity);
 		componentsWnd.videoWnd.SetEntity(picked.entity);

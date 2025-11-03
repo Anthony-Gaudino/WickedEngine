@@ -33,6 +33,7 @@ void ComponentsWindow::Create(EditorComponent* _editor)
 	filterCombo.AddItem(ICON_ANIMATION, (uint64_t)Filter::Animation);
 	filterCombo.AddItem(ICON_FORCE, (uint64_t)Filter::Force);
 	filterCombo.AddItem(ICON_EMITTER, (uint64_t)Filter::Emitter);
+	filterCombo.AddItem(ICON_FLAMMABLE, (uint64_t)Filter::Flammable);
 	filterCombo.AddItem(ICON_HAIR, (uint64_t)Filter::Hairparticle);
 	filterCombo.AddItem(ICON_IK, (uint64_t)Filter::IK);
 	filterCombo.AddItem(ICON_CAMERA, (uint64_t)Filter::Camera);
@@ -141,6 +142,7 @@ void ComponentsWindow::Create(EditorComponent* _editor)
 	animWnd.Create(editor);
 	emitterWnd.Create(editor);
 	hairWnd.Create(editor);
+	flammableWnd.Create(editor);
 	forceFieldWnd.Create(editor);
 	springWnd.Create(editor);
 	ikWnd.Create(editor);
@@ -183,6 +185,7 @@ void ComponentsWindow::Create(EditorComponent* _editor)
 		ADD_DECAL,
 		ADD_WEATHER,
 		ADD_FORCE,
+		ADD_FLAMMABLE,
 		ADD_ANIMATION,
 		ADD_SCRIPT,
 		ADD_RIGIDBODY,
@@ -218,6 +221,7 @@ void ComponentsWindow::Create(EditorComponent* _editor)
 	newComponentCombo.AddItem("Sound " ICON_SOUND, ADD_SOUND);
 	newComponentCombo.AddItem("Environment Probe " ICON_ENVIRONMENTPROBE, ADD_ENVPROBE);
 	newComponentCombo.AddItem("Emitted Particle System " ICON_EMITTER, ADD_EMITTER);
+	newComponentCombo.AddItem("Flammable " ICON_FLAMMABLE, ADD_FLAMMABLE);
 	newComponentCombo.AddItem("Hair Particle System " ICON_HAIR, ADD_HAIR);
 	newComponentCombo.AddItem("Decal " ICON_DECAL, ADD_DECAL);
 	newComponentCombo.AddItem("Weather " ICON_WEATHER, ADD_WEATHER);
@@ -316,6 +320,10 @@ void ComponentsWindow::Create(EditorComponent* _editor)
 				break;
 			case ADD_FORCE:
 				if (scene.forces.Contains(entity))
+					valid = false;
+				break;
+			case ADD_FLAMMABLE:
+				if (scene.flammables.Contains(entity))
 					valid = false;
 				break;
 			case ADD_ANIMATION:
@@ -448,6 +456,9 @@ void ComponentsWindow::Create(EditorComponent* _editor)
 			case ADD_FORCE:
 				scene.forces.Create(entity);
 				break;
+			case ADD_FLAMMABLE:
+				scene.flammables.Create(entity);
+				break;
 			case ADD_ANIMATION:
 				scene.animations.Create(entity);
 				break;
@@ -521,6 +532,7 @@ void ComponentsWindow::Create(EditorComponent* _editor)
 	AddWidget(&animWnd);
 	AddWidget(&emitterWnd);
 	AddWidget(&hairWnd);
+	AddWidget(&flammableWnd);
 	AddWidget(&forceFieldWnd);
 	AddWidget(&springWnd);
 	AddWidget(&ikWnd);
@@ -556,6 +568,7 @@ void ComponentsWindow::Create(EditorComponent* _editor)
 	animWnd.SetVisible(false);
 	emitterWnd.SetVisible(false);
 	hairWnd.SetVisible(false);
+	flammableWnd.SetVisible(false);
 	forceFieldWnd.SetVisible(false);
 	springWnd.SetVisible(false);
 	ikWnd.SetVisible(false);
@@ -749,6 +762,19 @@ void ComponentsWindow::ResizeLayout()
 	else
 	{
 		hairWnd.SetVisible(false);
+	}
+
+	if (scene.flammables.Contains(flammableWnd.entity))
+	{
+		flammableWnd.SetVisible(true);
+		flammableWnd.SetPos(pos);
+		flammableWnd.SetSize(XMFLOAT2(width, flammableWnd.GetScale().y));
+		pos.y += flammableWnd.GetSize().y;
+		pos.y += padding;
+	}
+	else
+	{
+		flammableWnd.SetVisible(false);
 	}
 
 	if (scene.emitters.Contains(emitterWnd.entity))
@@ -1201,6 +1227,10 @@ void ComponentsWindow::PushToEntityTree(wi::ecs::Entity entity, int level)
 			{
 				item.name += ICON_HAIR " ";
 			}
+			if (scene.flammables.Contains(entity))
+			{
+				item.name += ICON_FLAMMABLE " ";
+			}
 			if (scene.forces.Contains(entity))
 			{
 				item.name += ICON_FORCE " ";
@@ -1422,26 +1452,27 @@ int ComponentsWindow::GetEntityTypePriority(const wi::ecs::Entity entity, const 
 	if (scene.weathers.Contains(entity)) return 9;
 	if (scene.emitters.Contains(entity)) return 10;
 	if (scene.hairs.Contains(entity)) return 11;
-	if (scene.forces.Contains(entity)) return 12;
-	if (scene.sounds.Contains(entity)) return 13;
-	if (scene.videos.Contains(entity)) return 14;
-	if (scene.decals.Contains(entity)) return 15;
-	if (scene.cameras.Contains(entity)) return 16;
-	if (scene.probes.Contains(entity)) return 17;
-	if (scene.animations.Contains(entity)) return 18;
-	if (scene.armatures.Contains(entity)) return 19;
-	if (scene.humanoids.Contains(entity)) return 20;
-	if (scene.sprites.Contains(entity)) return 21;
-	if (scene.fonts.Contains(entity)) return 22;
-	if (scene.voxel_grids.Contains(entity)) return 23;
-	if (scene.materials.Contains(entity)) return 24;
-	if (scene.inverse_kinematics.Contains(entity)) return 25;
-	if (scene.constraints.Contains(entity)) return 26;
-	if (scene.springs.Contains(entity)) return 27;
-	if (scene.splines.Contains(entity)) return 28;
-	if (scene.scripts.Contains(entity)) return 29;
-	if (scene.expressions.Contains(entity)) return 30;
-	if (scene.metadatas.Contains(entity)) return 31;
+	if (scene.flammables.Contains(entity)) return 12;
+	if (scene.forces.Contains(entity)) return 13;
+	if (scene.sounds.Contains(entity)) return 14;
+	if (scene.videos.Contains(entity)) return 15;
+	if (scene.decals.Contains(entity)) return 16;
+	if (scene.cameras.Contains(entity)) return 17;
+	if (scene.probes.Contains(entity)) return 18;
+	if (scene.animations.Contains(entity)) return 19;
+	if (scene.armatures.Contains(entity)) return 20;
+	if (scene.humanoids.Contains(entity)) return 21;
+	if (scene.sprites.Contains(entity)) return 22;
+	if (scene.fonts.Contains(entity)) return 23;
+	if (scene.voxel_grids.Contains(entity)) return 24;
+	if (scene.materials.Contains(entity)) return 25;
+	if (scene.inverse_kinematics.Contains(entity)) return 26;
+	if (scene.constraints.Contains(entity)) return 27;
+	if (scene.springs.Contains(entity)) return 28;
+	if (scene.splines.Contains(entity)) return 29;
+	if (scene.scripts.Contains(entity)) return 30;
+	if (scene.expressions.Contains(entity)) return 31;
+	if (scene.metadatas.Contains(entity)) return 32;
 	return INT_MAX; // Entities with no specific component (sorted last)
 }
 
@@ -1502,6 +1533,7 @@ bool ComponentsWindow::CheckEntityFilter(const wi::ecs::Entity entity) const
 		(has_flag(filter, Filter::Animation) && scene.animations.Contains(entity)) ||
 		(has_flag(filter, Filter::Force) && scene.forces.Contains(entity)) ||
 		(has_flag(filter, Filter::Emitter) && scene.emitters.Contains(entity)) ||
+		(has_flag(filter, Filter::Flammable) && scene.flammables.Contains(entity)) ||
 		(has_flag(filter, Filter::IK) && scene.inverse_kinematics.Contains(entity)) ||
 		(has_flag(filter, Filter::Camera) && scene.cameras.Contains(entity)) ||
 		(has_flag(filter, Filter::Armature) && scene.armatures.Contains(entity)) ||

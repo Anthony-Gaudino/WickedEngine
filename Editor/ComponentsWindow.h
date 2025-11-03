@@ -9,6 +9,7 @@
 #include "AnimationWindow.h"
 #include "EmitterWindow.h"
 #include "HairParticleWindow.h"
+#include "FlammableWindow.h"
 #include "ForceFieldWindow.h"
 #include "SoundWindow.h"
 #include "VideoWindow.h"
@@ -56,6 +57,7 @@ public:
 	AnimationWindow animWnd;
 	EmitterWindow emitterWnd;
 	HairParticleWindow hairWnd;
+	FlammableWindow flammableWnd;
 	ForceFieldWindow forceFieldWnd;
 	SoundWindow soundWnd;
 	VideoWindow videoWnd;
@@ -95,6 +97,7 @@ public:
 		Animation = 1ull << 9ull,
 		Force = 1ull << 10ull,
 		Emitter = 1ull << 11ull,
+		Flammable = 1ull << 32ull,
 		Hairparticle = 1ull << 12ull,
 		IK = 1ull << 13ull,
 		Camera = 1ull << 14ull,

@@ -28,6 +28,7 @@
     <ClCompile Include="$(MSBuildThisFileDirectory)EmitterWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)EnvProbeWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)ExpressionWindow.cpp" />
+    <ClCompile Include="$(MSBuildThisFileDirectory)FlammableWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)ForceFieldWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)GeneralWindow.cpp" />
     <ClCompile Include="$(MSBuildThisFileDirectory)HairParticleWindow.cpp" />
@@ -101,6 +102,7 @@
     <ClInclude Include="$(MSBuildThisFileDirectory)EmitterWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)EnvProbeWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)ExpressionWindow.h" />
+    <ClInclude Include="$(MSBuildThisFileDirectory)FlammableWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)FontAwesomeV6.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)ForceFieldWindow.h" />
     <ClInclude Include="$(MSBuildThisFileDirectory)GeneralWindow.h" />

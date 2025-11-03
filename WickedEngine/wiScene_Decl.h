@@ -25,5 +25,6 @@ namespace wi::scene
 	struct InverseKinematicsComponent;
 	struct SpringComponent;
 	struct ColliderComponent;
+	struct FlammableComponent;
 	struct Scene;
 }

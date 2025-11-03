@@ -13,6 +13,9 @@
 #include "wiAllocator.h"
 #include "wiProfiler.h"
 
+#include <algorithm>
+#include <cmath>
+
 #include "shaders/ShaderInterop_SurfelGI.h"
 #include "shaders/ShaderInterop_DDGI.h"
 
@@ -30,6 +33,734 @@ using namespace wi::primitive;
 namespace wi::scene
 {
 	static constexpr uint32_t small_subtask_groupsize = 256u;
+
+	namespace
+	{
+		// Resolve particle texture paths relative to common install/build roots and cache the result.
+		const std::string& ResolveEmitterTexturePath(const char* relativePath)
+		{
+			static wi::unordered_map<std::string, std::string> cache;
+			const std::string key = relativePath != nullptr ? relativePath : "";
+			auto cached = cache.find(key);
+			if (cached != cache.end())
+			{
+				return cached->second;
+			}
+
+			auto cacheAndReturn = [&](const std::string& candidate) -> const std::string&
+			{
+				auto [iter, inserted] = cache.emplace(key, candidate);
+				if (!inserted)
+				{
+					iter->second = candidate;
+				}
+				return iter->second;
+			};
+
+			const char* searchRoots[] = { "Content/", "../Content/", "../../Content/", "../../../Content/" };
+			for (const char* root : searchRoots)
+			{
+				std::string candidate = wi::helper::BackslashToForwardSlash(std::string(root) + key);
+				if (wi::helper::FileExists(candidate))
+				{
+					return cacheAndReturn(candidate);
+				}
+			}
+
+			const std::string exePath = wi::helper::GetExecutablePath();
+			if (!exePath.empty())
+			{
+				std::string exeDir = wi::helper::BackslashToForwardSlash(wi::helper::GetDirectoryFromPath(exePath));
+				if (!exeDir.empty() && exeDir.back() != '/')
+				{
+					exeDir += '/';
+				}
+				const char* exeRoots[] = { "Content/", "../Content/", "../../Content/" };
+				for (const char* root : exeRoots)
+				{
+					std::string candidate = exeDir + root + key;
+					candidate = wi::helper::BackslashToForwardSlash(candidate);
+					if (wi::helper::FileExists(candidate))
+					{
+						return cacheAndReturn(candidate);
+					}
+				}
+			}
+
+			return cacheAndReturn(wi::helper::BackslashToForwardSlash(std::string("Content/") + key));
+		}
+
+		enum class FireEmitterKind
+		{
+			Fire,
+			Smoke,
+			Distortion,
+			Sparks
+		};
+
+		const char* GetEmitterNameSuffix(FireEmitterKind kind)
+		{
+			switch (kind)
+			{
+			case FireEmitterKind::Smoke:
+				return "_smoke";
+			case FireEmitterKind::Distortion:
+				return "_distortion";
+			case FireEmitterKind::Sparks:
+				return "_sparks";
+			case FireEmitterKind::Fire:
+			default:
+				return "_fire";
+			}
+		}
+
+		bool HasFlammableKeyword(const std::string& lowercase)
+		{
+			static constexpr const char* keywords[] = {
+				"grass",
+				"tree",
+				"bush",
+				"shrub",
+				"plant",
+				"foliage",
+				"wood",
+				"log",
+				"branch",
+				"dry"
+			};
+			for (const char* keyword : keywords)
+			{
+				if (lowercase.find(keyword) != std::string::npos)
+				{
+					return true;
+				}
+			}
+			return false;
+		}
+
+		LayerComponent& EnsureLayerCopy(Scene& scene, wi::ecs::Entity source, wi::ecs::Entity target)
+		{
+			LayerComponent& layer = scene.layers.Create(target);
+			if (const LayerComponent* sourceLayer = scene.layers.GetComponent(source))
+			{
+				layer.layerMask = sourceLayer->layerMask;
+			}
+			return layer;
+		}
+
+		EmittedParticleSystem& ConfigureEmitterBase(Scene& scene, wi::ecs::Entity entity)
+		{
+			EmittedParticleSystem& emitter = scene.emitters.Create(entity);
+			emitter.SetCollidersDisabled(true);
+			emitter.SetVolumeEnabled(true);
+			emitter.random_color = 0.25f;
+			emitter.random_factor = 1.0f;
+			emitter.mass = 0.3f;
+			emitter.drag = 0.85f;
+			emitter.opacityCurveControlPeakStart = 0.05f;
+			emitter.opacityCurveControlPeakEnd = 0.45f;
+			return emitter;
+		}
+
+		wi::ecs::Entity CreateFireEmitterEntity(Scene& scene, FlammableComponent& fire, wi::ecs::Entity owner, FireEmitterKind kind)
+		{
+			wi::ecs::Entity emitterEntity = wi::ecs::CreateEntity();
+
+			const char* suffix = GetEmitterNameSuffix(kind);
+			if (const NameComponent* ownerName = scene.names.GetComponent(owner))
+			{
+				std::string composedName = ownerName->name;
+				composedName += suffix;
+				scene.names.Create(emitterEntity) = composedName;
+			}
+			else
+			{
+				scene.names.Create(emitterEntity) = std::string("fire") + suffix;
+			}
+
+			EnsureLayerCopy(scene, owner, emitterEntity);
+
+			TransformComponent& emitterTransform = scene.transforms.Create(emitterEntity);
+			emitterTransform.ClearTransform();
+			emitterTransform.UpdateTransform();
+
+			MaterialComponent& material = scene.materials.Create(emitterEntity);
+			material.userBlendMode = kind == FireEmitterKind::Sparks ? wi::enums::BLENDMODE_ADDITIVE : wi::enums::BLENDMODE_ALPHA;
+			material.SetCastShadow(false);
+			material.SetReceiveShadow(false);
+			material.SetDoubleSided(true);
+			material.SetUseVertexColors(true);
+			material.SetDirty();
+
+			switch (kind)
+			{
+			case FireEmitterKind::Smoke:
+			{
+				const std::string& texturePath = ResolveEmitterTexturePath("models/smoke0.png");
+				material.textures[MaterialComponent::BASECOLORMAP].name = texturePath;
+				material.SetBaseColor(XMFLOAT4(0.85f, 0.85f, 0.85f, 1.0f));
+				material.SetEmissiveStrength(0.0f);
+				break;
+			}
+			case FireEmitterKind::Distortion:
+			{
+				const std::string& texturePath = ResolveEmitterTexturePath("models/fire.jpg");
+				material.textures[MaterialComponent::NORMALMAP].name = texturePath;
+				material.SetBaseColor(XMFLOAT4(1.0f, 1.0f, 1.0f, 0.6f));
+				material.SetEmissiveStrength(0.0f);
+				material.SetRefractionAmount(0.2f);
+				break;
+			}
+			case FireEmitterKind::Sparks:
+			{
+				material.SetBaseColor(XMFLOAT4(1.0f, 0.85f, 0.45f, 1.0f));
+				material.SetEmissiveColor(XMFLOAT4(1.0f, 0.8f, 0.35f, 1.0f));
+				material.SetEmissiveStrength(6.0f);
+				break;
+			}
+			case FireEmitterKind::Fire:
+			default:
+			{
+				const std::string& texturePath = ResolveEmitterTexturePath("models/fire.jpg");
+				material.textures[MaterialComponent::BASECOLORMAP].name = texturePath;
+				material.textures[MaterialComponent::EMISSIVEMAP].name = texturePath;
+				material.SetBaseColor(XMFLOAT4(1.0f, 0.9f, 0.8f, 1.0f));
+				material.SetEmissiveColor(XMFLOAT4(1.0f, 0.55f, 0.2f, 1.0f));
+				material.SetEmissiveStrength(3.0f);
+				break;
+			}
+			}
+			material.CreateRenderData();
+
+			EmittedParticleSystem& emitter = ConfigureEmitterBase(scene, emitterEntity);
+			switch (kind)
+			{
+			case FireEmitterKind::Smoke:
+			{
+				emitter.shaderType = EmittedParticleSystem::PARTICLESHADERTYPE::SOFT;
+				emitter.count = 20;
+				emitter.life = 4.0f;
+				emitter.random_life = 1.0f;
+				emitter.size = 1.5f;
+				emitter.scaleX = 1.2f;
+				emitter.scaleY = 1.2f;
+				emitter.velocity = XMFLOAT3(0, 2.5f, 0);
+				emitter.gravity = XMFLOAT3(0, -0.3f, 0);
+				emitter.random_factor = 1.6f;
+				emitter.random_color = 0.4f;
+				emitter.Burst(12);
+				break;
+			}
+			case FireEmitterKind::Distortion:
+			{
+				emitter.shaderType = EmittedParticleSystem::PARTICLESHADERTYPE::SOFT_DISTORTION;
+				emitter.count = 24;
+				emitter.life = 0.9f;
+				emitter.random_life = 0.25f;
+				emitter.size = 0.9f;
+				emitter.scaleX = 0.9f;
+				emitter.scaleY = 0.9f;
+				emitter.velocity = XMFLOAT3(0, 4.0f, 0);
+				emitter.gravity = XMFLOAT3(0, 0.25f, 0);
+				emitter.random_factor = 0.9f;
+				emitter.random_color = 0.0f;
+				emitter.Burst(18);
+				break;
+			}
+			case FireEmitterKind::Sparks:
+			{
+				emitter.shaderType = EmittedParticleSystem::PARTICLESHADERTYPE::SIMPLE;
+				emitter.count = 16;
+				emitter.life = 0.45f;
+				emitter.random_life = 0.25f;
+				emitter.size = 0.2f;
+				emitter.scaleX = 0.4f;
+				emitter.scaleY = 0.4f;
+				emitter.velocity = XMFLOAT3(0, 8.0f, 0);
+				emitter.gravity = XMFLOAT3(0, -9.0f, 0);
+				emitter.random_factor = 2.0f;
+				emitter.random_color = 1.0f;
+				emitter.drag = 0.6f;
+				emitter.Burst(12);
+				break;
+			}
+			case FireEmitterKind::Fire:
+			default:
+			{
+				emitter.shaderType = EmittedParticleSystem::PARTICLESHADERTYPE::SOFT_LIGHTING;
+				emitter.count = 40;
+				emitter.life = 1.1f;
+				emitter.random_life = 0.35f;
+				emitter.size = 0.8f;
+				emitter.scaleX = 0.8f;
+				emitter.scaleY = 0.8f;
+				emitter.velocity = XMFLOAT3(0, 6.0f, 0);
+				emitter.gravity = XMFLOAT3(0, 1.0f, 0);
+				emitter.random_factor = 1.0f;
+				emitter.random_color = 0.75f;
+				emitter.Burst(18);
+				break;
+			}
+			}
+
+			scene.Component_Attach(emitterEntity, owner);
+
+			return emitterEntity;
+		}
+
+		void UpdateEmitterIntensity(Scene& scene, wi::ecs::Entity emitterEntity, float intensity, FireEmitterKind kind, const XMFLOAT3& windDir)
+		{
+			if (emitterEntity == wi::ecs::INVALID_ENTITY)
+			{
+				return;
+			}
+			if (EmittedParticleSystem* emitter = scene.emitters.GetComponent(emitterEntity))
+			{
+				const float clampedIntensity = wi::math::saturate(intensity);
+				switch (kind)
+				{
+				case FireEmitterKind::Smoke:
+				{
+					emitter->count = wi::math::Lerp(12.0f, 40.0f, clampedIntensity);
+					emitter->life = wi::math::Lerp(2.5f, 5.0f, clampedIntensity);
+					emitter->size = wi::math::Lerp(1.2f, 3.5f, clampedIntensity);
+					emitter->random_factor = wi::math::Lerp(1.2f, 2.1f, clampedIntensity);
+					XMFLOAT3 velocity = emitter->velocity;
+					velocity.x = windDir.x * 1.5f;
+					velocity.y = wi::math::Lerp(2.3f, 3.8f, clampedIntensity);
+					velocity.z = windDir.z * 1.5f;
+					emitter->velocity = velocity;
+					break;
+				}
+				case FireEmitterKind::Distortion:
+				{
+					emitter->count = wi::math::Lerp(12.0f, 36.0f, clampedIntensity);
+					emitter->life = wi::math::Lerp(0.6f, 1.1f, clampedIntensity);
+					emitter->size = wi::math::Lerp(0.7f, 1.4f, clampedIntensity);
+					emitter->random_factor = wi::math::Lerp(0.6f, 1.1f, clampedIntensity);
+					XMFLOAT3 velocity;
+					velocity.x = windDir.x * 0.35f;
+					velocity.y = wi::math::Lerp(3.0f, 5.2f, clampedIntensity);
+					velocity.z = windDir.z * 0.35f;
+					emitter->velocity = velocity;
+					break;
+				}
+				case FireEmitterKind::Sparks:
+				{
+					emitter->count = wi::math::Lerp(4.0f, 28.0f, clampedIntensity);
+					emitter->life = wi::math::Lerp(0.15f, 0.6f, clampedIntensity);
+					emitter->size = wi::math::Lerp(0.1f, 0.35f, clampedIntensity);
+					emitter->random_factor = wi::math::Lerp(1.2f, 2.5f, clampedIntensity);
+					XMFLOAT3 velocity;
+					velocity.x = windDir.x * 0.6f;
+					velocity.y = wi::math::Lerp(6.0f, 12.0f, clampedIntensity);
+					velocity.z = windDir.z * 0.6f;
+					emitter->velocity = velocity;
+					break;
+				}
+				case FireEmitterKind::Fire:
+				default:
+				{
+					emitter->count = wi::math::Lerp(15.0f, 60.0f, clampedIntensity);
+					emitter->life = wi::math::Lerp(0.6f, 1.4f, clampedIntensity);
+					emitter->size = wi::math::Lerp(0.6f, 1.8f, clampedIntensity);
+					emitter->random_factor = wi::math::Lerp(0.8f, 1.3f, clampedIntensity);
+					XMFLOAT3 velocity = emitter->velocity;
+					velocity.x = windDir.x * 0.5f;
+					velocity.z = windDir.z * 0.5f;
+					emitter->velocity = velocity;
+					break;
+				}
+				}
+			}
+		}
+	}
+
+	void Scene::RunFirePropagationUpdateSystem(wi::jobsystem::context& ctx)
+	{
+		(void)ctx;
+		const float dt_local = dt;
+		if (dt_local <= 0.0f)
+		{
+			return;
+		}
+
+		// Opportunistically flag plausible vegetation for fire without requiring manual setup.
+		{
+			uint32_t autogeneratedThisFrame = 0;
+			constexpr uint32_t maxAutoGeneratedPerFrame = 32;
+			for (size_t i = 0; i < objects.GetCount() && autogeneratedThisFrame < maxAutoGeneratedPerFrame; ++i)
+			{
+				const wi::ecs::Entity objectEntity = objects.GetEntity(i);
+				if (flammables.Contains(objectEntity))
+				{
+					continue;
+				}
+				const NameComponent* name = names.GetComponent(objectEntity);
+				if (name == nullptr || name->name.empty())
+				{
+					continue;
+				}
+				const std::string lowercase = wi::helper::toLower(name->name);
+				if (!HasFlammableKeyword(lowercase))
+				{
+					continue;
+				}
+				FlammableComponent& fire = flammables.Create(objectEntity);
+				fire.SetAutoGenerated(true);
+				fire.SetActive(true);
+				fire.SetBurning(false);
+				fire.SetBurnedOut(false);
+				fire.heat = 0;
+				fire.incomingHeat = 0;
+				fire.intensity = 0;
+				fire.cooldown = 0;
+				fire.timeSinceIgnition = 0;
+				fire.damage = 0;
+				fire.fireEmitter = wi::ecs::INVALID_ENTITY;
+				fire.smokeEmitter = wi::ecs::INVALID_ENTITY;
+				fire.distortionEmitter = wi::ecs::INVALID_ENTITY;
+				fire.sparksEmitter = wi::ecs::INVALID_ENTITY;
+				fire.scorchApplied = 0;
+				const ObjectComponent* object = objects.GetComponent(objectEntity);
+				const float objectRadius = object != nullptr ? std::max(object->radius, 0.5f) : 0.5f;
+				fire.flammability = 0.75f;
+				fire.fuel = objectRadius * 24.0f;
+				fire.initialFuel = fire.fuel;
+				fire.burnRate = std::max(6.0f, objectRadius * 3.0f);
+				fire.ignition = wi::math::Clamp(18.0f + objectRadius * 4.0f, 10.0f, 60.0f);
+				fire.heatDissipation = 5.0f;
+				fire.spreadRadius = std::max(3.0f, objectRadius * 1.6f);
+				fire.spreadRate = 12.0f + objectRadius * 4.0f;
+				fire.windSensitivity = 1.0f;
+				fire.smokeAmount = wi::math::Clamp(objectRadius * 0.35f, 0.7f, 2.2f);
+				autogeneratedThisFrame++;
+			}
+		}
+
+		const size_t count = flammables.GetCount();
+		if (count == 0)
+		{
+			return;
+		}
+
+		wi::vector<wi::ecs::Entity> entityLookup(count);
+		wi::vector<XMFLOAT3> worldPositions(count, XMFLOAT3(0, 0, 0));
+		wi::vector<float> spreadRanges(count, 0.0f);
+		wi::vector<uint8_t> valid(count, 0);
+
+		for (size_t i = 0; i < count; ++i)
+		{
+			FlammableComponent& fire = flammables[i];
+			const wi::ecs::Entity entity = flammables.GetEntity(i);
+			entityLookup[i] = entity;
+			fire.incomingHeat = 0;
+			fire.initialFuel = fire.initialFuel > 0.0f ? fire.initialFuel : std::max(fire.fuel, fire.burnRate * 5.0f);
+			fire.fuel = std::max(0.0f, fire.fuel);
+			fire.cooldown = std::max(0.0f, fire.cooldown - dt_local);
+
+			const TransformComponent* transform = transforms.GetComponent(entity);
+			if (transform != nullptr)
+			{
+				worldPositions[i] = transform->GetPosition();
+				valid[i] = 1;
+			}
+			else if (const ObjectComponent* object = objects.GetComponent(entity))
+			{
+				worldPositions[i] = object->center;
+				valid[i] = 1;
+			}
+
+			spreadRanges[i] = std::max(0.1f, fire.spreadRadius);
+		}
+
+		XMFLOAT3 windDir = weather.windDirection;
+		const float windSpeed = std::max(0.0f, weather.windSpeed);
+		const float windLengthSq = windDir.x * windDir.x + windDir.y * windDir.y + windDir.z * windDir.z;
+		if (windLengthSq > 0.0001f)
+		{
+			const float invLength = 1.0f / std::sqrt(windLengthSq);
+			windDir.x *= invLength;
+			windDir.y *= invLength;
+			windDir.z *= invLength;
+		}
+		else
+		{
+			windDir = XMFLOAT3(0, 0, 0);
+		}
+		const XMFLOAT3 windVelocity = XMFLOAT3(windDir.x * windSpeed, windDir.y * windSpeed, windDir.z * windSpeed);
+		const float rainMitigation = wi::math::saturate(1.0f - weather.rain_amount * 0.85f);
+
+		// Heat propagation step (pairwise radius checks).
+		for (size_t i = 0; i < count; ++i)
+		{
+			FlammableComponent& source = flammables[i];
+			if (!source.IsActive() || !valid[i])
+			{
+				continue;
+			}
+
+			for (size_t j = i + 1; j < count; ++j)
+			{
+				FlammableComponent& target = flammables[j];
+				if (!target.IsActive() || !valid[j])
+				{
+					continue;
+				}
+
+				const float maxRange = std::max(spreadRanges[i], spreadRanges[j]);
+				if (maxRange <= 0.0f)
+				{
+					continue;
+				}
+
+				const float distSq = wi::math::DistanceSquared(worldPositions[i], worldPositions[j]);
+				const float rangeSq = maxRange * maxRange;
+				if (distSq > rangeSq)
+				{
+					continue;
+				}
+
+				const float distance = std::sqrt(std::max(distSq, 1e-6f));
+				const float falloff = wi::math::saturate(1.0f - (distance / std::max(maxRange, 0.0001f)));
+				XMFLOAT3 dir = XMFLOAT3(
+					(worldPositions[j].x - worldPositions[i].x) / distance,
+					(worldPositions[j].y - worldPositions[i].y) / distance,
+					(worldPositions[j].z - worldPositions[i].z) / distance
+				);
+				const float windAlignment = windSpeed > 0 ? wi::math::Clamp(dir.x * windDir.x + dir.y * windDir.y + dir.z * windDir.z, -1.0f, 1.0f) : 0.0f;
+
+				auto propagate_heat = [&](FlammableComponent& burning, FlammableComponent& receiver, float alignment)
+				{
+					if (!burning.IsBurning() || burning.fuel <= 0.0f)
+					{
+						return;
+					}
+					const float normalizedIntensity = wi::math::saturate(burning.intensity > 0.0f ? burning.intensity : (burning.heat / std::max(burning.ignition, 1.0f)));
+					const float baseTransfer = burning.spreadRate * burning.flammability * dt_local;
+					const float windBoost = 1.0f + std::max(0.0f, alignment) * burning.windSensitivity * windSpeed * 0.25f;
+					const float receivedHeat = baseTransfer * normalizedIntensity * falloff * rainMitigation * windBoost;
+					receiver.incomingHeat = std::min(receiver.incomingHeat + receivedHeat, receiver.ignition * 4.0f);
+				};
+
+				propagate_heat(source, target, windAlignment);
+				propagate_heat(target, source, -windAlignment);
+			}
+		}
+
+		for (size_t i = 0; i < count; ++i)
+		{
+			FlammableComponent& fire = flammables[i];
+			const wi::ecs::Entity entity = entityLookup[i];
+			const bool wasBurning = fire.IsBurning();
+
+			if (!fire.IsActive())
+			{
+				fire.intensity = std::max(0.0f, fire.intensity - dt_local);
+				fire.heat = std::max(0.0f, fire.heat - fire.heatDissipation * dt_local);
+				fire.incomingHeat = 0;
+				continue;
+			}
+
+			fire.heat += fire.incomingHeat;
+			fire.incomingHeat = 0;
+			const float rainCooling = weather.rain_amount * (8.0f + fire.windSensitivity * 2.0f);
+
+			if (wasBurning)
+			{
+				fire.timeSinceIgnition += dt_local;
+				fire.fuel = std::max(0.0f, fire.fuel - fire.burnRate * dt_local * wi::math::Lerp(1.0f, 0.5f, weather.rain_amount));
+				const float heatRatio = fire.ignition > 0 ? (fire.heat / fire.ignition) : fire.heat;
+				const float fuelRatio = fire.initialFuel > 0 ? (fire.fuel / fire.initialFuel) : 0.0f;
+				fire.intensity = wi::math::saturate(wi::math::Lerp(heatRatio, fuelRatio, 0.35f));
+				fire.intensity = std::max(fire.intensity, 0.1f);
+				fire.damage += fire.intensity * fire.burnRate * dt_local * 0.1f;
+				fire.heat = std::max(0.0f, fire.heat - (fire.heatDissipation * 0.5f + rainCooling) * dt_local);
+
+				const bool fuelEmpty = fire.fuel <= 0.0f;
+				const bool extinguishedByRain = weather.rain_amount > 0.8f && fire.intensity < 0.3f;
+				if (fuelEmpty || extinguishedByRain)
+				{
+					Fire_Extinguish(entity, fuelEmpty);
+				}
+			}
+			else
+			{
+				fire.heat = std::max(0.0f, fire.heat - (fire.heatDissipation + rainCooling) * dt_local);
+				fire.intensity = std::max(0.0f, fire.intensity - dt_local * 0.5f);
+				if (!fire.IsBurnedOut() && fire.fuel > 0.0f && fire.cooldown <= 0.0f && fire.heat >= fire.ignition)
+				{
+					const float igniteIntensity = wi::math::saturate(wi::math::InverseLerp(fire.ignition, fire.ignition * 1.6f, fire.heat));
+					Fire_Ignite(entity, igniteIntensity);
+				}
+			}
+
+			if (fire.IsBurnedOut() && fire.scorchApplied == 0)
+			{
+				if (ObjectComponent* object = objects.GetComponent(entity))
+				{
+					const float scorchMultiplier = wi::math::saturate(1.0f - fire.scorchFactor);
+					object->color.x *= scorchMultiplier;
+					object->color.y *= scorchMultiplier;
+					object->color.z *= scorchMultiplier;
+					fire.scorchApplied = 1;
+				}
+			}
+
+			const bool burningNow = fire.IsBurning();
+			if (burningNow)
+			{
+				if (fire.fireEmitter == wi::ecs::INVALID_ENTITY || !emitters.Contains(fire.fireEmitter))
+				{
+					fire.fireEmitter = CreateFireEmitterEntity(*this, fire, entity, FireEmitterKind::Fire);
+				}
+				if (fire.smokeEmitter == wi::ecs::INVALID_ENTITY || !emitters.Contains(fire.smokeEmitter))
+				{
+					fire.smokeEmitter = CreateFireEmitterEntity(*this, fire, entity, FireEmitterKind::Smoke);
+				}
+				if (fire.distortionEmitter == wi::ecs::INVALID_ENTITY || !emitters.Contains(fire.distortionEmitter))
+				{
+					fire.distortionEmitter = CreateFireEmitterEntity(*this, fire, entity, FireEmitterKind::Distortion);
+				}
+				if (fire.sparksEmitter == wi::ecs::INVALID_ENTITY || !emitters.Contains(fire.sparksEmitter))
+				{
+					fire.sparksEmitter = CreateFireEmitterEntity(*this, fire, entity, FireEmitterKind::Sparks);
+				}
+				UpdateEmitterIntensity(*this, fire.fireEmitter, fire.intensity, FireEmitterKind::Fire, windVelocity);
+				UpdateEmitterIntensity(*this, fire.smokeEmitter, fire.intensity * fire.smokeAmount, FireEmitterKind::Smoke, windVelocity);
+				UpdateEmitterIntensity(*this, fire.distortionEmitter, fire.intensity, FireEmitterKind::Distortion, windVelocity);
+				UpdateEmitterIntensity(*this, fire.sparksEmitter, fire.intensity, FireEmitterKind::Sparks, windVelocity);
+			}
+			else
+			{
+				if (fire.fireEmitter != wi::ecs::INVALID_ENTITY)
+				{
+					UpdateEmitterIntensity(*this, fire.fireEmitter, 0.0f, FireEmitterKind::Fire, windVelocity);
+				}
+				if (fire.smokeEmitter != wi::ecs::INVALID_ENTITY)
+				{
+					UpdateEmitterIntensity(*this, fire.smokeEmitter, 0.0f, FireEmitterKind::Smoke, windVelocity);
+				}
+				if (fire.distortionEmitter != wi::ecs::INVALID_ENTITY)
+				{
+					UpdateEmitterIntensity(*this, fire.distortionEmitter, 0.0f, FireEmitterKind::Distortion, windVelocity);
+				}
+				if (fire.sparksEmitter != wi::ecs::INVALID_ENTITY)
+				{
+					UpdateEmitterIntensity(*this, fire.sparksEmitter, 0.0f, FireEmitterKind::Sparks, windVelocity);
+				}
+			}
+		}
+	}
+
+	void Scene::Fire_Ignite(wi::ecs::Entity entity, float intensity)
+	{
+		FlammableComponent* fire = flammables.GetComponent(entity);
+		if (fire == nullptr)
+		{
+			return;
+		}
+
+		fire->SetActive(true);
+		fire->SetBurnedOut(false);
+		fire->SetBurning(true);
+		fire->cooldown = 0.0f;
+		fire->timeSinceIgnition = 0.0f;
+		fire->heat = std::max(fire->heat, fire->ignition * 1.1f);
+		fire->fuel = std::max(fire->fuel, fire->initialFuel * 0.5f);
+		fire->intensity = std::max(0.2f, wi::math::saturate(intensity));
+
+		const XMFLOAT3 windVelocity = XMFLOAT3(
+			weather.windDirection.x * weather.windSpeed,
+			weather.windDirection.y * weather.windSpeed,
+			weather.windDirection.z * weather.windSpeed
+		);
+
+		if (fire->fireEmitter == wi::ecs::INVALID_ENTITY || !emitters.Contains(fire->fireEmitter))
+		{
+			fire->fireEmitter = CreateFireEmitterEntity(*this, *fire, entity, FireEmitterKind::Fire);
+		}
+		if (fire->smokeEmitter == wi::ecs::INVALID_ENTITY || !emitters.Contains(fire->smokeEmitter))
+		{
+			fire->smokeEmitter = CreateFireEmitterEntity(*this, *fire, entity, FireEmitterKind::Smoke);
+		}
+		if (fire->distortionEmitter == wi::ecs::INVALID_ENTITY || !emitters.Contains(fire->distortionEmitter))
+		{
+			fire->distortionEmitter = CreateFireEmitterEntity(*this, *fire, entity, FireEmitterKind::Distortion);
+		}
+		if (fire->sparksEmitter == wi::ecs::INVALID_ENTITY || !emitters.Contains(fire->sparksEmitter))
+		{
+			fire->sparksEmitter = CreateFireEmitterEntity(*this, *fire, entity, FireEmitterKind::Sparks);
+		}
+
+		UpdateEmitterIntensity(*this, fire->fireEmitter, fire->intensity, FireEmitterKind::Fire, windVelocity);
+		UpdateEmitterIntensity(*this, fire->smokeEmitter, fire->intensity * fire->smokeAmount, FireEmitterKind::Smoke, windVelocity);
+		UpdateEmitterIntensity(*this, fire->distortionEmitter, fire->intensity, FireEmitterKind::Distortion, windVelocity);
+		UpdateEmitterIntensity(*this, fire->sparksEmitter, fire->intensity, FireEmitterKind::Sparks, windVelocity);
+	}
+
+	void Scene::Fire_Extinguish(wi::ecs::Entity entity, bool force)
+	{
+		FlammableComponent* fire = flammables.GetComponent(entity);
+		if (fire == nullptr)
+		{
+			return;
+		}
+
+		if (!force && !fire->IsBurning())
+		{
+			return;
+		}
+
+		fire->SetBurning(false);
+		fire->intensity = 0.0f;
+		fire->heat = std::min(fire->heat, fire->ignition * 0.25f);
+		fire->cooldown = std::max(fire->cooldown, force ? 6.0f : 3.0f);
+		if (force || fire->fuel <= 0.0f)
+		{
+			fire->fuel = 0.0f;
+			fire->SetBurnedOut(true);
+		}
+		fire->incomingHeat = 0.0f;
+
+		const XMFLOAT3 calmWind = XMFLOAT3(0, 0, 0);
+		if (fire->fireEmitter != wi::ecs::INVALID_ENTITY)
+		{
+			UpdateEmitterIntensity(*this, fire->fireEmitter, 0.0f, FireEmitterKind::Fire, calmWind);
+		}
+		if (fire->smokeEmitter != wi::ecs::INVALID_ENTITY)
+		{
+			UpdateEmitterIntensity(*this, fire->smokeEmitter, 0.0f, FireEmitterKind::Smoke, calmWind);
+		}
+		if (fire->distortionEmitter != wi::ecs::INVALID_ENTITY)
+		{
+			UpdateEmitterIntensity(*this, fire->distortionEmitter, 0.0f, FireEmitterKind::Distortion, calmWind);
+		}
+		if (fire->sparksEmitter != wi::ecs::INVALID_ENTITY)
+		{
+			UpdateEmitterIntensity(*this, fire->sparksEmitter, 0.0f, FireEmitterKind::Sparks, calmWind);
+		}
+
+		auto removeEmitterEntity = [&](wi::ecs::Entity& emitterEntity)
+		{
+			if (emitterEntity == wi::ecs::INVALID_ENTITY)
+			{
+				return;
+			}
+			// Clean up the spawned emitter hierarchy before deleting the entity outright.
+			if (hierarchy.Contains(emitterEntity))
+			{
+				Component_Detach(emitterEntity);
+			}
+			Entity_Remove(emitterEntity);
+			emitterEntity = wi::ecs::INVALID_ENTITY;
+		};
+
+		removeEmitterEntity(fire->fireEmitter);
+		removeEmitterEntity(fire->smokeEmitter);
+		removeEmitterEntity(fire->distortionEmitter);
+		removeEmitterEntity(fire->sparksEmitter);
+	}
 
 	void Scene::Update(float dt)
 	{
@@ -380,6 +1111,8 @@ namespace wi::scene
 		RunArmatureUpdateSystem(ctx);
 
 		RunWeatherUpdateSystem(ctx);
+
+		RunFirePropagationUpdateSystem(ctx);
 
 		wi::jobsystem::Wait(ctx); // dependencies
 
