@@ -9792,6 +9792,173 @@ void VXGI_Voxelize(
 	AABB bbox;
 	bbox.createFromHalfWidth(clipmap.center, clipmap.extents);
 
+#ifndef VOXELIZATION_GEOMETRY_SHADER_ENABLED
+	constexpr uint32_t voxel_frustum_count = 6;
+	CameraComponent axis_cameras[voxel_frustum_count];
+	Frustum axis_frusta[voxel_frustum_count];
+	Viewport axis_viewports[voxel_frustum_count];
+
+	const XMVECTOR clip_center = XMLoadFloat3(&clipmap.center);
+	const XMFLOAT3 clip_extents = clipmap.extents;
+	const float margin = std::max(clipmap.voxelsize, 0.001f);
+
+	auto configure_axis_camera = [&](uint32_t index, const XMFLOAT3& dirFloat, const XMFLOAT3& upFloat, float extent_forward, float extent_right, float extent_up)
+	{
+		CameraComponent& cam = axis_cameras[index];
+		cam = CameraComponent();
+		cam.sample_count = 1;
+		cam.jitter = XMFLOAT2(0, 0);
+		cam.canvas.init(scene.vxgi.res, scene.vxgi.res);
+		cam.scissor.left = 0;
+		cam.scissor.top = 0;
+		cam.scissor.right = (int32_t)scene.vxgi.res;
+		cam.scissor.bottom = (int32_t)scene.vxgi.res;
+		cam.At = dirFloat;
+		cam.Up = upFloat;
+
+		XMVECTOR dir = XMVector3Normalize(XMLoadFloat3(&dirFloat));
+		XMVECTOR eye = XMVectorSubtract(clip_center, XMVectorScale(dir, extent_forward + margin));
+		XMStoreFloat3(&cam.Eye, eye);
+
+		const float width = std::max(extent_right * 2.0f, margin * 2.0f);
+		const float height = std::max(extent_up * 2.0f, margin * 2.0f);
+		const float near_plane = margin;
+		const float far_plane = std::max(near_plane + extent_forward * 2.0f, near_plane + margin);
+
+		cam.CreateOrtho(width, height, near_plane, far_plane, height);
+
+		axis_frusta[index] = cam.frustum;
+
+		Viewport& vp = axis_viewports[index];
+		vp.top_left_x = 0;
+		vp.top_left_y = 0;
+		vp.width = float(scene.vxgi.res);
+		vp.height = float(scene.vxgi.res);
+		vp.min_depth = 0;
+		vp.max_depth = 1;
+	};
+
+	configure_axis_camera(0, XMFLOAT3(1, 0, 0), XMFLOAT3(0, 1, 0), clip_extents.x, clip_extents.z, clip_extents.y);
+	configure_axis_camera(1, XMFLOAT3(-1, 0, 0), XMFLOAT3(0, 1, 0), clip_extents.x, clip_extents.z, clip_extents.y);
+	configure_axis_camera(2, XMFLOAT3(0, 1, 0), XMFLOAT3(0, 0, -1), clip_extents.y, clip_extents.x, clip_extents.z);
+	configure_axis_camera(3, XMFLOAT3(0, -1, 0), XMFLOAT3(0, 0, 1), clip_extents.y, clip_extents.x, clip_extents.z);
+	configure_axis_camera(4, XMFLOAT3(0, 0, 1), XMFLOAT3(0, 1, 0), clip_extents.z, clip_extents.x, clip_extents.y);
+	configure_axis_camera(5, XMFLOAT3(0, 0, -1), XMFLOAT3(0, 1, 0), clip_extents.z, clip_extents.x, clip_extents.y);
+
+	auto fill_voxel_camera_cb = [&](CameraCB& cameraCB)
+	{
+		cameraCB.init();
+		const float resolution_f = float(scene.vxgi.res);
+		const float inv_resolution = 1.0f / std::max(1u, scene.vxgi.res);
+		for (uint32_t i = 0; i < voxel_frustum_count; ++i)
+		{
+			ShaderCamera& shadercam = cameraCB.cameras[i];
+			shadercam = {};
+			const CameraComponent& src = axis_cameras[i];
+
+			shadercam.options = src.shadercamera_options | SHADERCAMERA_OPTION_ORTHO;
+			shadercam.output_index = i;
+			shadercam.position = src.Eye;
+			shadercam.forward = src.At;
+			shadercam.up = src.Up;
+			shadercam.z_near = src.zNearP;
+			shadercam.z_far = src.zFarP;
+			shadercam.z_near_rcp = 1.0f / std::max(0.0001f, shadercam.z_near);
+			shadercam.z_far_rcp = 1.0f / std::max(0.0001f, shadercam.z_far);
+			shadercam.z_range = std::abs(shadercam.z_far - shadercam.z_near);
+			shadercam.z_range_rcp = 1.0f / std::max(0.0001f, shadercam.z_range);
+			shadercam.clip_plane = src.clipPlane;
+			shadercam.reflection_plane = src.clipPlaneOriginal;
+
+			XMStoreFloat4x4(&shadercam.view, src.GetView());
+			XMStoreFloat4x4(&shadercam.projection, src.GetProjection());
+			XMStoreFloat4x4(&shadercam.view_projection, src.GetViewProjection());
+			XMStoreFloat4x4(&shadercam.inverse_view, src.GetInvView());
+			XMStoreFloat4x4(&shadercam.inverse_projection, src.GetInvProjection());
+			XMStoreFloat4x4(&shadercam.inverse_view_projection, src.GetInvViewProjection());
+
+			for (int p = 0; p < arraysize(shadercam.frustum.planes); ++p)
+			{
+				shadercam.frustum.planes[p] = src.frustum.planes[p];
+			}
+
+			XMMATRIX invVP = src.GetInvViewProjection();
+			XMStoreFloat4(&shadercam.frustum_corners.cornersNEAR[0], XMVector3TransformCoord(XMVectorSet(-1, 1, 1, 1), invVP));
+			XMStoreFloat4(&shadercam.frustum_corners.cornersNEAR[1], XMVector3TransformCoord(XMVectorSet(1, 1, 1, 1), invVP));
+			XMStoreFloat4(&shadercam.frustum_corners.cornersNEAR[2], XMVector3TransformCoord(XMVectorSet(-1, -1, 1, 1), invVP));
+			XMStoreFloat4(&shadercam.frustum_corners.cornersNEAR[3], XMVector3TransformCoord(XMVectorSet(1, -1, 1, 1), invVP));
+			XMStoreFloat4(&shadercam.frustum_corners.cornersFAR[0], XMVector3TransformCoord(XMVectorSet(-1, 1, 0, 1), invVP));
+			XMStoreFloat4(&shadercam.frustum_corners.cornersFAR[1], XMVector3TransformCoord(XMVectorSet(1, 1, 0, 1), invVP));
+			XMStoreFloat4(&shadercam.frustum_corners.cornersFAR[2], XMVector3TransformCoord(XMVectorSet(-1, -1, 0, 1), invVP));
+			XMStoreFloat4(&shadercam.frustum_corners.cornersFAR[3], XMVector3TransformCoord(XMVectorSet(1, -1, 0, 1), invVP));
+
+			shadercam.temporalaa_jitter = src.jitter;
+			shadercam.temporalaa_jitter_prev = src.jitter;
+
+			XMStoreFloat4x4(&shadercam.previous_view, src.GetView());
+			XMStoreFloat4x4(&shadercam.previous_projection, src.GetProjection());
+			XMStoreFloat4x4(&shadercam.previous_view_projection, src.GetViewProjection());
+			XMStoreFloat4x4(&shadercam.previous_inverse_view_projection, src.GetInvViewProjection());
+			XMStoreFloat4x4(&shadercam.reflection_view_projection, src.GetViewProjection());
+			XMStoreFloat4x4(&shadercam.reflection_inverse_view_projection, src.GetInvViewProjection());
+			XMStoreFloat4x4(&shadercam.reprojection, XMMatrixIdentity());
+
+			shadercam.aperture_shape = src.aperture_shape;
+			shadercam.aperture_size = src.aperture_size;
+			shadercam.focal_length = src.focal_length;
+
+			shadercam.canvas_size.x = resolution_f;
+			shadercam.canvas_size.y = resolution_f;
+			shadercam.canvas_size_rcp.x = inv_resolution;
+			shadercam.canvas_size_rcp.y = inv_resolution;
+			shadercam.internal_resolution.x = scene.vxgi.res;
+			shadercam.internal_resolution.y = scene.vxgi.res;
+			shadercam.internal_resolution_rcp.x = inv_resolution;
+			shadercam.internal_resolution_rcp.y = inv_resolution;
+
+			shadercam.scissor.x = 0;
+			shadercam.scissor.y = 0;
+			shadercam.scissor.z = scene.vxgi.res;
+			shadercam.scissor.w = scene.vxgi.res;
+			shadercam.scissor_uv.x = 0;
+			shadercam.scissor_uv.y = 0;
+			shadercam.scissor_uv.z = 1;
+			shadercam.scissor_uv.w = 1;
+
+			shadercam.entity_culling_tilecount.x = 0;
+			shadercam.entity_culling_tilecount.y = 0;
+			shadercam.entity_culling_tile_bucket_count_flat = 0;
+			shadercam.sample_count = 1;
+			shadercam.visibility_tilecount.x = 0;
+			shadercam.visibility_tilecount.y = 0;
+			shadercam.visibility_tilecount_flat = 0;
+			shadercam.distance_from_origin = XMVectorGetX(XMVector3Length(XMLoadFloat3(&shadercam.position)));
+
+			shadercam.texture_rtdiffuse_index = -1;
+			shadercam.texture_primitiveID_index = -1;
+			shadercam.texture_depth_index = -1;
+			shadercam.texture_lineardepth_index = -1;
+			shadercam.texture_velocity_index = -1;
+			shadercam.texture_normal_index = -1;
+			shadercam.texture_roughness_index = -1;
+			shadercam.buffer_entitytiles_index = -1;
+			shadercam.texture_reflection_index = -1;
+			shadercam.texture_reflection_depth_index = -1;
+			shadercam.texture_refraction_index = -1;
+			shadercam.texture_waterriples_index = -1;
+			shadercam.texture_ao_index = -1;
+			shadercam.texture_ssr_index = -1;
+			shadercam.texture_ssgi_index = -1;
+			shadercam.texture_rtshadow_index = -1;
+			shadercam.texture_surfelgi_index = -1;
+			shadercam.texture_depth_index_prev = -1;
+			shadercam.texture_vxgi_diffuse_index = -1;
+			shadercam.texture_vxgi_specular_index = -1;
+			shadercam.texture_reprojected_depth_index = -1;
+		}
+	};
+#endif // VOXELIZATION_GEOMETRY_SHADER_ENABLED
+
 	renderQueue.init();
 	for (size_t i = 0; i < scene.aabb_objects.size(); ++i)
 	{
@@ -9801,7 +9968,23 @@ void VXGI_Voxelize(
 			const ObjectComponent& object = scene.objects[i];
 			if (object.IsRenderable() && (scene.vxgi.clipmap_to_update < (VXGI_CLIPMAP_COUNT - object.cascadeMask)))
 			{
-				renderQueue.add(object.mesh_index, uint32_t(i), 0, object.sort_bits);
+#ifdef VOXELIZATION_GEOMETRY_SHADER_ENABLED
+				const uint8_t camera_mask = 0xFF;
+#else
+				uint8_t camera_mask = 0;
+				for (uint32_t axis = 0; axis < voxel_frustum_count; ++axis)
+				{
+					if (axis_frusta[axis].CheckBoxFast(aabb))
+					{
+						camera_mask |= 1u << axis;
+					}
+				}
+				if (camera_mask == 0)
+				{
+					continue;
+				}
+#endif // VOXELIZATION_GEOMETRY_SHADER_ENABLED
+				renderQueue.add(object.mesh_index, uint32_t(i), 0, object.sort_bits, camera_mask);
 			}
 		}
 	}
@@ -9879,19 +10062,26 @@ void VXGI_Voxelize(
 		{
 			device->EventBegin("Voxelize", cmd);
 
-			Viewport vp;
-			vp.width = (float)scene.vxgi.res;
-			vp.height = (float)scene.vxgi.res;
-			device->BindViewports(1, &vp, cmd);
-
 			device->BindResource(&scene.vxgi.prev_radiance, 0, cmd);
 			device->BindUAV(&scene.vxgi.render_atomic, 0, cmd);
 
 			device->RenderPassBegin(nullptr, 0, cmd, RenderPassFlags::ALLOW_UAV_WRITES);
 #ifdef VOXELIZATION_GEOMETRY_SHADER_ENABLED
+			Viewport vp;
+			vp.top_left_x = 0;
+			vp.top_left_y = 0;
+			vp.width = (float)scene.vxgi.res;
+			vp.height = (float)scene.vxgi.res;
+			vp.min_depth = 0;
+			vp.max_depth = 1;
+			device->BindViewports(1, &vp, cmd);
 			const uint32_t frustum_count = 1; // axis will be selected by geometry shader
 #else
-			const uint32_t frustum_count = 6; // render along +/- axis directions when geometry shader is unavailable
+			CameraCB voxel_cameraCB;
+			fill_voxel_camera_cb(voxel_cameraCB);
+			device->BindDynamicConstantBuffer(voxel_cameraCB, CBSLOT_RENDERER_CAMERA, cmd);
+			device->BindViewports(voxel_frustum_count, axis_viewports, cmd);
+			const uint32_t frustum_count = voxel_frustum_count; // render along +/- axis directions when geometry shader is unavailable
 #endif // VOXELIZATION_GEOMETRY_SHADER_ENABLED
 			RenderMeshes(vis, renderQueue, RENDERPASS_VOXELIZE, FILTER_OPAQUE, cmd, 0, frustum_count);
 			device->RenderPassEnd(cmd);
