@@ -1599,6 +1599,7 @@ namespace wi::scene
 			const bool supports_moon_texture = (seri.GetVersion() >= 8) || (archive.GetVersion() >= 95);
 			const bool supports_moon_texture_bias = (seri.GetVersion() >= 9) || (archive.GetVersion() >= 96);
 			const bool supports_moon_light_intensity = (seri.GetVersion() >= 10) || (archive.GetVersion() >= 97);
+			const bool supports_moon_eclipse = (seri.GetVersion() >= 11) || (archive.GetVersion() >= 98);
 			if (supports_moon_params)
 			{
 				archive >> moonDirection;
@@ -1610,6 +1611,10 @@ namespace wi::scene
 				if (supports_moon_light_intensity)
 				{
 					archive >> moonLightIntensity;
+					if (supports_moon_eclipse)
+					{
+						archive >> moonEclipseStrength;
+					}
 				}
 			}
 			else
@@ -1625,6 +1630,10 @@ namespace wi::scene
 			if (!supports_moon_light_intensity)
 			{
 				moonLightIntensity = 0.05f;
+			}
+			if (!supports_moon_eclipse)
+			{
+				moonEclipseStrength = 0.0f;
 			}
 			if (supports_moon_texture)
 			{
@@ -1937,6 +1946,7 @@ namespace wi::scene
 			const bool supports_moon_texture = (seri.GetVersion() >= 8) || (archive.GetVersion() >= 95);
 			const bool supports_moon_texture_bias = (seri.GetVersion() >= 9) || (archive.GetVersion() >= 96);
 			const bool supports_moon_light_intensity = (seri.GetVersion() >= 10) || (archive.GetVersion() >= 97);
+			const bool supports_moon_eclipse = (seri.GetVersion() >= 11) || (archive.GetVersion() >= 98);
 			seri.RegisterResource(moonTextureName);
 			seri.RegisterResource(skyMapName);
 			seri.RegisterResource(colorGradingMapName);
@@ -1956,6 +1966,10 @@ namespace wi::scene
 				if (supports_moon_light_intensity)
 				{
 					archive << moonLightIntensity;
+					if (supports_moon_eclipse)
+					{
+						archive << moonEclipseStrength;
+					}
 				}
 			}
 			if (supports_moon_texture)
