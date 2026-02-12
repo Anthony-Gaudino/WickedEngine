@@ -480,6 +480,22 @@ half3 GetSunLuminance(float3 worldPosition, float3 worldDirection, float3 sunDir
 			float stars_exposure = lerp(0, 512, stars_visibility); // modifies the overall strength of the stars
 			float stars = saturate(pow(noise_gradient_3D(stars_direction * 300), stars_threshold)) * stars_exposure;
 			stars *= lerp(0.4, 1.4, noise_gradient_3D(stars_direction * 256 + GetTime())); // time based flickering
+
+			// Ensure the moon disk always occludes stars (moon silhouette in
+			// front of starfield).
+			float moonSize = GetMoonSize();
+			if (moonSize > 0.0)
+			{
+				float3 moonDir = GetMoonDirection();
+				// soft-edge mask for nicer transition (1.0 inside disk, 0.0 outside)
+				float edgeSoftness = 0.0025; // radians (very small)
+				float cosInner = cos(moonSize - edgeSoftness);
+				float cosOuter = cos(moonSize + edgeSoftness);
+				float moonDot = dot(worldDirection, moonDir);
+				float moonMask = smoothstep(cosOuter, cosInner, moonDot);
+				stars *= (1.0 - moonMask);
+			}
+
 			retval += stars;
 		}
 
