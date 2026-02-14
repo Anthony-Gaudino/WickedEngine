@@ -39,8 +39,33 @@ float3 AccurateAtmosphericScattering(float2 pixelPosition, float3 rayOrigin, flo
 
         SkyViewLutParamsToUv(atmosphere, intersectGround, viewZenithCosAngle, lightViewCosAngle, viewHeight, uv);
 
-		luminance = texture_skyviewlut.SampleLevel(sampler_linear_clamp, uv, 0).rgb;
-	}
+		luminance = texture_skyviewlut.SampleLevel(sampler_linear_clamp, uv, 0).rgb;						// Darken scattered sky luminance near the sun if the moon covers it (improves visual eclipse)
+						if (GetSunEclipseStrength() > 0.0f)
+						{
+							float3 moonDir_local = GetMoonDirection();
+							float moonLenSq_local = dot(moonDir_local, moonDir_local);
+							if (moonLenSq_local > 1e-6f)
+							{
+								float3 moonDirNorm_local = moonDir_local * rsqrt(moonLenSq_local);
+								float3 referenceUp_local = abs(sunDirection.y) > 0.95f ? float3(1,0,0) : float3(0,1,0);
+								float3 sunRight_local = normalize(cross(referenceUp_local, sunDirection));
+								float3 sunUp_local = normalize(cross(sunDirection, sunRight_local));
+								float2 sunPlane_local = float2(dot(worldDirection, sunRight_local), dot(worldDirection, sunUp_local));
+								float2 moonPlane_local = float2(dot(moonDirNorm_local, sunRight_local), dot(moonDirNorm_local, sunUp_local));
+					// `GetMoonSize()` is angular diameter (rad) in Weather; use half-angle for spherical radius
+					float moonRadius_local = sin(0.5f * GetMoonSize());
+					float2 delta_local = sunPlane_local - moonPlane_local;
+								float distSq_local = dot(delta_local, delta_local);
+								float moonRadiusSq_local = moonRadius_local * moonRadius_local;
+								if (moonRadiusSq_local > 1e-8f)
+								{
+									float coverage_local = saturate(1.0f - distSq_local / moonRadiusSq_local);
+									coverage_local = pow(coverage_local, 1.5f);
+									float silhouette_local = saturate(GetSunEclipseStrength() * coverage_local);
+									luminance = lerp(luminance, float3(0,0,0), silhouette_local * 0.9f);
+								}
+							}
+						}	}
     else
     {
         // Move to top atmosphere as the starting point for ray marching.
@@ -65,8 +90,33 @@ float3 AccurateAtmosphericScattering(float2 pixelPosition, float3 rayOrigin, flo
 				atmosphere, pixelPosition, worldPosition, worldDirection, sunDirection, sunIlluminance, tDepth, sampleCountIni, variableSampleCount,
 				perPixelNoise, opaque, ground, mieRayPhase, multiScatteringApprox, volumetricCloudShadow, opaqueShadow, texture_transmittancelut, texture_multiscatteringlut);
 
-			luminance = ss.L;
-		}
+			luminance = ss.L;						// Also darken scattered luminance near the sun when the moon covers it
+						if (GetSunEclipseStrength() > 0.0f)
+						{
+							float3 moonDir_local = GetMoonDirection();
+							float moonLenSq_local = dot(moonDir_local, moonDir_local);
+							if (moonLenSq_local > 1e-6f)
+							{
+								float3 moonDirNorm_local = moonDir_local * rsqrt(moonLenSq_local);
+								float3 referenceUp_local = abs(sunDirection.y) > 0.95f ? float3(1,0,0) : float3(0,1,0);
+								float3 sunRight_local = normalize(cross(referenceUp_local, sunDirection));
+								float3 sunUp_local = normalize(cross(sunDirection, sunRight_local));
+								float2 sunPlane_local = float2(dot(worldDirection, sunRight_local), dot(worldDirection, sunUp_local));
+								float2 moonPlane_local = float2(dot(moonDirNorm_local, sunRight_local), dot(moonDirNorm_local, sunUp_local));
+					// `GetMoonSize()` is angular diameter (rad) in Weather; use half-angle for spherical radius
+					float moonRadius_local = sin(0.5f * GetMoonSize());
+								float2 delta_local = sunPlane_local - moonPlane_local;
+								float distSq_local = dot(delta_local, delta_local);
+								float moonRadiusSq_local = moonRadius_local * moonRadius_local;
+								if (moonRadiusSq_local > 1e-8f)
+								{
+									float coverage_local = saturate(1.0f - distSq_local / moonRadiusSq_local);
+									coverage_local = pow(coverage_local, 1.5f);
+									float silhouette_local = saturate(GetSunEclipseStrength() * coverage_local);
+									luminance = lerp(luminance, float3(0,0,0), silhouette_local * 0.9f);
+								}
+							}
+						}		}
     }
 
     float3 totalColor = 0;
@@ -146,6 +196,7 @@ float3 GetDynamicSkyColor(in float2 pixel, in float3 V, bool sun_enabled = true,
 	if (!dark_enabled)
 	{
 		float moonSize = GetMoonSize();
+		float moonHalfSize = 0.5f * moonSize; // shader expects half-angle for trig/radius
 		float3 moonColor = GetMoonColor();
 		if (moonSize > 0 && dot(moonColor, moonColor) > 0)
 		{
@@ -163,9 +214,11 @@ float3 GetDynamicSkyColor(in float2 pixel, in float3 V, bool sun_enabled = true,
 			float eclipseStrength = GetMoonEclipseStrength();
 			phaseVisibility *= saturate(1.0f - eclipseStrength);
 			float cosAngle = dot(V, moonDir);
-			float innerEdge = cos(moonSize);
-			float core = smoothstep(innerEdge, cos(moonSize * 0.8f), cosAngle);
+			float innerEdge = cos(moonHalfSize);
+			float core = smoothstep(innerEdge, cos(moonHalfSize * 0.8f), cosAngle);
 			float3 diskColor = moonColor;
+			// Always mask the moon disk by geometry (core) so it occludes correctly even when unlit.
+			// Lighting/texture only affect the lit hemisphere; unlit hemisphere will render as silhouette.
 			float diskMask = 0.0f;
 			if (phaseVisibility > 0.0f)
 			{
@@ -173,7 +226,8 @@ float3 GetDynamicSkyColor(in float2 pixel, in float3 V, bool sun_enabled = true,
 				float3 moonRight = normalize(cross(referenceUp, moonDir));
 				float3 moonUp = normalize(cross(moonDir, moonRight));
 				float2 local = float2(dot(V, moonRight), dot(V, moonUp));
-				float invRadius = 0.5f / max(sin(moonSize), 0.0001f);
+				// map angular offset -> [0,1] UV : use sin(half-angle) as spherical radius
+				float invRadius = 0.5f / max(sin(moonHalfSize), 0.0001f);
 				float2 moonUV = local * invRadius + 0.5f;
 				if (all(moonUV >= 0.0f) && all(moonUV <= 1.0f))
 				{
@@ -182,47 +236,72 @@ float3 GetDynamicSkyColor(in float2 pixel, in float3 V, bool sun_enabled = true,
 					float localZ = sqrt(saturate(1.0f - radialSq));
 					float3 localNormal = normalize(moonRight * diskCoord.x + moonUp * diskCoord.y + moonDir * localZ);
 					float lit = saturate(dot(localNormal, sunToMoonDir));
+
 					if (lit > 0.0f)
 					{
-						diskMask = core * lit;
-						if (HasMoonTexture())
+						// If this moon pixel is also over the sun disk and eclipse is active,
+						// render the moon fully opaque black to form a clean silhouette.
+						// Use the physical apparent sun size here so the moon can occlude the actual bright solar disk.
+						float sunApexAngleDegree_local = 0.545; // physical sun angular diameter (deg) used for eclipse silhouette
+						float sunHalfApexAngleRadian_local = 0.5 * sunApexAngleDegree_local * PI / 180.0;
+						float sunCosHalfApex_local = cos(sunHalfApexAngleRadian_local);
+						float3 sunDir_local = (float3)GetSunDirection();
+						float sunDotPixel_local = dot(V, sunDir_local);
+							// compute sun disk mask using angular distance (cos-space offset was too wide for small sun)
+							float sunAngle_local = acos(saturate(sunDotPixel_local));
+							const float sunEdgeSoftRad_local = 0.0025; // radians (small soft edge)
+							float sunDiskMask_local = 1.0 - smoothstep(sunHalfApexAngleRadian_local - sunEdgeSoftRad_local, sunHalfApexAngleRadian_local + sunEdgeSoftRad_local, sunAngle_local);
+						float overlapMask = core * sunDiskMask_local * saturate(GetSunEclipseStrength());
+									if (overlapMask > 1e-4)
 						{
-							float4 tex = bindless_textures[NonUniformResourceIndex(descriptor_index(GetWeather().moon_texture))].SampleLevel(sampler_linear_clamp, moonUV, GetMoonTextureMipBias());
-							diskMask *= tex.a;
-							diskColor *= tex.rgb;
+								diskMask = overlapMask; // only overlapping portion becomes silhouette
+							diskColor = float3(0,0,0); // pure black silhouette
+							// avoid lit-shading on this pixel
+							lit = 0.0f;
 						}
-						float phaseBlend = saturate(phaseVisibility);
-						float3 shadingNormal = normalize(lerp(moonDir, localNormal, phaseBlend));
-						float diffuse = saturate(dot(shadingNormal, sunToMoonDir));
-						float rim = pow(saturate(1.0f - dot(localNormal, V)), 4.0f);
-						float wave = dot(diskCoord, float2(21.7f, -14.9f));
-						float time = GetTime();
-						float anim0 = sin(wave + time * 0.35f);
-						float anim1 = sin((diskCoord.x * -18.3f + diskCoord.y * 11.1f) - time * 0.22f);
-						float craterMask = 0.85f + 0.15f * (anim0 * 0.6f + anim1 * 0.4f);
-						float detailMask = lerp(1.0f, craterMask, phaseBlend);
-						float shading = lerp(0.35f, 1.0f, diffuse);
-						diskColor *= shading * detailMask;
-						diskColor += moonColor * rim * 0.08f * phaseBlend;
+						else
+						{
+							diskMask = core * lit;
+							if (HasMoonTexture())
+							{
+								float4 tex = bindless_textures[NonUniformResourceIndex(descriptor_index(GetWeather().moon_texture))].SampleLevel(sampler_linear_clamp, moonUV, GetMoonTextureMipBias());
+								diskMask *= tex.a;
+								diskColor *= tex.rgb;
+							}
+							float phaseBlend = saturate(phaseVisibility);
+							float3 shadingNormal = normalize(lerp(moonDir, localNormal, phaseBlend));
+							float diffuse = saturate(dot(shadingNormal, sunToMoonDir));
+							float rim = pow(saturate(1.0f - dot(localNormal, V)), 4.0f);
+							float wave = dot(diskCoord, float2(21.7f, -14.9f));
+							float time = GetTime();
+							float anim0 = sin(wave + time * 0.35f);
+							float anim1 = sin((diskCoord.x * -18.3f + diskCoord.y * 11.1f) - time * 0.22f);
+							float craterMask = 0.85f + 0.15f * (anim0 * 0.6f + anim1 * 0.4f);
+							float detailMask = lerp(1.0f, craterMask, phaseBlend);
+							float shading = lerp(0.35f, 1.0f, diffuse);
+							diskColor *= shading * detailMask;
+							diskColor += moonColor * rim * 0.08f * phaseBlend;
+						}
 					}
 				}
 			}
+
 			float haloContribution = 0;
 			float haloIntensity = GetMoonHaloIntensity();
 			if (haloIntensity > 0)
 			{
 				float haloSize = max(GetMoonHaloSize(), 0.0001f);
-				float haloRadius = moonSize + haloSize;
+			float haloRadius = moonHalfSize + haloSize; // haloSize is an additional radius (rad)
 				float halo = smoothstep(cos(haloRadius), innerEdge, cosAngle);
 				halo = pow(saturate(halo), max(GetMoonHaloSharpness(), 0.0001f));
 
 				// Mask halo to the lit hemisphere so crescents don't get a full circular glow.
 				// Use the view direction V and sunToMoonDir (direction toward lit side).
 				float litHaloMask = saturate(dot(V, sunToMoonDir));
-				haloContribution = halo * haloIntensity * phaseVisibility * litHaloMask;
+							haloContribution = halo * haloIntensity * litHaloMask; // show halo even for unlit/new moon (so UI halo controls are effective)
 			}
 			sky += moonColor * haloContribution;
-			sky += diskColor * diskMask * saturate(1.0f - eclipseStrength * 0.9f);
+		sky = lerp(sky, diskColor, diskMask * saturate(1.0f - eclipseStrength * 0.9f));
 		}
 	}
 

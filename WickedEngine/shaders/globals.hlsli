@@ -976,8 +976,11 @@ inline float GetSunEclipseStrength() { return saturate(GetWeather().sun_eclipse_
 inline half3 GetSunColor()
 {
 	const half3 rawColor = unpack_half3(GetWeather().sun_color);
-	const half eclipseScale = (half)(1.0f - GetSunEclipseStrength());
-	return rawColor * eclipseScale; // sun color with eclipse dimming applied
+	// Keep a small residual sunlight even at full eclipse so scene lighting and shadows
+	// are not completely extinguished (gives sunset-like residual illumination).
+	const half min_sun_illum = (half)0.12; // tweakable minimum multiplier
+	const half eclipseScale = max(min_sun_illum, (half)(1.0f - GetSunEclipseStrength()));
+	return rawColor * eclipseScale; // sun color with eclipse dimming applied (with minimum)
 }
 inline float3 GetMoonDirection()
 {

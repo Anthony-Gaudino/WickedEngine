@@ -4702,7 +4702,11 @@ void UpdatePerFrameData(
 			float light_intensity_scale = 1.0f;
 			if (lightIndex == most_important_light_component_index)
 			{
-				light_intensity_scale = wi::math::Clamp(1.0f - vis.scene->weather.resolvedSunEclipseStrength, 0.0f, 1.0f);
+				// Preserve a small fraction of directional sunlight during eclipse so scene lighting
+				// and shadows are still visible (gives a sunset-like residual illumination).
+				const float eclipse = vis.scene->weather.resolvedSunEclipseStrength;
+				const float min_eclipse_light = 0.12f; // tweakable minimum multiplier
+				light_intensity_scale = std::max(min_eclipse_light, 1.0f - eclipse);
 			}
 			directional_color.x *= light.intensity * light_intensity_scale;
 			directional_color.y *= light.intensity * light_intensity_scale;

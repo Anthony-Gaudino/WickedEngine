@@ -419,10 +419,13 @@ float3 GetCameraPlanetPos(AtmosphereParameters atmosphere, float3 cameraPosition
 
 half3 GetSunLuminance(float3 worldPosition, float3 worldDirection, float3 sunDirection, half3 sunIlluminance, AtmosphereParameters atmosphere, Texture2D<half4> transmittanceLutTexture)
 {
-	//float sunApexAngleDegree = 0.545; // Angular diameter of sun to earth from sea level, see https://en.wikipedia.org/wiki/Solid_angle
-	float sunApexAngleDegree = 2.4; // Modified sun size
-	float sunHalfApexAngleRadian = 0.5 * sunApexAngleDegree * PI / 180.0;
-	float sunCosHalfApexAngle = cos(sunHalfApexAngleRadian);
+	// physical vs visual sun angular sizes (deg)
+	float visualSunApexAngleDegree = 2.4; // artistic/halo sun size (deg)
+	float physicalSunApexAngleDegree = 0.545; // physical apparent angular diameter of the sun (deg)
+	float visualSunHalfApexAngleRadian = 0.5 * visualSunApexAngleDegree * PI / 180.0;
+	float visualSunCosHalfApexAngle = cos(visualSunHalfApexAngleRadian);
+	float physicalSunHalfApexAngleRadian = 0.5 * physicalSunApexAngleDegree * PI / 180.0;
+	float physicalSunCosHalfApexAngle = cos(physicalSunHalfApexAngleRadian);
 
 	float3 sunDirNorm = normalize(sunDirection);
 	float sunEclipseStrength = GetSunEclipseStrength();
@@ -432,11 +435,19 @@ half3 GetSunLuminance(float3 worldPosition, float3 worldDirection, float3 sunDir
 	if (t < 0) // no intersection
 	{
 		float VdotL = dot(worldDirection, sunDirNorm); // weird... the sun disc shrinks near the horizon if we don't normalize sun direction
-		if (VdotL > sunCosHalfApexAngle)
+		if (VdotL > visualSunCosHalfApexAngle)
 		{
-			// Edge fade
-			const float halfCosHalfApex = sunCosHalfApexAngle + (1.0 - sunCosHalfApexAngle) * 0.25; // Start fading when at 75% distance from light disk center
-			float weight = 1.0 - saturate((halfCosHalfApex - VdotL) / (halfCosHalfApex - sunCosHalfApexAngle));
+			// Edge fade — use the physical sun size for the bright core and the visual size for the halo
+			float weight;
+			if (VdotL > physicalSunCosHalfApexAngle)
+			{
+				weight = 1.0; // full-intensity core inside the physical sun disk
+			}
+			else
+			{
+				const float halfCosHalfApex = visualSunCosHalfApexAngle + (1.0 - visualSunCosHalfApexAngle) * 0.25; // Start fading when at 75% distance from light disk center (visual halo)
+				weight = 1.0 - saturate((halfCosHalfApex - VdotL) / (halfCosHalfApex - visualSunCosHalfApexAngle));
+			}
 
 			if (sunEclipseStrength > 0.0f)
 			{
@@ -453,8 +464,9 @@ half3 GetSunLuminance(float3 worldPosition, float3 worldDirection, float3 sunDir
 
 						float2 sunPlane = float2(dot(worldDirection, sunRight), dot(worldDirection, sunUp));
 						float2 moonPlane = float2(dot(moonDirNorm, sunRight), dot(moonDirNorm, sunUp));
-						float sunRadius = sin(sunHalfApexAngleRadian);
-						float moonRadius = sin(GetMoonSize());
+				float sunRadius = sin(visualSunHalfApexAngleRadian);
+					// `GetMoonSize()` is angular diameter (rad); use half-angle for spherical radius
+					float moonRadius = sin(0.5f * GetMoonSize());
 						float2 delta = sunPlane - moonPlane;
 						float distSq = dot(delta, delta);
 						float moonRadiusSq = moonRadius * moonRadius;
@@ -469,6 +481,35 @@ half3 GetSunLuminance(float3 worldPosition, float3 worldDirection, float3 sunDir
 			}
 
 			retval = weight * sunIlluminance;
+			// Visual silhouette: if the moon covers this pixel of the sun disk,
+			// lerp the sky pixel toward black so the moon appears in front of the sun.
+			if (sunEclipseStrength > 0.0f)
+			{
+				float3 moonDir = GetMoonDirection();
+				float moonLenSq = dot(moonDir, moonDir);
+				if (moonLenSq > 1e-6f)
+				{
+					float3 moonDirNorm = moonDir * rsqrt(moonLenSq);
+					float3 referenceUp2 = abs(sunDirNorm.y) > 0.95f ? float3(1,0,0) : float3(0,1,0);
+					float3 sunRight2 = normalize(cross(referenceUp2, sunDirNorm));
+					float3 sunUp2 = normalize(cross(sunDirNorm, sunRight2));
+
+					float2 sunPlane_px = float2(dot(worldDirection, sunRight2), dot(worldDirection, sunUp2));
+					float2 moonPlane_px = float2(dot(moonDirNorm, sunRight2), dot(moonDirNorm, sunUp2));
+					// `GetMoonSize()` is angular diameter (rad); use half-angle for spherical radius
+					float moonRadius_px = sin(0.5f * GetMoonSize());
+					float2 delta_px = sunPlane_px - moonPlane_px;
+					float distSq_px = dot(delta_px, delta_px);
+					float moonRadiusSq_px = moonRadius_px * moonRadius_px;
+					if (moonRadiusSq_px > 1e-8f)
+					{
+						float coverage_px = saturate(1.0f - distSq_px / moonRadiusSq_px);
+						coverage_px = pow(coverage_px, 1.5f);
+						float silhouette = saturate(sunEclipseStrength * coverage_px);
+						retval = lerp(retval, float3(0,0,0), silhouette);
+					}
+				}
+			}
 		}
 
 		if (GetWeather().stars > 0)
@@ -489,8 +530,9 @@ half3 GetSunLuminance(float3 worldPosition, float3 worldDirection, float3 sunDir
 				float3 moonDir = GetMoonDirection();
 				// soft-edge mask for nicer transition (1.0 inside disk, 0.0 outside)
 				float edgeSoftness = 0.0025; // radians (very small)
-				float cosInner = cos(moonSize - edgeSoftness);
-				float cosOuter = cos(moonSize + edgeSoftness);
+				float moonHalfSize = 0.5f * moonSize;
+				float cosInner = cos(moonHalfSize - edgeSoftness);
+				float cosOuter = cos(moonHalfSize + edgeSoftness);
 				float moonDot = dot(worldDirection, moonDir);
 				float moonMask = smoothstep(cosOuter, cosInner, moonDot);
 				stars *= (1.0 - moonMask);

@@ -81,7 +81,8 @@ namespace wi::scene
 
 		constexpr float sun_apparent_radius = wi::math::DegreesToRadians(0.27f);
 		constexpr float penumbra_padding = wi::math::DegreesToRadians(0.35f);
-		const float moon_radius = std::max(weather.moonSize, 0.0f);
+		// Weather::moonSize is stored as angular diameter (rad); use half-angle (radius) here
+		const float moon_radius = 0.5f * std::max(weather.moonSize, 0.0f);
 		const float totality_angle = std::max(moon_radius + sun_apparent_radius, 0.0f);
 		const float penumbra_angle = totality_angle + penumbra_padding;
 		const float cos_totality = std::cos(totality_angle);
@@ -125,7 +126,8 @@ namespace wi::scene
 		const float opposition = wi::math::Clamp(-XMVectorGetX(XMVector3Dot(sun, moon)), -1.0f, 1.0f);
 		constexpr float sun_apparent_radius = wi::math::DegreesToRadians(0.27f);
 		constexpr float penumbra_padding = wi::math::DegreesToRadians(0.35f);
-		const float totality_angle = std::max(weather.moonSize + sun_apparent_radius, 0.0f);
+		// `weather.moonSize` is angular diameter (rad) — convert to half-angle (radius) for geometric checks
+		const float totality_angle = std::max(0.5f * weather.moonSize + sun_apparent_radius, 0.0f);
 		const float penumbra_angle = totality_angle + penumbra_padding;
 		const float cos_totality = std::cos(totality_angle);
 		const float cos_penumbra = std::cos(penumbra_angle);
