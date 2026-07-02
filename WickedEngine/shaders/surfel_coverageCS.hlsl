@@ -116,6 +116,16 @@ void gather_surfel(
 	if (dotN > 0.5)
 		nearest_dist2 = min(nearest_dist2, dist2);
 
+	// Flicker-safe cost cut: this contributor's loose weight (radial * dotN) is
+	// negligible, so it would barely move the normalized average - skip its
+	// expensive moment sample + SH eval (and the weighted color/debug below).
+	// PER-SURFEL and order-independent, so unlike an accumulation-threshold
+	// early-out it can't average a different binning-order subset each frame
+	// and shimmer. Seen/coverage/nearest above already ran, so the recycler and
+	// spawner see no change.
+	if (radial * saturate(dotN) < SURFEL_COVERAGE_MIN_WEIGHT)
+		return;
+
 	// GI weight: full anti-leak (sharp normal + tangent-plane). Only affects
 	// the (normalized) GI value, never the spawn decision above.
 	float contribution = surfel_geometry_weight(L, normal, surfel.GetRadius(), dist2, dotN);
