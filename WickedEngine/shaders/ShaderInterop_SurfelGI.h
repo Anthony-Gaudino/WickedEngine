@@ -14,6 +14,7 @@ static const uint SURFEL_TOTAL_TABLE_SIZE = SURFEL_TABLE_SIZE * SURFEL_GRID_LEVE
 static const float SURFEL_MIN_RADIUS = 3.0; // level-0 (finest) cell size and radius; near surfaces reach this, so surfel density keeps rising as the camera approaches (no hard floor at 2 like before)
 static const float SURFEL_MAX_RADIUS = SURFEL_MIN_RADIUS * (float)(1u << (SURFEL_GRID_LEVELS - 1)); // derived coarsest radius (level LEVELS-1 == 16); used as a default/liveness radius value
 static const float SURFEL_RADIUS_PIXELS = 32; // target screen-space radius in pixels that drives which level a surfel lands on
+static const uint SURFEL_COVERAGE_PIXEL_SCALE = 4; // full-res pixels per coverage/GI-resolve pixel: the coverage pass runs at 1/this resolution and the result is bilaterally upsampled to full res. GI is low-frequency so this trades little quality for a lot of cost (2 = half-res, 4 = quarter-res => ~4x fewer coverage invocations than full-res: spawn, seen-marking and the GI gather all scale down together). Used by BOTH the shader (pixel stride, spawn-rate distance compensation) and CreateSurfelGIResources (low-res target size), so they stay in sync - keep them equal
 // Relevance-based recycler (see surfel_updateCS): the live working set is bounded
 // by recycling the least-relevant surfels probabilistically. Relevance falls with
 // recency (frames since a surfel last contributed to a visible pixel), distance

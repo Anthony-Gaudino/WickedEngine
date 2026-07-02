@@ -24,10 +24,13 @@ void write_result(uint2 DTid, float4 color)
 }
 void write_debug(uint2 DTid, float4 debug)
 {
-	debugUAV[DTid * 2 + uint2(0, 0)] = debug;
-	debugUAV[DTid * 2 + uint2(1, 0)] = debug;
-	debugUAV[DTid * 2 + uint2(0, 1)] = debug;
-	debugUAV[DTid * 2 + uint2(1, 1)] = debug;
+	// debugUAV is full-res; each coverage thread owns a
+	// SURFEL_COVERAGE_PIXEL_SCALE square block of it (the coverage pass runs at
+	// 1/scale resolution).
+	const uint2 base = DTid * SURFEL_COVERAGE_PIXEL_SCALE;
+	for (uint y = 0; y < SURFEL_COVERAGE_PIXEL_SCALE; ++y)
+		for (uint x = 0; x < SURFEL_COVERAGE_PIXEL_SCALE; ++x)
+			debugUAV[base + uint2(x, y)] = debug;
 }
 
 // The 16x16 thread group is split into sub-tiles; each sub-tile independently
@@ -162,7 +165,7 @@ void main(uint3 DTid : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex, uin
 		(GTid.y / COVERAGE_SUBTILE_SIZE) * COVERAGE_SUBTILES_1D +
 		(GTid.x / COVERAGE_SUBTILE_SIZE);
 	
-	uint2 pixel = DTid.xy * 2;
+	uint2 pixel = DTid.xy * SURFEL_COVERAGE_PIXEL_SCALE;
 
 	const float depth = texture_depth[pixel];
 	if (depth == 0)
@@ -448,7 +451,8 @@ void main(uint3 DTid : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex, uin
 			const float world_per_pixel = 2.0 * dist_to_cam /
 				(GetCamera().projection[1][1] * (float)GetCamera().internal_resolution.y);
 			const float subtile_world =
-				(float)COVERAGE_SUBTILE_SIZE * 2.0 * world_per_pixel;
+				(float)COVERAGE_SUBTILE_SIZE
+				* (float)SURFEL_COVERAGE_PIXEL_SCALE * world_per_pixel;
 			const float distance_prob =
 				saturate(SURFEL_SPAWN_PER_CELL * sqr(subtile_world / spawn_radius));
 

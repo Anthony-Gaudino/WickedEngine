@@ -12256,8 +12256,10 @@ void CreateSurfelGIResources(SurfelGIResources& res, XMUINT2 resolution)
 	desc.format = Format::R11G11B10_FLOAT;
 	desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
 	desc.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
-	desc.width = resolution.x / 2;
-	desc.height = resolution.y / 2;
+	// Low-res coverage/GI-resolve target: 1/SURFEL_COVERAGE_PIXEL_SCALE res (the
+	// shader strides by the same constant), bilaterally upsampled to full res.
+	desc.width = resolution.x / SURFEL_COVERAGE_PIXEL_SCALE;
+	desc.height = resolution.y / SURFEL_COVERAGE_PIXEL_SCALE;
 	device->CreateTexture(&desc, nullptr, &res.result_halfres);
 	device->SetName(&res.result_halfres, "surfelgi.result_halfres");
 	desc.width = resolution.x;
