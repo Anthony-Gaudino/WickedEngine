@@ -15703,11 +15703,9 @@ int ReSTIR_DI(
 	const uint32_t dispatch_x = (res.resolution.x + 7) / 8;
 	const uint32_t dispatch_y = (res.resolution.y + 7) / 8;
 
-	// Temporarily disabled while validating the core RIS + visibility. The
-	// spatiotemporal reuse still needs unbiased combiners / history validation;
-	// with it on, energy smears spatially and stale samples persist when lights
-	// move. Set to true to re-enable the temporal + spatial passes.
-	const bool use_reuse = false;
+	// Spatiotemporal reuse. Uses the simple (biased) reservoir merge with
+	// light-count firefly clamping and depth/normal validation on reuse.
+	const bool use_reuse = true;
 
 	// Initial candidate generation: resample the lights + trace a visibility
 	// ray. When reuse is off, the initial pass writes the final reservoir

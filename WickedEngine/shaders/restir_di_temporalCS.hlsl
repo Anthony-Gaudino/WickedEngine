@@ -57,8 +57,16 @@ void main(uint3 DTid : SV_DispatchThreadID)
 				RESTIRDIReservoir history = RESTIRDIReservoirLoad(reservoirHistory, prevFlat);
 
 				// Bound the temporal confidence so stale samples cannot
-				// dominate.
-				history.M = min(history.M, (float)RESTIR_MAX_HISTORY_LENGTH);
+				// dominate. weightSum must be scaled together with M so the
+				// unbiased weight W = weightSum / (M * targetPdf) is preserved;
+				// capping M alone would inflate W every frame and blow the
+				// image up to white (positive feedback through the history).
+				if (history.M > (float)RESTIR_MAX_HISTORY_LENGTH)
+				{
+					history.weightSum *=
+						(float)RESTIR_MAX_HISTORY_LENGTH / history.M;
+					history.M = (float)RESTIR_MAX_HISTORY_LENGTH;
+				}
 
 				[branch]
 				if (history.M > 0)
