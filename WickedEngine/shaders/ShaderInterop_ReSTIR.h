@@ -294,9 +294,155 @@ struct RESTIRReservoirPacked
 
 /*
 ################################################################################
+Screen-space DI reservoir
+################################################################################
+*/
+
+/** ReSTIR DI RIS candidate count for the initial pass. */
+static const uint RESTIR_DI_INITIAL_CANDIDATES = 8;
+
+/** Spatial-reuse neighbor count per pixel. */
+static const uint RESTIR_DI_SPATIAL_SAMPLES = 4;
+
+/** Spatial-reuse search radius, in pixels. */
+static const float RESTIR_DI_SPATIAL_RADIUS = 16.0;
+
+#ifndef __cplusplus
+/**
+ * A screen-space ReSTIR DI reservoir.
+ *
+ * Unlike the light-ref reservoir used by the GI ray-hit consumers, this one
+ * carries the *resolved* light sample (a world-space point on the light plus
+ * its unshadowed incident radiance) so temporal/spatial reuse can re-evaluate
+ * the target function at a neighbor surface without re-sampling the light. The
+ * carried radiance is the value at the sample's originating surface; reuse
+ * currently ignores the attenuation/Jacobian change across pixels, which is a
+ * small-radius approximation to be tightened later (proper light-ref
+ * re-evaluation with the reconnection Jacobian).
+ */
+struct RESTIRDIReservoir
+{
+	/** World-space point on the chosen light (directional: P + dir * large). */
+	float3 samplePosition;
+
+	/**
+	 * Unshadowed incident radiance from the sample (attenuated, no visibility).
+	 */
+	float3 sampleRadiance;
+
+	/**
+	 * Target function value p_hat of the held sample at this reservoir's
+	 * surface.
+	 */
+	float targetPdf;
+
+	/** Running sum of resampling weights. */
+	float weightSum;
+
+	/** Confidence (effective candidate count). */
+	float M;
+
+	/** Cached visibility of the held sample, in [0, 1]. */
+	float visibility;
+};
+
+/**
+ * Resets a DI reservoir to empty.
+ *
+ * @return A DI reservoir holding no sample (all fields zero).
+ */
+inline RESTIRDIReservoir RESTIRDIReservoirInit()
+{
+	RESTIRDIReservoir r;
+	r.samplePosition = float3(0, 0, 0);
+	r.sampleRadiance = float3(0, 0, 0);
+	r.targetPdf = 0;
+	r.weightSum = 0;
+	r.M = 0;
+	r.visibility = 0;
+	return r;
+}
+
+/**
+ * Unbiased contribution weight W = weightSum / (M * targetPdf).
+ *
+ * Guarded against division by zero (an empty reservoir yields 0).
+ *
+ * @param[in] r - The DI reservoir to weigh.
+ *
+ * @return The unbiased contribution weight W (>= 0).
+ */
+inline float RESTIRDIReservoirGetInvPdf(RESTIRDIReservoir r)
+{
+	const float denom = r.M * r.targetPdf;
+	return denom > 0 ? r.weightSum / denom : 0;
+}
+#endif // __cplusplus
+
+/**
+ * GPU-storable packed DI reservoir (32 bytes), one per screen pixel.
+ *
+ * Backs the temporal history and spatial reuse buffers of the ReSTIR DI passes.
+ */
+struct RESTIRDIReservoirPacked
+{
+	uint4 data0;
+	uint4 data1;
+
+#ifndef __cplusplus
+	/**
+	 * Packs a DI reservoir into this storage slot.
+	 *
+	 * @param[in] r - The DI reservoir to store.
+	 */
+	inline void store(RESTIRDIReservoir r)
+	{
+		data0.xyz = asuint(r.samplePosition);
+		data0.w = Pack_R11G11B10_FLOAT(r.sampleRadiance);
+		data1.x = asuint(r.targetPdf);
+		data1.y = asuint(r.weightSum);
+		data1.z = asuint(r.M);
+		data1.w = asuint(r.visibility);
+	}
+
+	/**
+	 * Unpacks the stored DI reservoir.
+	 *
+	 * @return The reconstructed DI reservoir.
+	 */
+	inline RESTIRDIReservoir load()
+	{
+		RESTIRDIReservoir r;
+		r.samplePosition = asfloat(data0.xyz);
+		r.sampleRadiance = Unpack_R11G11B10_FLOAT(data0.w);
+		r.targetPdf = asfloat(data1.x);
+		r.weightSum = asfloat(data1.y);
+		r.M = asfloat(data1.z);
+		r.visibility = asfloat(data1.w);
+		return r;
+	}
+#endif // __cplusplus
+};
+
+/*
+################################################################################
 Push constants
 ################################################################################
 */
+
+/**
+ * Parameters shared by the ReSTIR DI compute passes
+ * (initial / temporal / spatial).
+ */
+struct RESTIRDIPushConstants
+{
+	uint2 resolution;
+	float2 resolutionRcp;
+	uint frameIndex;
+	uint candidateCount;
+	uint spatialSampleCount;
+	float spatialRadius;
+};
 
 /**
  * Parameters for the light pre-sampling pass that fills the light tiles.

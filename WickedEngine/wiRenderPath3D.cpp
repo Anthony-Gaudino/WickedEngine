@@ -326,6 +326,7 @@ namespace wi
 		{
 			if (wi::renderer::GetSurfelGIEnabled() ||
 				wi::renderer::GetDDGIEnabled() ||
+				wi::renderer::GetReSTIRDIEnabled() ||
 				(hw_raytrace && wi::renderer::GetRaytracedShadowsEnabled()) ||
 				(hw_raytrace && getAO() == AO_RTAO) ||
 				(hw_raytrace && getRaytracedReflectionEnabled()) ||
@@ -449,6 +450,20 @@ namespace wi
 		else
 		{
 			rtshadowResources = {};
+		}
+
+		if (wi::renderer::GetReSTIRDIEnabled() && device->CheckCapability(GraphicsDeviceCapability::RAYTRACING))
+		{
+			if (!restirDIResources.reservoir_final[0].IsValid() ||
+				restirDIResources.resolution.x != internalResolution.x ||
+				restirDIResources.resolution.y != internalResolution.y)
+			{
+				wi::renderer::CreateReSTIRDIResources(restirDIResources, internalResolution);
+			}
+		}
+		else
+		{
+			restirDIResources = {};
 		}
 
 		if (scene->weather.IsRealisticSky() && scene->weather.IsRealisticSkyAerialPerspective())
@@ -720,6 +735,18 @@ namespace wi
 		else
 		{
 			camera->texture_rtshadow_index = device->GetDescriptorIndex(wi::texturehelper::getWhite(), SubresourceType::SRV); // AMD descriptor branching fix
+		}
+		if (wi::renderer::GetReSTIRDIEnabled() && restirDIResources.reservoir_final[0].IsValid())
+		{
+			// Point at the reservoir this frame's ReSTIR_DI pass will write as
+			// final (ping-pong index cur = frame & 1, matching the dispatch
+			// which reads frame before incrementing it).
+			const uint32_t cur = (uint32_t)(restirDIResources.frame & 1);
+			camera->buffer_restir_di_index = device->GetDescriptorIndex(&restirDIResources.reservoir_final[cur], SubresourceType::SRV);
+		}
+		else
+		{
+			camera->buffer_restir_di_index = -1;
 		}
 		camera->texture_rtdiffuse_index = device->GetDescriptorIndex(&rtRaytracedDiffuse, SubresourceType::SRV);
 		camera->texture_surfelgi_index = device->GetDescriptorIndex(&surfelGIResources.result, SubresourceType::SRV);
@@ -1037,6 +1064,7 @@ namespace wi
 				getRaytracedDiffuseEnabled() ||
 				wi::renderer::GetScreenSpaceShadowsEnabled() ||
 				wi::renderer::GetRaytracedShadowsEnabled() ||
+				wi::renderer::GetReSTIRDIEnabled() ||
 				wi::renderer::GetVXGIEnabled()
 				)
 			{
@@ -1103,6 +1131,11 @@ namespace wi
 						getScreenSpaceShadowSampleCount()
 					);
 				}
+			}
+
+			if (wi::renderer::GetReSTIRDIEnabled())
+			{
+				wi::renderer::ReSTIR_DI(restirDIResources, *scene, cmd);
 			}
 
 			if (getMeshBlendEnabled() && visibility_main.IsMeshBlendVisible())

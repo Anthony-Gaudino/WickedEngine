@@ -28,6 +28,7 @@
 #include "shaders/ShaderInterop_Raytracing.h"
 #include "shaders/ShaderInterop_BVH.h"
 #include "shaders/ShaderInterop_DDGI.h"
+#include "shaders/ShaderInterop_ReSTIR.h"
 #include "shaders/ShaderInterop_VXGI.h"
 #include "shaders/ShaderInterop_FSR2.h"
 #include "shaders/uvsphere.hlsli"
@@ -144,6 +145,7 @@ SURFEL_DEBUG SURFELGI_DEBUG = SURFEL_DEBUG_NONE;
 bool DDGI_ENABLED = false;
 bool DDGI_DEBUG_ENABLED = false;
 uint32_t DDGI_RAYCOUNT = 256u;
+bool RESTIR_DI_ENABLED = false;
 float DDGI_BLEND_SPEED = 0.1f;
 float GI_BOOST = 1.0f;
 bool MESH_SHADER_ALLOWED = false;
@@ -1161,6 +1163,16 @@ void LoadShaders()
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_DDGI_INDIRECTPREPARE], "ddgi_indirectprepareCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_DDGI_UPDATE], "ddgi_updateCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_DDGI_UPDATE_DEPTH], "ddgi_updateCS_depth.cso"); });
+	if (device->CheckCapability(GraphicsDeviceCapability::RAYTRACING))
+	{
+		wi::jobsystem::Execute(raytracing_ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_DI_INITIAL], "restir_di_initialCS_rtapi.cso", ShaderModel::SM_6_5); });
+	}
+	else
+	{
+		wi::jobsystem::Execute(raytracing_ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_DI_INITIAL], "restir_di_initialCS.cso"); });
+	}
+	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_DI_TEMPORAL], "restir_di_temporalCS.cso"); });
+	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_DI_SPATIAL], "restir_di_spatialCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_TERRAIN_VIRTUALTEXTURE_UPDATE_BASECOLORMAP], "terrainVirtualTextureUpdateCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_TERRAIN_VIRTUALTEXTURE_UPDATE_NORMALMAP], "terrainVirtualTextureUpdateCS_normalmap.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_TERRAIN_VIRTUALTEXTURE_UPDATE_SURFACEMAP], "terrainVirtualTextureUpdateCS_surfacemap.cso"); });
@@ -4278,6 +4290,10 @@ void UpdatePerFrameData(
 	if (GetSurfelGIEnabled())
 	{
 		frameCB.options |= OPTION_BIT_SURFELGI_ENABLED;
+	}
+	if (GetReSTIRDIEnabled())
+	{
+		frameCB.options |= OPTION_BIT_RESTIR_DI;
 	}
 	if (IsDisableAlbedoMaps())
 	{
@@ -11545,6 +11561,7 @@ void BindCameraCB(
 	shadercam.texture_ssr_index = camera.texture_ssr_index;
 	shadercam.texture_ssgi_index = camera.texture_ssgi_index;
 	shadercam.texture_rtshadow_index = camera.texture_rtshadow_index;
+	shadercam.buffer_restir_di_index = camera.buffer_restir_di_index;
 	shadercam.texture_rtdiffuse_index = camera.texture_rtdiffuse_index;
 	shadercam.texture_surfelgi_index = camera.texture_surfelgi_index;
 	shadercam.texture_depth_index_prev = camera_previous.texture_depth_index;
@@ -15631,6 +15648,128 @@ void Postprocess_SSR(
 
 	wi::profiler::EndRange(range);
 	device->EventEnd(cmd);
+}
+void CreateReSTIRDIResources(ReSTIRDIResources& res, XMUINT2 resolution)
+{
+	res.resolution = resolution;
+	res.frame = 0;
+
+	GPUBufferDesc bd;
+	bd.size = (uint64_t)sizeof(RESTIRDIReservoirPacked) * resolution.x * resolution.y;
+	bd.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+	bd.misc_flags = ResourceMiscFlag::BUFFER_RAW;
+
+	device->CreateBufferZeroed(&bd, &res.reservoir_initial);
+	device->SetName(&res.reservoir_initial, "restir_di.reservoir_initial");
+	device->CreateBufferZeroed(&bd, &res.reservoir_temporal);
+	device->SetName(&res.reservoir_temporal, "restir_di.reservoir_temporal");
+	device->CreateBufferZeroed(&bd, &res.reservoir_final[0]);
+	device->SetName(&res.reservoir_final[0], "restir_di.reservoir_final[0]");
+	device->CreateBufferZeroed(&bd, &res.reservoir_final[1]);
+	device->SetName(&res.reservoir_final[1], "restir_di.reservoir_final[1]");
+}
+int ReSTIR_DI(
+	const ReSTIRDIResources& res,
+	const wi::scene::Scene& scene,
+	CommandList cmd
+)
+{
+	// No hardware-raytracing capability check on purpose: like SurfelGI/DDGI
+	// this runs on the software BVH fallback too (the initial pass loads the
+	// software variant when hardware RT is unavailable).
+	if (!scene.TLAS.IsValid() && !scene.BVH.IsValid())
+		return -1;
+	if (!res.reservoir_final[0].IsValid())
+		return -1;
+	if (wi::jobsystem::IsBusy(raytracing_ctx))
+		return -1;
+
+	device->EventBegin("ReSTIR_DI", cmd);
+	auto prof_range = wi::profiler::BeginRangeGPU("ReSTIR DI", cmd);
+
+	BindCommonResources(cmd);
+
+	const uint32_t cur = (uint32_t)(res.frame & 1);
+	const uint32_t prev = 1u - cur;
+
+	RESTIRDIPushConstants push;
+	push.resolution = res.resolution;
+	push.resolutionRcp = XMFLOAT2(1.0f / res.resolution.x, 1.0f / res.resolution.y);
+	push.frameIndex = (uint)res.frame;
+	push.candidateCount = RESTIR_DI_INITIAL_CANDIDATES;
+	push.spatialSampleCount = RESTIR_DI_SPATIAL_SAMPLES;
+	push.spatialRadius = RESTIR_DI_SPATIAL_RADIUS;
+
+	const uint32_t dispatch_x = (res.resolution.x + 7) / 8;
+	const uint32_t dispatch_y = (res.resolution.y + 7) / 8;
+
+	// Temporarily disabled while validating the core RIS + visibility. The
+	// spatiotemporal reuse still needs unbiased combiners / history validation;
+	// with it on, energy smears spatially and stale samples persist when lights
+	// move. Set to true to re-enable the temporal + spatial passes.
+	const bool use_reuse = false;
+
+	// Initial candidate generation: resample the lights + trace a visibility
+	// ray. When reuse is off, the initial pass writes the final reservoir
+	// directly.
+	{
+		const GPUBuffer* initial_target =
+			use_reuse ? &res.reservoir_initial : &res.reservoir_final[cur];
+
+		device->EventBegin("Initial", cmd);
+		device->BindComputeShader(&shaders[CSTYPE_RESTIR_DI_INITIAL], cmd);
+		device->PushConstants(&push, sizeof(push), cmd);
+		device->BindUAV(initial_target, 0, cmd);
+
+		device->Barrier(GPUBarrier::Buffer(initial_target, ResourceState::SHADER_RESOURCE, ResourceState::UNORDERED_ACCESS), cmd);
+		device->Dispatch(dispatch_x, dispatch_y, 1, cmd);
+		device->Barrier(GPUBarrier::Buffer(initial_target, ResourceState::UNORDERED_ACCESS, ResourceState::SHADER_RESOURCE), cmd);
+		device->EventEnd(cmd);
+	}
+
+	if (use_reuse)
+	{
+		// Temporal resampling: merge the reprojected previous-frame reservoir.
+		{
+			device->EventBegin("Temporal", cmd);
+			device->BindComputeShader(&shaders[CSTYPE_RESTIR_DI_TEMPORAL], cmd);
+			device->PushConstants(&push, sizeof(push), cmd);
+
+			const GPUResource* srvs[] = {
+				&res.reservoir_initial,
+				&res.reservoir_final[prev],
+			};
+			device->BindResources(srvs, 0, arraysize(srvs), cmd);
+			device->BindUAV(&res.reservoir_temporal, 0, cmd);
+
+			device->Barrier(GPUBarrier::Buffer(&res.reservoir_temporal, ResourceState::SHADER_RESOURCE, ResourceState::UNORDERED_ACCESS), cmd);
+			device->Dispatch(dispatch_x, dispatch_y, 1, cmd);
+			device->Barrier(GPUBarrier::Buffer(&res.reservoir_temporal, ResourceState::UNORDERED_ACCESS, ResourceState::SHADER_RESOURCE), cmd);
+			device->EventEnd(cmd);
+		}
+
+		// Spatial resampling: merge nearby reservoirs into the final result.
+		{
+			device->EventBegin("Spatial", cmd);
+			device->BindComputeShader(&shaders[CSTYPE_RESTIR_DI_SPATIAL], cmd);
+			device->PushConstants(&push, sizeof(push), cmd);
+
+			device->BindResource(&res.reservoir_temporal, 0, cmd);
+			device->BindUAV(&res.reservoir_final[cur], 0, cmd);
+
+			device->Barrier(GPUBarrier::Buffer(&res.reservoir_final[cur], ResourceState::SHADER_RESOURCE, ResourceState::UNORDERED_ACCESS), cmd);
+			device->Dispatch(dispatch_x, dispatch_y, 1, cmd);
+			device->Barrier(GPUBarrier::Buffer(&res.reservoir_final[cur], ResourceState::UNORDERED_ACCESS, ResourceState::SHADER_RESOURCE), cmd);
+			device->EventEnd(cmd);
+		}
+	}
+
+	res.frame++;
+
+	wi::profiler::EndRange(prof_range);
+	device->EventEnd(cmd);
+
+	return device->GetDescriptorIndex(&res.reservoir_final[cur], SubresourceType::SRV);
 }
 void CreateRTShadowResources(RTShadowResources& res, XMUINT2 resolution)
 {
@@ -19745,6 +19884,14 @@ void SetDDGIEnabled(bool value)
 bool GetDDGIEnabled()
 {
 	return DDGI_ENABLED;
+}
+void SetReSTIRDIEnabled(bool value)
+{
+	RESTIR_DI_ENABLED = value;
+}
+bool GetReSTIRDIEnabled()
+{
+	return RESTIR_DI_ENABLED;
 }
 void SetDDGIDebugEnabled(bool value)
 {

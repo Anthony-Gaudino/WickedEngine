@@ -6,7 +6,54 @@
 #include "brdf.hlsli"
 #include "ShaderInterop_SurfelGI.h"
 #include "ShaderInterop_DDGI.h"
+#include "restir_diHF.hlsli"
 #include "capsuleShadowHF.hlsli"
+
+/**
+ * Applies the ReSTIR DI reservoir's chosen light to a surface (opaque forward).
+ *
+ * Reads this pixel's final reservoir, reconstructs the light direction from the
+ * stored sample point, and adds the full BRDF (diffuse + specular) scaled by
+   the
+ * unbiased weight W and the cached visibility. Replaces the analytic tiled
+ * direct-light loop when ReSTIR DI is enabled.
+ *
+ * @param[in,out] surface - The shading surface.
+ * @param[in,out] lighting - Accumulated lighting to add the direct term to.
+ * @param[in] camera - Camera holding the reservoir buffer descriptor.
+ */
+inline void RESTIRDIApplyDirect(
+	inout Surface surface, inout Lighting lighting, ShaderCamera camera)
+{
+	const uint2 res = camera.internal_resolution;
+	const uint flatIndex = surface.pixel.y * res.x + surface.pixel.x;
+	const RESTIRDIReservoir r = RESTIRDIReservoirLoad(
+		bindless_buffers[descriptor_index(camera.buffer_restir_di_index)], flatIndex);
+
+	// Firefly clamp: uniform RIS over N lights cannot legitimately weight a
+	// sample above N, so cap W there. Without this, a reservoir whose selected
+	// sample has a near-zero target function produces a huge W that the
+	// spatial/ temporal reuse then smears across the screen as an over-bright
+	// glow.
+	const float W = min(RESTIRDIReservoirGetInvPdf(r), (float)lights().item_count());
+	[branch]
+	if (W > 0 && r.targetPdf > 0 && r.visibility > 0)
+	{
+		const half3 L = (half3)normalize(r.samplePosition - surface.P);
+		SurfaceToLight surface_to_light;
+		surface_to_light.create(surface, L);
+
+		[branch]
+		if (any(surface_to_light.NdotL_sss > 0))
+		{
+			float3 light_contribution = r.sampleRadiance * W * r.visibility;
+			// Sanitize: a stale/degenerate reservoir must never inject Inf/NaN.
+			light_contribution = (any(isnan(light_contribution)) || any(isinf(light_contribution))) ? (float3)0 : light_contribution;
+			lighting.direct.diffuse = mad((half3)light_contribution, BRDF_GetDiffuse(surface, surface_to_light), lighting.direct.diffuse);
+			lighting.direct.specular = mad((half3)light_contribution, BRDF_GetSpecular(surface, surface_to_light), lighting.direct.specular);
+		}
+	}
+}
 
 inline void LightMapping(in int lightmap, in float2 ATLAS, inout Lighting lighting, inout Surface surface)
 {
@@ -158,6 +205,18 @@ inline void TiledLighting(inout Surface surface, inout Lighting lighting, uint f
 		lighting.indirect.specular += max(0, BRDF_GetSpecular(surface, surface_to_light) * (float3)surface.dominant_lightcolor); // casting dominant_lightcolor to float3 fixes DDGI color overblown in DX12 when sky is black, I don't know why!
 	}
 	
+	// ReSTIR DI (opaque only): a single resampled light replaces the analytic
+	// per-light loops below. Transparents keep the analytic path.
+#ifndef TRANSPARENT
+	[branch]
+	if ((GetFrame().options & OPTION_BIT_RESTIR_DI) && camera.buffer_restir_di_index >= 0)
+	{
+		RESTIRDIApplyDirect(surface, lighting, camera);
+	}
+	else
+#endif // !TRANSPARENT
+	{
+
 	[branch]
 	if (!directional_lights().empty())
 	{
@@ -309,6 +368,7 @@ inline void TiledLighting(inout Surface surface, inout Lighting lighting, uint f
 			}
 		}
 	}
+	} // end analytic direct-light path (ReSTIR-DI else)
 
 	// Capsule shadows and capsule reflection blockers:
 	[branch]

@@ -753,6 +753,27 @@ namespace wi::renderer
 		const wi::graphics::Texture& output,
 		wi::graphics::CommandList cmd
 	);
+	struct ReSTIRDIResources
+	{
+		// Raw (ByteAddressBuffer) reservoir buffers, 32 bytes
+		// (RESTIRDIReservoirPacked) per internal-resolution pixel.
+		wi::graphics::GPUBuffer reservoir_initial;
+		wi::graphics::GPUBuffer reservoir_temporal;
+		// Ping-pong final reservoir: current frame result / previous-frame history.
+		wi::graphics::GPUBuffer reservoir_final[2];
+
+		XMUINT2 resolution = {};
+		mutable int frame = 0;
+	};
+	void CreateReSTIRDIResources(ReSTIRDIResources& res, XMUINT2 resolution);
+	// Runs the ReSTIR DI passes (initial -> temporal -> spatial). Returns the
+	// SRV descriptor index of this frame's final reservoir buffer (to store in
+	// the camera), or -1 when the passes did not run.
+	int ReSTIR_DI(
+		const ReSTIRDIResources& res,
+		const wi::scene::Scene& scene,
+		wi::graphics::CommandList cmd
+	);
 	struct ScreenSpaceShadowResources
 	{
 		wi::graphics::Texture lowres;
@@ -1267,6 +1288,8 @@ namespace wi::renderer
 	SURFEL_DEBUG GetSurfelGIDebugEnabled();
 	void SetDDGIEnabled(bool value);
 	bool GetDDGIEnabled();
+	void SetReSTIRDIEnabled(bool value);
+	bool GetReSTIRDIEnabled();
 	void SetDDGIDebugEnabled(bool value);
 	bool GetDDGIDebugEnabled();
 	void SetDDGIRayCount(uint32_t value);
