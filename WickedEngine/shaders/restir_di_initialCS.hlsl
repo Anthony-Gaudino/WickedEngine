@@ -1,3 +1,4 @@
+#define TEXTURE_SLOT_NONUNIFORM // shadow ray alpha-tests divergent materials
 #include "globals.hlsli"
 #include "raytracingHF.hlsli"
 #include "lightingHF.hlsli"
@@ -122,13 +123,38 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			wiRayQuery q;
 			q.TraceRayInline(
 				scene_acceleration_structure,	// RaytracingAccelerationStructure AccelerationStructure
+				// No RAY_FLAG_FORCE_OPAQUE: non-opaque hits are alpha-tested
+				// below so cutout foliage casts a shaped shadow, not its full
+				// polygon.
 				RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES |
-				RAY_FLAG_FORCE_OPAQUE |
 				RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,	// uint RayFlags
 				0xFF,							// uint InstanceInclusionMask
 				ray								// RayDesc Ray
 			);
-			while (q.Proceed());
+			while (q.Proceed())
+			{
+				// Non-opaque candidate: load the material and let it occlude
+				// only where the (stochastic) alpha test passes. Additive
+				// materials do not cast shadows.
+				PrimitiveID prim;
+				prim.init();
+				prim.primitiveIndex = q.CandidatePrimitiveIndex();
+				prim.instanceIndex = q.CandidateInstanceID();
+				prim.subsetIndex = q.CandidateGeometryIndex();
+
+				Surface hitSurface;
+				hitSurface.init();
+				hitSurface.V = ray.Direction;
+				[branch]
+				if (hitSurface.load(prim, q.CandidateTriangleBarycentrics()))
+				{
+					if (!hitSurface.material.IsAdditive() &&
+						hitSurface.opacity - rng.next_float() >= 0)
+					{
+						q.CommitNonOpaqueTriangleHit();
+					}
+				}
+			}
 			shadow = q.CommittedStatus() == COMMITTED_TRIANGLE_HIT ? 0 : shadow;
 #else
 			shadow = TraceRay_Any(ray, 0xFF, rng) ? 0 : shadow;
