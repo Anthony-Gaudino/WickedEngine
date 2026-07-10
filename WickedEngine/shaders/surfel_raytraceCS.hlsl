@@ -2,9 +2,16 @@
 #include "globals.hlsli"
 #include "raytracingHF.hlsli"
 #include "lightingHF.hlsli"
+#include "restir_lightsamplingHF.hlsli"
 #include "ShaderInterop_SurfelGI.h"
 
 PUSHCONSTANT(push, PushConstantsSurfelRaytrace);
+
+// ReSTIR RIS candidate count per surfel ray. One candidate reproduces the old
+// uniform single-sample estimator exactly; more candidates importance-sample
+// the lights (still one shadow ray), cutting noise when many lights are
+// present.
+static const uint RESTIR_SURFEL_CANDIDATES = 8;
 
 StructuredBuffer<Surfel> surfelBuffer : register(t0);
 StructuredBuffer<SurfelStats> surfelStatsBuffer : register(t1);
@@ -53,178 +60,52 @@ void main(uint3 DTid : SV_DispatchThreadID)
 	float3 radiance = 0;
 	
 #if 1
-	// Light sampling - direct static:
+	// Light sampling - direct static (ReSTIR RIS over the analytic light list):
+	// resample RESTIR_SURFEL_CANDIDATES lights by the diffuse target function,
+	// then trace a single shadow ray for the winning sample. staticOnly keeps
+	// the surfel cache bakes limited to static lights (dynamic lights are
+	// applied in real time elsewhere). With one candidate this matches the
+	// previous single-uniform-sample estimator exactly.
 	{
-		Surface surface;
-		surface.init();
-		surface.P = surfel.position;
-		surface.N = normalize(sample_hemisphere_cos(N, rng));
-		surface.update();
-		
-		const uint light_count = lights().item_count();
-		const uint light_index = lights().first_item() + rng.next_uint(light_count);
-		ShaderEntity light = load_entity(light_index);
-		
-		if (light.IsStaticLight())
+		const float3 shadingN = normalize(sample_hemisphere_cos(N, rng));
+
+		RESTIRLightSample winning;
+		const RESTIRReservoir reservoir = RESTIRSampleLightsUniform(
+			surfel.position, shadingN, RESTIR_SURFEL_CANDIDATES, true, rng, winning);
+
+		const float W = RESTIRReservoirGetInvPdf(reservoir);
+		const float NdotL = saturate(dot(winning.direction, shadingN));
+
+		[branch]
+		if (W > 0 && NdotL > 0 && winning.distance > 0)
 		{
-			Lighting lighting;
-			lighting.create(0, 0, 0, 0);
+			float3 shadow = 1;
 
-			float3 L = 0;
-			float dist = 0;
-			float NdotL = 0;
-
-			switch (light.GetType())
-			{
-			case ENTITY_TYPE_DIRECTIONALLIGHT:
-			{
-				dist = FLT_MAX;
-
-				L = light.GetDirection().xyz;
-				L += sample_hemisphere_cos(L, rng) * light.GetRadius();
-				NdotL = saturate(dot(L, surface.N));
-
-				[branch]
-				if (NdotL > 0)
-				{
-					float3 lightColor = light.GetColor().rgb;
-
-					[branch]
-					if (GetFrame().options & OPTION_BIT_REALISTIC_SKY)
-					{
-						lightColor *= GetAtmosphericLightTransmittance(GetWeather().atmosphere, surface.P, L, texture_transmittancelut);
-					}
-
-					lighting.direct.diffuse = lightColor;
-				}
-			}
-			break;
-			case ENTITY_TYPE_POINTLIGHT:
-			{
-				light.position += light.GetDirection() * (rng.next_float() - 0.5) * light.GetLength();
-				light.position += sample_hemisphere_cos(normalize(light.position - surface.P), rng) * light.GetRadius();
-				L = light.position - surface.P;
-				const float dist2 = dot(L, L);
-				const float range = light.GetRange();
-				const float range2 = range * range;
-
-				[branch]
-				if (dist2 < range2)
-				{
-					dist = sqrt(dist2);
-					L /= dist;
-					NdotL = saturate(dot(L, surface.N));
-
-					[branch]
-					if (NdotL > 0)
-					{
-						const float3 lightColor = light.GetColor().rgb;
-
-						lighting.direct.diffuse = lightColor;
-						lighting.direct.diffuse *= attenuation_pointlight(dist2, range, light.GetRange2Rcp());
-					}
-				}
-			}
-			break;
-			case ENTITY_TYPE_RECTLIGHT:
-			{
-				const half4 quaternion = light.GetQuaternion();
-				const half3 right = rotate_vector(half3(1, 0, 0), quaternion);
-				const half3 up = rotate_vector(half3(0, 1, 0), quaternion);
-				const half3 forward = cross(up, right);
-				if (dot(surface.P - light.position, forward) <= 0)
-					break; // behind light
-				light.position += right * (rng.next_float() - 0.5) * light.GetLength();
-				light.position += up * (rng.next_float() - 0.5) * light.GetHeight();
-				L = light.position - surface.P;
-				const float dist2 = dot(L, L);
-				const float range = light.GetRange();
-				const float range2 = range * range;
-
-				[branch]
-				if (dist2 < range2)
-				{
-					dist = sqrt(dist2);
-					L /= dist;
-					NdotL = saturate(dot(L, surface.N));
-
-					[branch]
-					if (NdotL > 0)
-					{
-						const float3 lightColor = light.GetColor().rgb;
-
-						lighting.direct.diffuse = lightColor;
-						lighting.direct.diffuse *= attenuation_pointlight(dist2, range, light.GetRange2Rcp());
-					}
-				}
-			}
-			break;
-			case ENTITY_TYPE_SPOTLIGHT:
-			{
-				float3 Loriginal = normalize(light.position - surface.P);
-				light.position += sample_hemisphere_cos(normalize(light.position - surface.P), rng) * light.GetRadius();
-				L = light.position - surface.P;
-				const float dist2 = dot(L, L);
-				const float range = light.GetRange();
-				const float range2 = range * range;
-
-				[branch]
-				if (dist2 < range2)
-				{
-					dist = sqrt(dist2);
-					L /= dist;
-					NdotL = saturate(dot(L, surface.N));
-
-					[branch]
-					if (NdotL > 0)
-					{
-						const float spot_factor = dot(Loriginal, light.GetDirection());
-						const float spot_cutoff = light.GetConeAngleCos();
-
-						[branch]
-						if (spot_factor > spot_cutoff)
-						{
-							const float3 lightColor = light.GetColor().rgb;
-
-							lighting.direct.diffuse = lightColor;
-							lighting.direct.diffuse *= attenuation_spotlight(dist2, range, light.GetRange2Rcp(), spot_factor, light.GetAngleScale(), light.GetAngleOffset());
-						}
-					}
-				}
-			}
-			break;
-			}
-
-			if (NdotL > 0 && dist > 0)
-			{
-				float3 shadow = 1;
-
-				RayDesc newRay;
-				newRay.Origin = surface.P;
-				newRay.TMin = 0.001;
-				newRay.TMax = dist;
-				newRay.Direction = normalize(L + max3(surface.sss));
+			RayDesc newRay;
+			newRay.Origin = surfel.position;
+			newRay.TMin = 0.001;
+			newRay.TMax = winning.distance;
+			newRay.Direction = winning.direction;
 
 	#ifdef RTAPI
-				wiRayQuery q;
-				q.TraceRayInline(
-					scene_acceleration_structure,	// RaytracingAccelerationStructure AccelerationStructure
-					RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES |
-					RAY_FLAG_FORCE_OPAQUE |
-					//RAY_FLAG_CULL_FRONT_FACING_TRIANGLES |
-					RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,	// uint RayFlags
-					0xFF,							// uint InstanceInclusionMask
-					newRay							// RayDesc Ray
-				);
-				while (q.Proceed());
-				shadow = q.CommittedStatus() == COMMITTED_TRIANGLE_HIT ? 0 : shadow;
+			wiRayQuery q;
+			q.TraceRayInline(
+				scene_acceleration_structure,	// RaytracingAccelerationStructure AccelerationStructure
+				RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES |
+				RAY_FLAG_FORCE_OPAQUE |
+				//RAY_FLAG_CULL_FRONT_FACING_TRIANGLES |
+				RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,	// uint RayFlags
+				0xFF,							// uint InstanceInclusionMask
+				newRay							// RayDesc Ray
+			);
+			while (q.Proceed());
+			shadow = q.CommittedStatus() == COMMITTED_TRIANGLE_HIT ? 0 : shadow;
 	#else
-				shadow = TraceRay_Any(newRay, push.instanceInclusionMask, rng) ? 0 : shadow;
+			shadow = TraceRay_Any(newRay, push.instanceInclusionMask, rng) ? 0 : shadow;
 	#endif // RTAPI
-				if (any(shadow))
-				{
-					radiance += light_count * max(0, shadow * lighting.direct.diffuse * NdotL / PI);
-				}
+			if (any(shadow))
+			{
+				radiance += max(0, shadow * winning.radiance * NdotL * W / PI);
 			}
 		}
 	}
@@ -347,149 +228,29 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			surface.update();
 
 #if 1
-			// Light sampling:
+			// Light sampling (ReSTIR RIS over the analytic light list):
+			// resample RESTIR_SURFEL_CANDIDATES lights by the diffuse target
+			// function and trace one shadow ray for the winner. All lights
+			// contribute here (this is the indirect bounce hit, not the
+			// static-only cache block).
 			{
-				const uint light_count = lights().item_count();
-				const uint light_index = lights().first_item() + rng.next_uint(light_count);
-				ShaderEntity light = load_entity(light_index);
+				RESTIRLightSample winning;
+				const RESTIRReservoir reservoir = RESTIRSampleLightsUniform(
+					surface.P, surface.N, RESTIR_SURFEL_CANDIDATES, false, rng, winning);
 
-				Lighting lighting;
-				lighting.create(0, 0, 0, 0);
+				const float W = RESTIRReservoirGetInvPdf(reservoir);
+				const float NdotL = saturate(dot(winning.direction, surface.N));
 
-				float3 L = 0;
-				float dist = 0;
-				float NdotL = 0;
-
-				switch (light.GetType())
-				{
-				case ENTITY_TYPE_DIRECTIONALLIGHT:
-				{
-					dist = FLT_MAX;
-
-					L = light.GetDirection().xyz;
-					L += sample_hemisphere_cos(L, rng) * light.GetRadius();
-					NdotL = saturate(dot(L, surface.N));
-
-					[branch]
-					if (NdotL > 0)
-					{
-						float3 lightColor = light.GetColor().rgb;
-
-						[branch]
-						if (GetFrame().options & OPTION_BIT_REALISTIC_SKY)
-						{
-							lightColor *= GetAtmosphericLightTransmittance(GetWeather().atmosphere, surface.P, L, texture_transmittancelut);
-						}
-
-						lighting.direct.diffuse = lightColor;
-					}
-				}
-				break;
-				case ENTITY_TYPE_POINTLIGHT:
-				{
-					light.position += light.GetDirection() * (rng.next_float() - 0.5) * light.GetLength();
-					light.position += sample_hemisphere_cos(normalize(light.position - surface.P), rng) * light.GetRadius();
-					L = light.position - surface.P;
-					const float dist2 = dot(L, L);
-					const float range = light.GetRange();
-					const float range2 = range * range;
-
-					[branch]
-					if (dist2 < range2)
-					{
-						dist = sqrt(dist2);
-						L /= dist;
-						NdotL = saturate(dot(L, surface.N));
-
-						[branch]
-						if (NdotL > 0)
-						{
-							const float3 lightColor = light.GetColor().rgb;
-
-							lighting.direct.diffuse = lightColor;
-							lighting.direct.diffuse *= attenuation_pointlight(dist2, range, light.GetRange2Rcp());
-						}
-					}
-				}
-				break;
-				case ENTITY_TYPE_RECTLIGHT:
-				{
-					const half4 quaternion = light.GetQuaternion();
-					const half3 right = rotate_vector(half3(1, 0, 0), quaternion);
-					const half3 up = rotate_vector(half3(0, 1, 0), quaternion);
-					const half3 forward = cross(up, right);
-					if (dot(surface.P - light.position, forward) <= 0)
-						break; // behind light
-					light.position += right * (rng.next_float() - 0.5) * light.GetLength();
-					light.position += up * (rng.next_float() - 0.5) * light.GetHeight();
-					L = light.position - surface.P;
-					const float dist2 = dot(L, L);
-					const float range = light.GetRange();
-					const float range2 = range * range;
-
-					[branch]
-					if (dist2 < range2)
-					{
-						dist = sqrt(dist2);
-						L /= dist;
-						NdotL = saturate(dot(L, surface.N));
-
-						[branch]
-						if (NdotL > 0)
-						{
-							const float3 lightColor = light.GetColor().rgb;
-
-							lighting.direct.diffuse = lightColor;
-							lighting.direct.diffuse *= attenuation_pointlight(dist2, range, light.GetRange2Rcp());
-						}
-					}
-				}
-				break;
-				case ENTITY_TYPE_SPOTLIGHT:
-				{
-					float3 Loriginal = normalize(light.position - surface.P);
-					light.position += sample_hemisphere_cos(normalize(light.position - surface.P), rng) * light.GetRadius();
-					L = light.position - surface.P;
-					const float dist2 = dot(L, L);
-					const float range = light.GetRange();
-					const float range2 = range * range;
-
-					[branch]
-					if (dist2 < range2)
-					{
-						dist = sqrt(dist2);
-						L /= dist;
-						NdotL = saturate(dot(L, surface.N));
-
-						[branch]
-						if (NdotL > 0)
-						{
-							const float spot_factor = dot(Loriginal, light.GetDirection());
-							const float spot_cutoff = light.GetConeAngleCos();
-
-							[branch]
-							if (spot_factor > spot_cutoff)
-							{
-								const float3 lightColor = light.GetColor().rgb;
-
-								lighting.direct.diffuse = lightColor;
-								lighting.direct.diffuse *= attenuation_spotlight(dist2, range, light.GetRange2Rcp(), spot_factor, light.GetAngleScale(), light.GetAngleOffset());
-							}
-						}
-					}
-				}
-				break;
-				}
-
-				if (NdotL > 0 && dist > 0)
+				[branch]
+				if (W > 0 && NdotL > 0 && winning.distance > 0)
 				{
 					float3 shadow = 1;
 
 					RayDesc newRay;
 					newRay.Origin = surface.P;
 					newRay.TMin = 0.001;
-					newRay.TMax = dist;
-					newRay.Direction = normalize(L + max3(surface.sss));
+					newRay.TMax = winning.distance;
+					newRay.Direction = normalize(winning.direction + max3(surface.sss));
 
 #ifdef RTAPI
 					q.TraceRayInline(
@@ -508,7 +269,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
 #endif // RTAPI
 					if (any(shadow))
 					{
-						hit_result += light_count * max(0, shadow * lighting.direct.diffuse * NdotL / PI);
+						hit_result += max(0, shadow * winning.radiance * NdotL * W / PI);
 					}
 				}
 			}
