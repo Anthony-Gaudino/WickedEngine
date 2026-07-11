@@ -15796,31 +15796,25 @@ int ReSTIR_DI(
 		}
 
 		// Visibility temporal denoise: accumulate the fresh 1-sample shadow
-		// into a running mean, written in place into the reservoir's visibility
-		// field so forward shading reads the denoised value.
+		// into a running mean, written into the moments texture (slow mean).
+		// This pass is read-only on the reservoir (its neighborhood prefilter
+		// would race an in-place write); the spatial pass reads the mean back
+		// from the moments.
 		{
 			device->EventBegin("Visibility denoise", cmd);
 			device->BindComputeShader(&shaders[CSTYPE_RESTIR_DI_DENOISE_TEMPORAL], cmd);
 			device->PushConstants(&push, sizeof(push), cmd);
 
-			device->BindResource(&res.visibility_moments[prev], 0, cmd);
-			const GPUResource* uavs[] = {
+			const GPUResource* srvs[] = {
+				&res.visibility_moments[prev],
 				&res.reservoir_final[cur],
-				&res.visibility_moments[cur],
 			};
-			device->BindUAVs(uavs, 0, arraysize(uavs), cmd);
+			device->BindResources(srvs, 0, arraysize(srvs), cmd);
+			device->BindUAV(&res.visibility_moments[cur], 0, cmd);
 
-			GPUBarrier pre[] = {
-				GPUBarrier::Buffer(&res.reservoir_final[cur], ResourceState::SHADER_RESOURCE, ResourceState::UNORDERED_ACCESS),
-				GPUBarrier::Image(&res.visibility_moments[cur], res.visibility_moments[cur].desc.layout, ResourceState::UNORDERED_ACCESS),
-			};
-			device->Barrier(pre, arraysize(pre), cmd);
+			device->Barrier(GPUBarrier::Image(&res.visibility_moments[cur], res.visibility_moments[cur].desc.layout, ResourceState::UNORDERED_ACCESS), cmd);
 			device->Dispatch(dispatch_x, dispatch_y, 1, cmd);
-			GPUBarrier post[] = {
-				GPUBarrier::Buffer(&res.reservoir_final[cur], ResourceState::UNORDERED_ACCESS, ResourceState::SHADER_RESOURCE),
-				GPUBarrier::Image(&res.visibility_moments[cur], ResourceState::UNORDERED_ACCESS, res.visibility_moments[cur].desc.layout),
-			};
-			device->Barrier(post, arraysize(post), cmd);
+			device->Barrier(GPUBarrier::Image(&res.visibility_moments[cur], ResourceState::UNORDERED_ACCESS, res.visibility_moments[cur].desc.layout), cmd);
 			device->EventEnd(cmd);
 		}
 

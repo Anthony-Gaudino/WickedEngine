@@ -13,31 +13,83 @@
  *
  * Moving shadows are the hard case: when a shadow sweeps across a surface the
  * geometry is unchanged, so depth/normal disocclusion cannot catch it and a
- * long history smears the shadow into a trail. A single binary visibility
- * sample cannot tell "the shadow moved" (mean shifted) from "a different light
- * was sampled this frame" (RIS noise). To separate them the pass keeps a
- * second, short-window running mean (the fast accumulator): a *persistent* gap
- * between the fast and slow means means the true mean shifted, whereas sampling
- * noise leaves them in agreement. That gap drives an antilag term that
- * collapses the slow history so the trail clears immediately, while static
- * penumbrae keep their long, well-denoised history.
+ * long history smears the shadow into a trail. To keep a long (clean) history
+ * everywhere it is safe while staying ghost-free where it is not, the pass runs
+ * a per-pixel temporal-gradient antilag: it prefilters the current visibility
+ * over a small neighborhood (the raw per-pixel value is a single binary shadow
+ * ray) and compares that estimate against the reprojected history. When the
+ * gradient exceeds what the estimation noise explains the shadow truly changed,
+ * so the effective history is collapsed toward the fresh sample (the spatial
+ * a-trous then cleans that low-history region using its spatial variance
+ * fallback); otherwise the full history accumulates and the shadow stays clean.
  *
- * The accumulated mean is written back in place into the reservoir's visibility
- * field so forward shading needs no change; (second moment, history length,
- * fast-accumulator mean) are kept in a ping-pong texture for antilag and for
- * the variance the spatial filter uses.
+ * This pass is read-only on the reservoir (it reads the fresh visibility and a
+ * small neighborhood of it): the accumulated mean is written only into the
+ * moments texture, and the spatial pass reads it from there and writes the
+ * final filtered value into reservoir.visibility. Writing the mean back into
+ * the reservoir here would create a read-after-write race with the neighborhood
+ * prefilter (neighbor threads overwriting the fresh value mid-dispatch).
  */
 
 PUSHCONSTANT(push, RESTIRDIPushConstants);
 
-// (moment2, historyLength, meanFast, slowMean). The slow mean is the temporal
-// history the next frame reprojects; keeping it here (not in the reservoir)
-// means the spatial pass, which overwrites reservoir.visibility with the
-// spatially filtered result, cannot feed that blur back into temporal history.
+// (moment2, historyLength, unused, slowMean). The slow mean is both the
+// temporal history the next frame reprojects and the denoised visibility the
+// spatial pass filters; keeping it here (not in the reservoir) also stops the
+// spatial blur feeding back into temporal history.
 Texture2D<float4> momentsHistory : register(t0);
+ByteAddressBuffer reservoirCurrent : register(t1); // reservoir_final[cur], read-only
 
-RWByteAddressBuffer reservoirCurrent : register(u0); // reservoir_final[cur], in place
-RWTexture2D<float4> momentsOutput : register(u1);
+RWTexture2D<float4> momentsOutput : register(u0);
+
+/**
+ * Spatially prefiltered estimate of the current visibility for change
+ * detection.
+ *
+ * The raw per-pixel visibility is a single binary shadow ray, far too noisy to
+ * compare against the smooth reprojected history directly. Averaging a small
+ * neighborhood yields a lower-noise estimate of the true mean plus the spatial
+ * variance, which together bound how much of a history/current gradient is just
+ * sampling noise.
+ *
+ * @param[in] center - Pixel coordinate.
+ * @param[out] mean - Neighborhood mean visibility.
+ * @param[out] variance - Neighborhood variance of the visibility.
+ * @param[out] count - Number of valid (non-sky) taps averaged.
+ */
+void PrefilterCurrent(
+	uint2 center, out float mean, out float variance, out float count)
+{
+	float m1 = 0;
+	float m2 = 0;
+	count = 0;
+
+	const int r = RESTIR_DI_DENOISE_PREFILTER_RADIUS;
+	[unroll]
+	for (int dy = -r; dy <= r; ++dy)
+	{
+		[unroll]
+		for (int dx = -r; dx <= r; ++dx)
+		{
+			const int2 tap = int2(center) + int2(dx, dy);
+			if (tap.x < 0 || tap.y < 0 ||
+				tap.x >= (int)push.resolution.x ||
+				tap.y >= (int)push.resolution.y)
+				continue;
+			if (texture_depth[(uint2)tap] <= 0)
+				continue;
+
+			const uint index = tap.y * push.resolution.x + tap.x;
+			const float v = RESTIRDIReservoirLoad(reservoirCurrent, index).visibility;
+			m1 += v;
+			m2 += v * v;
+			count += 1;
+		}
+	}
+
+	mean = (count > 0) ? m1 / count : 0;
+	variance = (count > 0) ? max(0.0, m2 / count - mean * mean) : 0;
+}
 
 [numthreads(8, 8, 1)]
 void main(uint3 DTid : SV_DispatchThreadID)
@@ -62,10 +114,15 @@ void main(uint3 DTid : SV_DispatchThreadID)
 
 	const float freshVis = reservoir.visibility;
 
+	// Spatially prefiltered current estimate + its noise, for change detection.
+	float curMean;
+	float curVariance;
+	float curCount;
+	PrefilterCurrent(pixel, curMean, curVariance, curCount);
+
 	// Start from this frame's single sample (history length 1).
 	float mean = freshVis;
 	float moment2 = freshVis * freshVis;
-	float meanFast = freshVis;
 	float historyLength = 1;
 
 	const float2 uv = (pixel + 0.5) * push.resolutionRcp;
@@ -89,39 +146,46 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			const float4 prevMoments = momentsHistory[prevPixel];
 
 			const float prevMeanSlow = prevMoments.w;
-			const float prevMeanFast = prevMoments.z;
+			const float prevHistory = prevMoments.y;
 
-			// Fast accumulator: short window, tracks change quickly.
-			const float fastLength =
-				min(prevMoments.y + 1, RESTIR_DI_DENOISE_FAST_HISTORY);
-			meanFast = lerp(prevMeanFast, freshVis, 1.0 / fastLength);
+			// Temporal-gradient antilag. Compare the prefiltered current
+			// estimate against the reprojected history; the standard error of
+			// each mean bounds how much of the gap is just sampling noise. When
+			// the gap exceeds that band the shadow truly moved, so collapse the
+			// history toward the fresh sample; otherwise keep accumulating up
+			// to the cap.
+			const float prevVar =
+				max(0.0, prevMoments.x - prevMeanSlow * prevMeanSlow);
+			const float stderrCur = sqrt(curVariance / max(curCount, 1.0));
+			const float stderrHist = sqrt(prevVar / max(prevHistory, 1.0));
+			const float noise =
+				sqrt(stderrCur * stderrCur + stderrHist * stderrHist) + 1e-3;
 
-			// Antilag: a persistent gap between the fast and slow means is real
-			// motion (the shadow moved); sampling noise leaves them close. The
-			// gap is already denoised over the two windows, so it barely reacts
-			// to single-sample flips. Amplify it so a moderate gap drives a
-			// strong response, then collapse the slow history all the way to
-			// the fresh sample at full antilag: a moving shadow snaps clear
-			// (accepting some transient noise while in motion) and re-denoises
-			// the instant it stops, while a small penumbra gap keeps most of
-			// the long, well-denoised history.
-			const float antilag = saturate(abs(meanFast - prevMeanSlow) * 2.0);
+			const float gradient = abs(curMean - prevMeanSlow);
+			const float rejection = saturate(
+				(gradient - noise) / (RESTIR_DI_DENOISE_ANTILAG_SCALE * noise));
+
 			historyLength =
-				lerp(min(prevMoments.y + 1, RESTIR_DI_DENOISE_MAX_HISTORY),
-					1.0, antilag);
+				lerp(min(prevHistory + 1, RESTIR_DI_DENOISE_MAX_HISTORY),
+					1.0, rejection);
+
+			// Clamp the reprojected history to the current estimate's
+			// confidence interval before blending, so the residual stale value
+			// the weight rejection leaves behind at a moving edge is pulled
+			// into range.
+			const float clampHalf = RESTIR_DI_DENOISE_CLAMP_SCALE * noise;
+			const float prevMeanClamped =
+				clamp(prevMeanSlow, curMean - clampHalf, curMean + clampHalf);
 
 			const float alpha = 1.0 / historyLength;
-			mean = lerp(prevMeanSlow, freshVis, alpha);
+			mean = lerp(prevMeanClamped, freshVis, alpha);
 			moment2 = lerp(prevMoments.x, freshVis * freshVis, alpha);
 		}
 	}
 
-	// Write the temporal mean into the reservoir's visibility (the spatial pass
-	// reads it there, then overwrites it with the filtered result shading
-	// uses). The moments carry the second moment (variance for the spatial
-	// filter), the history length, the fast-accumulator mean (antilag), and the
-	// slow mean (the temporal history the next frame reprojects).
-	reservoir.visibility = mean;
-	RESTIRDIReservoirStore(reservoirCurrent, flatIndex, reservoir);
-	momentsOutput[pixel] = float4(moment2, historyLength, meanFast, mean);
+	// The moments carry the second moment (variance for the spatial filter),
+	// the history length, and the slow mean. The slow mean is both this frame's
+	// denoised visibility (the spatial pass filters it) and the temporal
+	// history the next frame reprojects.
+	momentsOutput[pixel] = float4(moment2, historyLength, 0, mean);
 }

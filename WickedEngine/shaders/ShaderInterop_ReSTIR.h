@@ -311,23 +311,54 @@ static const float RESTIR_DI_SPATIAL_RADIUS = 16.0;
  * Visibility denoiser history cap. The temporal accumulation blends the fresh
  * per-frame visibility toward a running mean with weight 1 / historyLength;
  * capping the length floors that weight so the shadow stays responsive to
- * change (a higher cap denoises more but reacts slower). Kept moderate because
- * the spatial a-trous pass removes most of the residual per-frame noise, so the
- * temporal stage can stay short (and therefore low-lag).
+ * change (a higher cap denoises more but reacts slower).
+ *
+ * Kept high because the temporal-gradient antilag adapts the effective history
+ * per pixel: static shadows accumulate the full length (very clean), while a
+ * pixel whose shadow changed this frame collapses its history to ~1
+ * (ghost-free) — so a long cap no longer means long ghosting.
  */
-static const float RESTIR_DI_DENOISE_MAX_HISTORY = 2.0;
+static const float RESTIR_DI_DENOISE_MAX_HISTORY = 16.0;
 
 /**
- * Fast-accumulator history cap for the visibility denoiser's antilag.
+ * Temporal-gradient antilag sensitivity for the visibility denoiser.
  *
- * The denoiser runs a second, short-window running mean of the visibility. A
- * *persistent* gap between this fast mean and the long (slow) mean signals that
- * the true shadow moved — geometry is unchanged, so depth/normal disocclusion
- * cannot catch it — as opposed to per-frame RIS sampling noise, which leaves
- * the two accumulators in agreement. The gap drives an antilag term that
- * collapses the slow history so the trailing shadow clears immediately.
+ * Depth/normal disocclusion cannot catch a shadow sweeping across static
+ * geometry, so the denoiser also compares a spatially prefiltered estimate of
+ * the current visibility against the reprojected history. When that gradient
+ * exceeds what the estimation noise explains, the shadow truly changed and the
+ * history is collapsed toward the fresh sample. This scales the noise band over
+ * which the rejection ramps from none to full: smaller reacts sooner (less
+ * ghosting, more flicker), larger is steadier (cleaner, more lag).
  */
-static const float RESTIR_DI_DENOISE_FAST_HISTORY = 4.0;
+static const float RESTIR_DI_DENOISE_ANTILAG_SCALE = 4.0;
+
+/**
+ * Neighborhood radius of the temporal-gradient antilag's current-visibility
+ * prefilter (a (2r+1)x(2r+1) window).
+ *
+ * The change-detection estimate is an average of the binary per-ray visibility,
+ * so its standard error falls as 1 / sqrt(sample count). A wider window
+ * tightens that error, which matters most at shadow edges: the penumbra's high
+ * variance inflates the noise band the gradient is compared against, and a
+ * tighter estimate is what lets a moving edge clear the band and reject the
+ * stale history (less edge ghosting) instead of hiding in it.
+ */
+static const int RESTIR_DI_DENOISE_PREFILTER_RADIUS = 3;
+
+/**
+ * History clamp width for the temporal-gradient antilag, in units of the
+ * current estimate's standard error.
+ *
+ * The gradient rejection only lowers the history *weight*, so at a moderate
+ * edge gradient a stale value is still partly blended in (residual edge ghost).
+ * As a complement (TAA/variance-clipping style), the reprojected history is
+ * clamped to the current estimate's confidence interval before it is blended: a
+ * stale value at a moving edge is pulled into range while a matching history in
+ * a stable region is untouched. Smaller clamps harder (less ghost, but can
+ * soften static edges the wide prefilter smooths); larger is gentler.
+ */
+static const float RESTIR_DI_DENOISE_CLAMP_SCALE = 2.0;
 
 /** Number of edge-aware a-trous passes in the spatial visibility denoiser. */
 static const uint RESTIR_DI_DENOISE_ATROUS_PASSES = 4;

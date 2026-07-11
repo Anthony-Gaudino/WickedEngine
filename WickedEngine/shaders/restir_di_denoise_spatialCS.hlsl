@@ -32,7 +32,7 @@
 
 PUSHCONSTANT(push, RESTIRDIDenoisePushConstants);
 
-// (moment2, historyLength, meanFast, slowMean); variance = moment2 - slowMean^2.
+// (moment2, historyLength, unused, slowMean); variance = moment2 - slowMean^2.
 Texture2D<float4> moments : register(t0);
 
 RWTexture2D<float2> atrousOutput : register(u0); // (visibility, variance)
@@ -45,8 +45,11 @@ static const float ATROUS_KERNEL[3] = { 0.375, 0.25, 0.0625 };
 /**
  * Fetches the (visibility, variance) pair for a pixel from this pass's input.
  *
- * On the first pass the input is the reservoir (visibility) plus the moments
- * (variance = second moment - mean^2); afterwards it is the ping-pong texture.
+ * On the first pass the input is the moments texture: the temporally denoised
+ * visibility (slow mean, .w) plus its variance (second moment .x - mean^2). The
+ * temporal pass leaves it there rather than in the reservoir so its
+ * neighborhood prefilter stays race-free. Afterwards the input is the ping-pong
+ * texture.
  *
  * @param[in] p - Pixel coordinate.
  *
@@ -56,10 +59,9 @@ float2 FetchVisVar(uint2 p)
 {
 	if (push.inputFromReservoir)
 	{
-		const uint index = p.y * push.resolution.x + p.x;
-		const float vis = RESTIRDIReservoirLoad(reservoir, index).visibility;
-		const float moment2 = moments[p].x;
-		return float2(vis, max(0.0, moment2 - vis * vis));
+		const float4 m = moments[p];
+		const float vis = m.w;
+		return float2(vis, max(0.0, m.x - vis * vis));
 	}
 	return atrousInput[p];
 }
