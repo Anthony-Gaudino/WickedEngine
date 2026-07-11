@@ -640,6 +640,7 @@ namespace wi
 			getRaytracedDiffuseEnabled() ||
 			wi::renderer::GetScreenSpaceShadowsEnabled() ||
 			wi::renderer::GetRaytracedShadowsEnabled() ||
+			wi::renderer::GetReSTIRDIEnabled() ||
 			wi::renderer::GetVXGIEnabled()
 			)
 		{
