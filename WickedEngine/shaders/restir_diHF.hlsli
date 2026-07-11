@@ -146,6 +146,22 @@ inline RESTIRDIReservoir RESTIRDIReservoirLoad(ByteAddressBuffer buf, uint index
 }
 
 /**
+ * Loads a DI reservoir from a writable reservoir buffer (in-place read).
+ *
+ * @param[in] buf - Reservoir byte-address buffer (UAV).
+ * @param[in] index - Flat pixel index (y * width + x).
+ *
+ * @return The unpacked reservoir at that index.
+ */
+inline RESTIRDIReservoir RESTIRDIReservoirLoad(RWByteAddressBuffer buf, uint index)
+{
+	RESTIRDIReservoirPacked p;
+	p.data0 = buf.Load4(index * 32);
+	p.data1 = buf.Load4(index * 32 + 16);
+	return p.load();
+}
+
+/**
  * Stores a DI reservoir into a raw reservoir buffer.
  *
  * @param[in,out] buf - Reservoir byte-address buffer (UAV).

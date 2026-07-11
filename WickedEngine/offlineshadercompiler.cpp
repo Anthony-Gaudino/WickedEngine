@@ -216,6 +216,7 @@ wi::vector<ShaderEntry> shaders = {
 	{"restir_di_temporalCS", wi::graphics::ShaderStage::CS },
 	{"restir_di_spatialCS", wi::graphics::ShaderStage::CS },
 	{"restir_di_spatialCS_rtapi", wi::graphics::ShaderStage::CS, wi::graphics::ShaderModel::SM_6_5 },
+	{"restir_di_denoise_temporalCS", wi::graphics::ShaderStage::CS },
 	{"terrainVirtualTextureUpdateCS", wi::graphics::ShaderStage::CS },
 	{"terrainVirtualTextureUpdateCS_normalmap", wi::graphics::ShaderStage::CS },
 	{"terrainVirtualTextureUpdateCS_surfacemap", wi::graphics::ShaderStage::CS },

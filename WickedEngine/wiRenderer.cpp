@@ -1180,6 +1180,7 @@ void LoadShaders()
 	{
 		wi::jobsystem::Execute(raytracing_ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_DI_SPATIAL], "restir_di_spatialCS.cso"); });
 	}
+	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_DI_DENOISE_TEMPORAL], "restir_di_denoise_temporalCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_TERRAIN_VIRTUALTEXTURE_UPDATE_BASECOLORMAP], "terrainVirtualTextureUpdateCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_TERRAIN_VIRTUALTEXTURE_UPDATE_NORMALMAP], "terrainVirtualTextureUpdateCS_normalmap.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_TERRAIN_VIRTUALTEXTURE_UPDATE_SURFACEMAP], "terrainVirtualTextureUpdateCS_surfacemap.cso"); });
@@ -15674,6 +15675,19 @@ void CreateReSTIRDIResources(ReSTIRDIResources& res, XMUINT2 resolution)
 	device->SetName(&res.reservoir_final[0], "restir_di.reservoir_final[0]");
 	device->CreateBufferZeroed(&bd, &res.reservoir_final[1]);
 	device->SetName(&res.reservoir_final[1], "restir_di.reservoir_final[1]");
+
+	// Visibility denoiser temporal state:
+	// (second moment, history length, fast-accumulator mean, unused).
+	TextureDesc td;
+	td.width = resolution.x;
+	td.height = resolution.y;
+	td.format = Format::R16G16B16A16_FLOAT;
+	td.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+	td.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
+	device->CreateTexture(&td, nullptr, &res.visibility_moments[0]);
+	device->SetName(&res.visibility_moments[0], "restir_di.visibility_moments[0]");
+	device->CreateTexture(&td, nullptr, &res.visibility_moments[1]);
+	device->SetName(&res.visibility_moments[1], "restir_di.visibility_moments[1]");
 }
 int ReSTIR_DI(
 	const ReSTIRDIResources& res,
@@ -15765,6 +15779,39 @@ int ReSTIR_DI(
 			device->Barrier(GPUBarrier::Buffer(&res.reservoir_final[cur], ResourceState::SHADER_RESOURCE, ResourceState::UNORDERED_ACCESS), cmd);
 			device->Dispatch(dispatch_x, dispatch_y, 1, cmd);
 			device->Barrier(GPUBarrier::Buffer(&res.reservoir_final[cur], ResourceState::UNORDERED_ACCESS, ResourceState::SHADER_RESOURCE), cmd);
+			device->EventEnd(cmd);
+		}
+
+		// Visibility temporal denoise: accumulate the fresh 1-sample shadow
+		// into a running mean, written in place into the reservoir's visibility
+		// field so forward shading reads the denoised value.
+		{
+			device->EventBegin("Visibility denoise", cmd);
+			device->BindComputeShader(&shaders[CSTYPE_RESTIR_DI_DENOISE_TEMPORAL], cmd);
+			device->PushConstants(&push, sizeof(push), cmd);
+
+			const GPUResource* srvs[] = {
+				&res.reservoir_final[prev],
+				&res.visibility_moments[prev],
+			};
+			device->BindResources(srvs, 0, arraysize(srvs), cmd);
+			const GPUResource* uavs[] = {
+				&res.reservoir_final[cur],
+				&res.visibility_moments[cur],
+			};
+			device->BindUAVs(uavs, 0, arraysize(uavs), cmd);
+
+			GPUBarrier pre[] = {
+				GPUBarrier::Buffer(&res.reservoir_final[cur], ResourceState::SHADER_RESOURCE, ResourceState::UNORDERED_ACCESS),
+				GPUBarrier::Image(&res.visibility_moments[cur], res.visibility_moments[cur].desc.layout, ResourceState::UNORDERED_ACCESS),
+			};
+			device->Barrier(pre, arraysize(pre), cmd);
+			device->Dispatch(dispatch_x, dispatch_y, 1, cmd);
+			GPUBarrier post[] = {
+				GPUBarrier::Buffer(&res.reservoir_final[cur], ResourceState::UNORDERED_ACCESS, ResourceState::SHADER_RESOURCE),
+				GPUBarrier::Image(&res.visibility_moments[cur], ResourceState::UNORDERED_ACCESS, res.visibility_moments[cur].desc.layout),
+			};
+			device->Barrier(post, arraysize(post), cmd);
 			device->EventEnd(cmd);
 		}
 	}

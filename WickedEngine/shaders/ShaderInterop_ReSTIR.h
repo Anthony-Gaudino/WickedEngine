@@ -307,6 +307,26 @@ static const uint RESTIR_DI_SPATIAL_SAMPLES = 4;
 /** Spatial-reuse search radius, in pixels. */
 static const float RESTIR_DI_SPATIAL_RADIUS = 16.0;
 
+/**
+ * Visibility denoiser history cap. The temporal accumulation blends the fresh
+ * per-frame visibility toward a running mean with weight 1 / historyLength;
+ * capping the length floors that weight so the shadow stays responsive to
+ * change (a higher cap denoises more but reacts slower).
+ */
+static const float RESTIR_DI_DENOISE_MAX_HISTORY = 32.0;
+
+/**
+ * Fast-accumulator history cap for the visibility denoiser's antilag.
+ *
+ * The denoiser runs a second, short-window running mean of the visibility. A
+ * *persistent* gap between this fast mean and the long (slow) mean signals that
+ * the true shadow moved — geometry is unchanged, so depth/normal disocclusion
+ * cannot catch it — as opposed to per-frame RIS sampling noise, which leaves
+ * the two accumulators in agreement. The gap drives an antilag term that
+ * collapses the slow history so the trailing shadow clears immediately.
+ */
+static const float RESTIR_DI_DENOISE_FAST_HISTORY = 4.0;
+
 #ifndef __cplusplus
 /**
  * A screen-space ReSTIR DI reservoir.

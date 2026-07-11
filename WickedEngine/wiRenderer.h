@@ -762,6 +762,12 @@ namespace wi::renderer
 		// Ping-pong final reservoir: current frame result / previous-frame history.
 		wi::graphics::GPUBuffer reservoir_final[2];
 
+		// Visibility denoiser temporal state, ping-pong: (second moment,
+		// history length) per pixel. The accumulated (denoised) visibility mean
+		// itself lives in reservoir_final[].visibility, so shading needs no
+		// extra read.
+		wi::graphics::Texture visibility_moments[2];
+
 		XMUINT2 resolution = {};
 		mutable int frame = 0;
 	};
