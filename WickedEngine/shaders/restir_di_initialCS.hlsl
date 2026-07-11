@@ -118,6 +118,13 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			ray.TMax = max(0.02, dist - 0.02);
 			ray.Direction = dir;
 
+			// Only geometry flagged as a shadow caster occludes. This skips
+			// water and objects with "cast shadow" disabled, matching the
+			// engine shadow-map/RTShadow behaviour; without it, it blocks light
+			// from reaching underwater surfaces. Mirrors
+			// wi::renderer::raytracing_inclusion_mask_shadow (bit 0).
+			const uint shadow_ray_mask = 1u;
+
 			float shadow = 1;
 #ifdef RTAPI
 			wiRayQuery q;
@@ -128,7 +135,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
 				// polygon.
 				RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES |
 				RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,	// uint RayFlags
-				0xFF,							// uint InstanceInclusionMask
+				shadow_ray_mask,				// uint InstanceInclusionMask
 				ray								// RayDesc Ray
 			);
 			while (q.Proceed())
@@ -157,7 +164,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			}
 			shadow = q.CommittedStatus() == COMMITTED_TRIANGLE_HIT ? 0 : shadow;
 #else
-			shadow = TraceRay_Any(ray, 0xFF, rng) ? 0 : shadow;
+			shadow = TraceRay_Any(ray, shadow_ray_mask, rng) ? 0 : shadow;
 #endif // RTAPI
 			reservoir.visibility = shadow;
 		}

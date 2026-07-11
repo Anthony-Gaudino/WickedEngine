@@ -774,6 +774,7 @@ namespace wi
 		camera_reflection.texture_depth_index = device->GetDescriptorIndex(&depthBuffer_Reflection, SubresourceType::SRV);
 		camera_reflection.texture_velocity_index = -1;
 		camera_reflection.texture_normal_roughness_index = -1;
+		camera_reflection.buffer_restir_di_index = -1; // reflection uses analytic direct lighting, not ReSTIR
 		camera_reflection.buffer_entitytiles_index = device->GetDescriptorIndex(&tiledLightResources_planarReflection.entityTiles, SubresourceType::SRV);
 		camera_reflection.texture_reflection_index = -1;
 		camera_reflection.texture_reflection_depth_index = -1;
