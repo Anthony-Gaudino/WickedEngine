@@ -1,12 +1,18 @@
+#define TEXTURE_SLOT_NONUNIFORM // final visibility ray alpha-tests materials
 #include "globals.hlsli"
+#include "raytracingHF.hlsli"
+#include "lightingHF.hlsli"
 #include "restir_diHF.hlsli"
+#include "restir_di_visibilityHF.hlsli"
 
 // ReSTIR DI - spatial resampling pass.
 //
 // Merges a handful of nearby reservoirs into each pixel's temporal reservoir,
 // rejecting neighbors that lie on a different surface (depth or normal
-// mismatch). The result is the final reservoir: it is consumed by forward
-// shading this frame and becomes the temporal history for the next frame.
+// mismatch), then re-traces a fresh shadow ray for the final sample so the
+// shadow reflects the current frame (the visibility cached through reuse is
+// stale and would ghost). The result is the final reservoir: consumed by
+// forward shading this frame and becomes the temporal history next frame.
 
 PUSHCONSTANT(push, RESTIRDIPushConstants);
 
@@ -74,6 +80,17 @@ void main(uint3 DTid : SV_DispatchThreadID)
 				const float maxW = (float)lights().item_count();
 				RESTIRDIReservoirMerge(reservoir, neighbor, targetAtSelf, maxW, rng);
 			}
+		}
+
+		// Final visibility: re-trace a fresh shadow ray for the reused sample
+		// so the shadow reflects the current frame instead of the stale
+		// visibility carried through spatiotemporal reuse (which ghosts).
+		const float W = RESTIRDIReservoirGetInvPdf(reservoir);
+		[branch]
+		if (W > 0 && reservoir.targetPdf > 0)
+		{
+			reservoir.visibility =
+				RESTIRDITraceVisibility(P, N, reservoir.samplePosition, rng);
 		}
 	}
 

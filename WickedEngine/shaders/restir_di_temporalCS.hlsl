@@ -40,18 +40,27 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		[branch]
 		if (all(prevUV >= 0) && all(prevUV <= 1))
 		{
-			// Disocclusion test: reject history when the reprojected linear
-			// depth differs too much from the current one.
+			const uint2 prevPixel = min(uint2(prevUV * push.resolution), push.resolution - 1);
+
+			// Disocclusion test: reject history when the reprojected sample
+			// lies on a different surface. Depth catches translation across
+			// depth edges; the normal test catches reprojection onto a
+			// differently oriented surface (e.g. rotating past an edge), which
+			// reduces the smeared ghosting the depth-only test leaves behind.
+			// No previous normal buffer is kept, so this compares the current
+			// normal at the reprojected location - a good geometric proxy for
+			// disocclusion.
 			const float prevDepth = texture_depth_history.SampleLevel(sampler_point_clamp, prevUV, 0);
 			const float linearCur = compute_lineardepth(depth);
 			const float linearPrev = compute_lineardepth(prevDepth);
+			const float3 prevN = decode_normal(texture_normal_roughness[prevPixel]);
 			const bool consistent =
-				abs(linearCur - linearPrev) <= 0.05 * linearCur;
+				abs(linearCur - linearPrev) <= 0.05 * linearCur &&
+				dot(prevN, N) >= 0.9;
 
 			[branch]
 			if (consistent)
 			{
-				const uint2 prevPixel = min(uint2(prevUV * push.resolution), push.resolution - 1);
 				const uint prevFlat = prevPixel.y * push.resolution.x + prevPixel.x;
 
 				RESTIRDIReservoir history = RESTIRDIReservoirLoad(reservoirHistory, prevFlat);

@@ -4,6 +4,7 @@
 #include "lightingHF.hlsli"
 #include "restir_lightsamplingHF.hlsli"
 #include "restir_diHF.hlsli"
+#include "restir_di_visibilityHF.hlsli"
 
 // ReSTIR DI - initial candidate generation pass.
 //
@@ -98,75 +99,16 @@ void main(uint3 DTid : SV_DispatchThreadID)
 
 		reservoir = RESTIRDISampleInitial(P, N, push.candidateCount, rng);
 
-		// Cache visibility for the chosen sample with a single shadow ray.
+		// Cache visibility for the chosen sample. This is used directly when
+		// spatiotemporal reuse is off; with reuse on, the spatial pass
+		// re-traces a fresh shadow ray for the final reused sample so the
+		// shadow reflects the current frame instead of a stale cached value.
 		const float W = RESTIRDIReservoirGetInvPdf(reservoir);
 		[branch]
 		if (W > 0 && reservoir.targetPdf > 0)
 		{
-			// Offset the ray origin along the surface normal, not just by TMin.
-			// A TMin step runs nearly parallel to the surface at grazing light
-			// angles and self-intersects it, falsely shadowing the lit region;
-			// a normal offset clears the surface regardless of light direction.
-			const float3 rayOrigin = P + N * 0.05;
-			const float3 d = reservoir.samplePosition - rayOrigin;
-			const float dist = length(d);
-			const float3 dir = d / max(dist, 1e-6);
-
-			RayDesc ray;
-			ray.Origin = rayOrigin;
-			ray.TMin = 0.01;
-			ray.TMax = max(0.02, dist - 0.02);
-			ray.Direction = dir;
-
-			// Only geometry flagged as a shadow caster occludes. This skips
-			// water and objects with "cast shadow" disabled, matching the
-			// engine shadow-map/RTShadow behaviour; without it, it blocks light
-			// from reaching underwater surfaces. Mirrors
-			// wi::renderer::raytracing_inclusion_mask_shadow (bit 0).
-			const uint shadow_ray_mask = 1u;
-
-			float shadow = 1;
-#ifdef RTAPI
-			wiRayQuery q;
-			q.TraceRayInline(
-				scene_acceleration_structure,	// RaytracingAccelerationStructure AccelerationStructure
-				// No RAY_FLAG_FORCE_OPAQUE: non-opaque hits are alpha-tested
-				// below so cutout foliage casts a shaped shadow, not its full
-				// polygon.
-				RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES |
-				RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH,	// uint RayFlags
-				shadow_ray_mask,				// uint InstanceInclusionMask
-				ray								// RayDesc Ray
-			);
-			while (q.Proceed())
-			{
-				// Non-opaque candidate: load the material and let it occlude
-				// only where the (stochastic) alpha test passes. Additive
-				// materials do not cast shadows.
-				PrimitiveID prim;
-				prim.init();
-				prim.primitiveIndex = q.CandidatePrimitiveIndex();
-				prim.instanceIndex = q.CandidateInstanceID();
-				prim.subsetIndex = q.CandidateGeometryIndex();
-
-				Surface hitSurface;
-				hitSurface.init();
-				hitSurface.V = ray.Direction;
-				[branch]
-				if (hitSurface.load(prim, q.CandidateTriangleBarycentrics()))
-				{
-					if (!hitSurface.material.IsAdditive() &&
-						hitSurface.opacity - rng.next_float() >= 0)
-					{
-						q.CommitNonOpaqueTriangleHit();
-					}
-				}
-			}
-			shadow = q.CommittedStatus() == COMMITTED_TRIANGLE_HIT ? 0 : shadow;
-#else
-			shadow = TraceRay_Any(ray, shadow_ray_mask, rng) ? 0 : shadow;
-#endif // RTAPI
-			reservoir.visibility = shadow;
+			reservoir.visibility =
+				RESTIRDITraceVisibility(P, N, reservoir.samplePosition, rng);
 		}
 	}
 
