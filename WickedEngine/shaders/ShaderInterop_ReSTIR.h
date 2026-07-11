@@ -311,9 +311,11 @@ static const float RESTIR_DI_SPATIAL_RADIUS = 16.0;
  * Visibility denoiser history cap. The temporal accumulation blends the fresh
  * per-frame visibility toward a running mean with weight 1 / historyLength;
  * capping the length floors that weight so the shadow stays responsive to
- * change (a higher cap denoises more but reacts slower).
+ * change (a higher cap denoises more but reacts slower). Kept moderate because
+ * the spatial a-trous pass removes most of the residual per-frame noise, so the
+ * temporal stage can stay short (and therefore low-lag).
  */
-static const float RESTIR_DI_DENOISE_MAX_HISTORY = 32.0;
+static const float RESTIR_DI_DENOISE_MAX_HISTORY = 2.0;
 
 /**
  * Fast-accumulator history cap for the visibility denoiser's antilag.
@@ -326,6 +328,29 @@ static const float RESTIR_DI_DENOISE_MAX_HISTORY = 32.0;
  * collapses the slow history so the trailing shadow clears immediately.
  */
 static const float RESTIR_DI_DENOISE_FAST_HISTORY = 4.0;
+
+/** Number of edge-aware a-trous passes in the spatial visibility denoiser. */
+static const uint RESTIR_DI_DENOISE_ATROUS_PASSES = 4;
+
+/**
+ * Depth edge-stop scale for the spatial a-trous filter.
+ *
+ * The depth weight is \[ \exp(-|z_c - z_t| / (s\, z_c + \epsilon)) \], so a
+ * smaller scale keeps the blur tighter across depth discontinuities.
+ */
+static const float RESTIR_DI_DENOISE_DEPTH_SCALE = 0.5;
+
+/** Normal edge-stop exponent: higher preserves creases/silhouettes more. */
+static const float RESTIR_DI_DENOISE_NORMAL_POWER = 64.0;
+
+/**
+ * Visibility (luminance) edge-stop scale for the spatial a-trous filter.
+ *
+ * Scales the standard deviation \[ \sqrt{\mathrm{Var}} \] used as the tolerance
+ * on visibility differences: the filter blurs freely where the temporal
+ * variance is high (noise) but keeps crisp penumbra gradients where it is low.
+ */
+static const float RESTIR_DI_DENOISE_LUMINANCE_SCALE = 4.0;
 
 #ifndef __cplusplus
 /**
@@ -462,6 +487,31 @@ struct RESTIRDIPushConstants
 	uint candidateCount;
 	uint spatialSampleCount;
 	float spatialRadius;
+};
+
+/**
+ * Parameters for one pass of the spatial visibility a-trous denoiser.
+ *
+ * The denoiser runs RESTIR_DI_DENOISE_ATROUS_PASSES passes with a doubling tap
+ * stride. The first pass reads the temporally accumulated visibility straight
+ * from the reservoir buffer, the last writes the filtered result back into it;
+ * intermediate passes ping-pong two (visibility, variance) scratch textures.
+ */
+struct RESTIRDIDenoisePushConstants
+{
+	uint2 resolution;
+	float2 resolutionRcp;
+
+	/** Tap stride for this a-trous pass (1, 2, 4, ...). */
+	uint stepSize;
+
+	/** 1 on the first pass: read the input from the reservoir + moments. */
+	uint inputFromReservoir;
+
+	/** 1 on the last pass: write the filtered visibility into the reservoir. */
+	uint outputToReservoir;
+
+	float pad;
 };
 
 /**

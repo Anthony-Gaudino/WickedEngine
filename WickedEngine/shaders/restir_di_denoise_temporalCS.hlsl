@@ -30,9 +30,11 @@
 
 PUSHCONSTANT(push, RESTIRDIPushConstants);
 
-ByteAddressBuffer reservoirHistory : register(t0);   // reservoir_final[prev]
-// (moment2, historyLength, meanFast, unused)
-Texture2D<float4> momentsHistory : register(t1);
+// (moment2, historyLength, meanFast, slowMean). The slow mean is the temporal
+// history the next frame reprojects; keeping it here (not in the reservoir)
+// means the spatial pass, which overwrites reservoir.visibility with the
+// spatially filtered result, cannot feed that blur back into temporal history.
+Texture2D<float4> momentsHistory : register(t0);
 
 RWByteAddressBuffer reservoirCurrent : register(u0); // reservoir_final[cur], in place
 RWTexture2D<float4> momentsOutput : register(u1);
@@ -84,12 +86,9 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		[branch]
 		if (abs(linearCur - linearPrev) <= 0.05 * linearCur && dot(prevN, N) >= 0.9)
 		{
-			const uint prevFlat = prevPixel.y * push.resolution.x + prevPixel.x;
-			const RESTIRDIReservoir prevReservoir =
-				RESTIRDIReservoirLoad(reservoirHistory, prevFlat);
 			const float4 prevMoments = momentsHistory[prevPixel];
 
-			const float prevMeanSlow = prevReservoir.visibility;
+			const float prevMeanSlow = prevMoments.w;
 			const float prevMeanFast = prevMoments.z;
 
 			// Fast accumulator: short window, tracks change quickly.
@@ -117,9 +116,12 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		}
 	}
 
-	// Write the denoised visibility back into the reservoir (shading reads it),
-	// and the moments for antilag and the spatial filter's variance.
+	// Write the temporal mean into the reservoir's visibility (the spatial pass
+	// reads it there, then overwrites it with the filtered result shading
+	// uses). The moments carry the second moment (variance for the spatial
+	// filter), the history length, the fast-accumulator mean (antilag), and the
+	// slow mean (the temporal history the next frame reprojects).
 	reservoir.visibility = mean;
 	RESTIRDIReservoirStore(reservoirCurrent, flatIndex, reservoir);
-	momentsOutput[pixel] = float4(moment2, historyLength, meanFast, 0);
+	momentsOutput[pixel] = float4(moment2, historyLength, meanFast, mean);
 }

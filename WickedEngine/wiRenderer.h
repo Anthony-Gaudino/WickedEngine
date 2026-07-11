@@ -762,11 +762,17 @@ namespace wi::renderer
 		// Ping-pong final reservoir: current frame result / previous-frame history.
 		wi::graphics::GPUBuffer reservoir_final[2];
 
-		// Visibility denoiser temporal state, ping-pong: (second moment,
-		// history length) per pixel. The accumulated (denoised) visibility mean
-		// itself lives in reservoir_final[].visibility, so shading needs no
-		// extra read.
+		// Visibility denoiser temporal state, ping-pong per pixel: (second
+		// moment, history length, fast-accumulator mean, slow mean). The
+		// temporal mean fed to the spatial pass lands in
+		// reservoir_final[].visibility; the slow mean kept here is the history
+		// the next frame reprojects (so the spatial blur cannot feed back).
 		wi::graphics::Texture visibility_moments[2];
+
+		// Ping-pong scratch for the spatial a-trous visibility denoiser:
+		// (visibility, variance) per pixel. Never read by shading (the filtered
+		// visibility is written back into reservoir_final[].visibility).
+		wi::graphics::Texture denoise_atrous[2];
 
 		XMUINT2 resolution = {};
 		mutable int frame = 0;

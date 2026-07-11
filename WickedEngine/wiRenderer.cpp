@@ -1181,6 +1181,7 @@ void LoadShaders()
 		wi::jobsystem::Execute(raytracing_ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_DI_SPATIAL], "restir_di_spatialCS.cso"); });
 	}
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_DI_DENOISE_TEMPORAL], "restir_di_denoise_temporalCS.cso"); });
+	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_DI_DENOISE_SPATIAL], "restir_di_denoise_spatialCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_TERRAIN_VIRTUALTEXTURE_UPDATE_BASECOLORMAP], "terrainVirtualTextureUpdateCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_TERRAIN_VIRTUALTEXTURE_UPDATE_NORMALMAP], "terrainVirtualTextureUpdateCS_normalmap.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_TERRAIN_VIRTUALTEXTURE_UPDATE_SURFACEMAP], "terrainVirtualTextureUpdateCS_surfacemap.cso"); });
@@ -15688,6 +15689,18 @@ void CreateReSTIRDIResources(ReSTIRDIResources& res, XMUINT2 resolution)
 	device->SetName(&res.visibility_moments[0], "restir_di.visibility_moments[0]");
 	device->CreateTexture(&td, nullptr, &res.visibility_moments[1]);
 	device->SetName(&res.visibility_moments[1], "restir_di.visibility_moments[1]");
+
+	// Spatial a-trous ping-pong scratch: (visibility, variance).
+	TextureDesc ad;
+	ad.width = resolution.x;
+	ad.height = resolution.y;
+	ad.format = Format::R16G16_FLOAT;
+	ad.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+	ad.layout = ResourceState::UNORDERED_ACCESS;
+	device->CreateTexture(&ad, nullptr, &res.denoise_atrous[0]);
+	device->SetName(&res.denoise_atrous[0], "restir_di.denoise_atrous[0]");
+	device->CreateTexture(&ad, nullptr, &res.denoise_atrous[1]);
+	device->SetName(&res.denoise_atrous[1], "restir_di.denoise_atrous[1]");
 }
 int ReSTIR_DI(
 	const ReSTIRDIResources& res,
@@ -15790,11 +15803,7 @@ int ReSTIR_DI(
 			device->BindComputeShader(&shaders[CSTYPE_RESTIR_DI_DENOISE_TEMPORAL], cmd);
 			device->PushConstants(&push, sizeof(push), cmd);
 
-			const GPUResource* srvs[] = {
-				&res.reservoir_final[prev],
-				&res.visibility_moments[prev],
-			};
-			device->BindResources(srvs, 0, arraysize(srvs), cmd);
+			device->BindResource(&res.visibility_moments[prev], 0, cmd);
 			const GPUResource* uavs[] = {
 				&res.reservoir_final[cur],
 				&res.visibility_moments[cur],
@@ -15812,6 +15821,46 @@ int ReSTIR_DI(
 				GPUBarrier::Image(&res.visibility_moments[cur], ResourceState::UNORDERED_ACCESS, res.visibility_moments[cur].desc.layout),
 			};
 			device->Barrier(post, arraysize(post), cmd);
+			device->EventEnd(cmd);
+		}
+
+		// Spatial visibility denoise: an edge-aware a-trous over the temporally
+		// accumulated shadow, variance-guided so it removes the residual
+		// per-frame noise without smearing shadow edges. Filtering in space is
+		// what lets the temporal stage stay short (low ghosting). The filtered
+		// result is written back into reservoir_final[cur].visibility (shading
+		// reads it there); the temporal history lives in the moments texture, so
+		// this blur never feeds back into it. The two scratch textures stay in
+		// UNORDERED_ACCESS and are ping-ponged with a global memory barrier.
+		{
+			device->EventBegin("Visibility spatial denoise", cmd);
+			device->BindComputeShader(&shaders[CSTYPE_RESTIR_DI_DENOISE_SPATIAL], cmd);
+			device->BindResource(&res.visibility_moments[cur], 0, cmd);
+
+			device->Barrier(GPUBarrier::Buffer(&res.reservoir_final[cur], ResourceState::SHADER_RESOURCE, ResourceState::UNORDERED_ACCESS), cmd);
+
+			for (uint32_t i = 0; i < RESTIR_DI_DENOISE_ATROUS_PASSES; ++i)
+			{
+				RESTIRDIDenoisePushConstants dpush = {};
+				dpush.resolution = res.resolution;
+				dpush.resolutionRcp = push.resolutionRcp;
+				dpush.stepSize = 1u << i;
+				dpush.inputFromReservoir = (i == 0) ? 1u : 0u;
+				dpush.outputToReservoir =
+					(i + 1 == RESTIR_DI_DENOISE_ATROUS_PASSES) ? 1u : 0u;
+				device->PushConstants(&dpush, sizeof(dpush), cmd);
+
+				const uint32_t outIdx = i & 1u;
+				device->BindUAV(&res.denoise_atrous[outIdx], 0, cmd);
+				device->BindUAV(&res.reservoir_final[cur], 1, cmd);
+				device->BindUAV(&res.denoise_atrous[outIdx ^ 1u], 2, cmd);
+
+				if (i > 0)
+					device->Barrier(GPUBarrier::Memory(), cmd);
+				device->Dispatch(dispatch_x, dispatch_y, 1, cmd);
+			}
+
+			device->Barrier(GPUBarrier::Buffer(&res.reservoir_final[cur], ResourceState::UNORDERED_ACCESS, ResourceState::SHADER_RESOURCE), cmd);
 			device->EventEnd(cmd);
 		}
 	}
