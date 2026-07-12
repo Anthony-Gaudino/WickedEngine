@@ -69,7 +69,8 @@ inline RESTIRDIReservoir RESTIRDISampleInitial(
 		const float risWeight = targetPdf * invSourcePdf;
 
 		RESTIRDIReservoirUpdate(
-			r, samplePosition, s.radiance, targetPdf, risWeight, rng);
+			r, samplePosition, s.radiance, lightIndex, targetPdf, risWeight,
+			rng);
 	}
 
 	return r;

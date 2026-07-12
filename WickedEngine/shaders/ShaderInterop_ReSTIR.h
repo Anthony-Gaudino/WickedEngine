@@ -313,52 +313,36 @@ static const float RESTIR_DI_SPATIAL_RADIUS = 16.0;
  * capping the length floors that weight so the shadow stays responsive to
  * change (a higher cap denoises more but reacts slower).
  *
- * Kept high because the temporal-gradient antilag adapts the effective history
+ * Kept high because the A-SVGF temporal gradient adapts the effective history
  * per pixel: static shadows accumulate the full length (very clean), while a
- * pixel whose shadow changed this frame collapses its history to ~1
- * (ghost-free) — so a long cap no longer means long ghosting.
+ * pixel whose shadow actually changed this frame resets its history to ~1
+ * (ghost-free), so a long cap no longer means long ghosting.
  */
-static const float RESTIR_DI_DENOISE_MAX_HISTORY = 16.0;
+static const float RESTIR_DI_DENOISE_MAX_HISTORY = 32.0;
 
 /**
- * Temporal-gradient antilag sensitivity for the visibility denoiser.
+ * Dilation radius (in pixels) of the A-SVGF temporal gradient before it drives
+ * the history reset.
  *
- * Depth/normal disocclusion cannot catch a shadow sweeping across static
- * geometry, so the denoiser also compares a spatially prefiltered estimate of
- * the current visibility against the reprojected history. When that gradient
- * exceeds what the estimation noise explains, the shadow truly changed and the
- * history is collapsed toward the fresh sample. This scales the noise band over
- * which the rejection ramps from none to full: smaller reacts sooner (less
- * ghosting, more flicker), larger is steadier (cleaner, more lag).
+ * The exact gradient is measured per pixel by re-tracing the previous frame's
+ * sample under the current scene, so it fires only on the thin band of pixels
+ * whose occlusion actually flipped. Dilating (a max over a
+ * (2r+1)x(2r+1) window) spreads that reset across the moving edge's
+ * neighborhood so the whole affected region refreshes together, instead of
+ * leaving a one-pixel seam.
  */
-static const float RESTIR_DI_DENOISE_ANTILAG_SCALE = 4.0;
+static const int RESTIR_DI_DENOISE_GRADIENT_DILATE = 2;
 
 /**
- * Neighborhood radius of the temporal-gradient antilag's current-visibility
- * prefilter (a (2r+1)x(2r+1) window).
+ * Sensitivity of the history reset to the (dilated) temporal gradient.
  *
- * The change-detection estimate is an average of the binary per-ray visibility,
- * so its standard error falls as 1 / sqrt(sample count). A wider window
- * tightens that error, which matters most at shadow edges: the penumbra's high
- * variance inflates the noise band the gradient is compared against, and a
- * tighter estimate is what lets a moving edge clear the band and reject the
- * stale history (less edge ghosting) instead of hiding in it.
+ * The gradient is in [0, 1] (fraction of the neighborhood whose shadow
+ * changed); the reset applied to the history is saturate(gradient *
+ * sensitivity). Larger resets more eagerly on partial change (less ghost,
+ * slightly more edge flicker); 1 resets only in proportion to the measured
+ * change.
  */
-static const int RESTIR_DI_DENOISE_PREFILTER_RADIUS = 3;
-
-/**
- * History clamp width for the temporal-gradient antilag, in units of the
- * current estimate's standard error.
- *
- * The gradient rejection only lowers the history *weight*, so at a moderate
- * edge gradient a stale value is still partly blended in (residual edge ghost).
- * As a complement (TAA/variance-clipping style), the reprojected history is
- * clamped to the current estimate's confidence interval before it is blended: a
- * stale value at a moving edge is pulled into range while a matching history in
- * a stable region is untouched. Smaller clamps harder (less ghost, but can
- * soften static edges the wide prefilter smooths); larger is gentler.
- */
-static const float RESTIR_DI_DENOISE_CLAMP_SCALE = 2.0;
+static const float RESTIR_DI_DENOISE_GRADIENT_SENSITIVITY = 4.0;
 
 /** Number of edge-aware a-trous passes in the spatial visibility denoiser. */
 static const uint RESTIR_DI_DENOISE_ATROUS_PASSES = 4;
@@ -420,6 +404,16 @@ struct RESTIRDIReservoir
 
 	/** Cached visibility of the held sample, in [0, 1]. */
 	float visibility;
+
+	/**
+	 * Index of the chosen light (ShaderEntity index, or an emissive-triangle
+	 * index OR'd with RESTIR_LIGHT_FLAG_EMISSIVE_TRIANGLE). Lets the denoiser
+	 * reset history when a pixel's chosen light switches between frames, so the
+	 * single visibility channel is never temporally averaged across two
+	 * different lights (which would ghost). RESTIR_INVALID_LIGHT_INDEX if
+	 * empty.
+	 */
+	uint lightIndex;
 };
 
 /**
@@ -436,6 +430,7 @@ inline RESTIRDIReservoir RESTIRDIReservoirInit()
 	r.weightSum = 0;
 	r.M = 0;
 	r.visibility = 0;
+	r.lightIndex = RESTIR_INVALID_LIGHT_INDEX;
 	return r;
 }
 
@@ -477,8 +472,10 @@ struct RESTIRDIReservoirPacked
 		data0.w = Pack_R11G11B10_FLOAT(r.sampleRadiance);
 		data1.x = asuint(r.targetPdf);
 		data1.y = asuint(r.weightSum);
-		data1.z = asuint(r.M);
-		data1.w = asuint(r.visibility);
+		// M (confidence, small) and visibility ([0, 1]) share one 16:16 word so
+		// the light index fits without growing the reservoir past 32 bytes.
+		data1.z = pack_half2(r.M, r.visibility);
+		data1.w = r.lightIndex;
 	}
 
 	/**
@@ -493,8 +490,10 @@ struct RESTIRDIReservoirPacked
 		r.sampleRadiance = Unpack_R11G11B10_FLOAT(data0.w);
 		r.targetPdf = asfloat(data1.x);
 		r.weightSum = asfloat(data1.y);
-		r.M = asfloat(data1.z);
-		r.visibility = asfloat(data1.w);
+		const float2 mv = unpack_half2(data1.z);
+		r.M = mv.x;
+		r.visibility = mv.y;
+		r.lightIndex = data1.w;
 		return r;
 	}
 #endif // __cplusplus

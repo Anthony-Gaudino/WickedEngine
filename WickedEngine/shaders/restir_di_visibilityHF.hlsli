@@ -70,8 +70,11 @@ inline float RESTIRDITraceVisibility(
 		[branch]
 		if (hitSurface.load(prim, q.CandidateTriangleBarycentrics()))
 		{
-			if (!hitSurface.material.IsAdditive() &&
-				hitSurface.opacity - rng.next_float() >= 0)
+			// Deterministic alpha cutout (not stochastic dither): a static
+			// alpha-tested occluder then gives the same result every frame, so
+			// the A-SVGF gradient stays exact (no spurious history resets) and
+			// the shadow itself is free of per-frame alpha noise.
+			if (!hitSurface.material.IsAdditive() && hitSurface.opacity >= 0.5)
 			{
 				q.CommitNonOpaqueTriangleHit();
 			}

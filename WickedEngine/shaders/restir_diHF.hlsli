@@ -63,6 +63,7 @@ inline float RESTIRDITargetFunction(
  * @param[in,out] r - Reservoir to update.
  * @param[in] samplePosition - World-space point on the candidate light.
  * @param[in] sampleRadiance - Unshadowed incident radiance of the candidate.
+ * @param[in] lightIndex - Index of the candidate light (for the denoiser).
  * @param[in] targetPdf - Target function value p_hat of the candidate.
  * @param[in] risWeight - Resampling weight p_hat / p_source of the candidate.
  * @param[in,out] rng - Random generator.
@@ -73,6 +74,7 @@ inline bool RESTIRDIReservoirUpdate(
 	inout RESTIRDIReservoir r,
 	float3 samplePosition,
 	float3 sampleRadiance,
+	uint lightIndex,
 	float targetPdf,
 	float risWeight,
 	inout RNG rng)
@@ -84,6 +86,7 @@ inline bool RESTIRDIReservoirUpdate(
 	{
 		r.samplePosition = samplePosition;
 		r.sampleRadiance = sampleRadiance;
+		r.lightIndex = lightIndex;
 		r.targetPdf = targetPdf;
 		return true;
 	}
@@ -121,6 +124,7 @@ inline void RESTIRDIReservoirMerge(
 	{
 		self.samplePosition = other.samplePosition;
 		self.sampleRadiance = other.sampleRadiance;
+		self.lightIndex = other.lightIndex;
 		self.targetPdf = targetPdfAtSelf;
 		self.visibility = other.visibility;
 	}

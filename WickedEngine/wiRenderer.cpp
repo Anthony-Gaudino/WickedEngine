@@ -15701,6 +15701,20 @@ void CreateReSTIRDIResources(ReSTIRDIResources& res, XMUINT2 resolution)
 	device->SetName(&res.denoise_atrous[0], "restir_di.denoise_atrous[0]");
 	device->CreateTexture(&ad, nullptr, &res.denoise_atrous[1]);
 	device->SetName(&res.denoise_atrous[1], "restir_di.denoise_atrous[1]");
+
+	// Raw visibility history (ping-pong) and the A-SVGF temporal gradient.
+	TextureDesc gd;
+	gd.width = resolution.x;
+	gd.height = resolution.y;
+	gd.format = Format::R16_FLOAT;
+	gd.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+	gd.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
+	device->CreateTexture(&gd, nullptr, &res.raw_visibility[0]);
+	device->SetName(&res.raw_visibility[0], "restir_di.raw_visibility[0]");
+	device->CreateTexture(&gd, nullptr, &res.raw_visibility[1]);
+	device->SetName(&res.raw_visibility[1], "restir_di.raw_visibility[1]");
+	device->CreateTexture(&gd, nullptr, &res.gradient);
+	device->SetName(&res.gradient, "restir_di.gradient");
 }
 int ReSTIR_DI(
 	const ReSTIRDIResources& res,
@@ -15780,26 +15794,45 @@ int ReSTIR_DI(
 			device->EventEnd(cmd);
 		}
 
-		// Spatial resampling: merge nearby reservoirs into the final result.
+		// Spatial resampling: merge nearby reservoirs into the final result,
+		// re-trace the final shadow, and produce the A-SVGF temporal gradient
+		// (plus this frame's raw visibility for next frame's gradient).
 		{
 			device->EventBegin("Spatial", cmd);
 			device->BindComputeShader(&shaders[CSTYPE_RESTIR_DI_SPATIAL], cmd);
 			device->PushConstants(&push, sizeof(push), cmd);
 
-			device->BindResource(&res.reservoir_temporal, 0, cmd);
+			const GPUResource* srvs[] = {
+				&res.reservoir_temporal,
+				&res.reservoir_final[prev],
+				&res.raw_visibility[prev],
+			};
+			device->BindResources(srvs, 0, arraysize(srvs), cmd);
 			device->BindUAV(&res.reservoir_final[cur], 0, cmd);
+			device->BindUAV(&res.raw_visibility[cur], 1, cmd);
+			device->BindUAV(&res.gradient, 2, cmd);
 
-			device->Barrier(GPUBarrier::Buffer(&res.reservoir_final[cur], ResourceState::SHADER_RESOURCE, ResourceState::UNORDERED_ACCESS), cmd);
+			GPUBarrier pre[] = {
+				GPUBarrier::Buffer(&res.reservoir_final[cur], ResourceState::SHADER_RESOURCE, ResourceState::UNORDERED_ACCESS),
+				GPUBarrier::Image(&res.raw_visibility[cur], res.raw_visibility[cur].desc.layout, ResourceState::UNORDERED_ACCESS),
+				GPUBarrier::Image(&res.gradient, res.gradient.desc.layout, ResourceState::UNORDERED_ACCESS),
+			};
+			device->Barrier(pre, arraysize(pre), cmd);
 			device->Dispatch(dispatch_x, dispatch_y, 1, cmd);
-			device->Barrier(GPUBarrier::Buffer(&res.reservoir_final[cur], ResourceState::UNORDERED_ACCESS, ResourceState::SHADER_RESOURCE), cmd);
+			GPUBarrier post[] = {
+				GPUBarrier::Buffer(&res.reservoir_final[cur], ResourceState::UNORDERED_ACCESS, ResourceState::SHADER_RESOURCE),
+				GPUBarrier::Image(&res.raw_visibility[cur], ResourceState::UNORDERED_ACCESS, res.raw_visibility[cur].desc.layout),
+				GPUBarrier::Image(&res.gradient, ResourceState::UNORDERED_ACCESS, res.gradient.desc.layout),
+			};
+			device->Barrier(post, arraysize(post), cmd);
 			device->EventEnd(cmd);
 		}
 
 		// Visibility temporal denoise: accumulate the fresh 1-sample shadow
 		// into a running mean, written into the moments texture (slow mean).
-		// This pass is read-only on the reservoir (its neighborhood prefilter
-		// would race an in-place write); the spatial pass reads the mean back
-		// from the moments.
+		// This pass is read-only on the reservoir; the exact A-SVGF gradient
+		// from the spatial pass drives the per-pixel history reset, and the
+		// spatial denoise reads the mean back from the moments.
 		{
 			device->EventBegin("Visibility denoise", cmd);
 			device->BindComputeShader(&shaders[CSTYPE_RESTIR_DI_DENOISE_TEMPORAL], cmd);
@@ -15808,6 +15841,7 @@ int ReSTIR_DI(
 			const GPUResource* srvs[] = {
 				&res.visibility_moments[prev],
 				&res.reservoir_final[cur],
+				&res.gradient,
 			};
 			device->BindResources(srvs, 0, arraysize(srvs), cmd);
 			device->BindUAV(&res.visibility_moments[cur], 0, cmd);

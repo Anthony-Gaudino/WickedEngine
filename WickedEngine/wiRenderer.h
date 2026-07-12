@@ -763,16 +763,27 @@ namespace wi::renderer
 		wi::graphics::GPUBuffer reservoir_final[2];
 
 		// Visibility denoiser temporal state, ping-pong per pixel: (second
-		// moment, history length, fast-accumulator mean, slow mean). The
-		// temporal mean fed to the spatial pass lands in
-		// reservoir_final[].visibility; the slow mean kept here is the history
-		// the next frame reprojects (so the spatial blur cannot feed back).
+		// moment, history length, unused, slow mean). The slow mean is both the
+		// denoised visibility the spatial pass filters and the history the next
+		// frame reprojects (kept here, not in the reservoir, so the spatial
+		// blur cannot feed back into temporal history).
 		wi::graphics::Texture visibility_moments[2];
 
 		// Ping-pong scratch for the spatial a-trous visibility denoiser:
 		// (visibility, variance) per pixel. Never read by shading (the filtered
 		// visibility is written back into reservoir_final[].visibility).
 		wi::graphics::Texture denoise_atrous[2];
+
+		// Ping-pong raw (undenoised) visibility per pixel. The spatial reuse
+		// pass stores this frame's fresh shadow-ray result so the next frame's
+		// A-SVGF temporal gradient can compare the same sample across frames.
+		wi::graphics::Texture raw_visibility[2];
+
+		// A-SVGF temporal gradient (exact shadow change per pixel), produced by
+		// the spatial reuse pass and consumed by the temporal denoise to reset
+		// history where the shadow actually changed. Not ping-ponged (written
+		// and consumed within the same frame).
+		wi::graphics::Texture gradient;
 
 		XMUINT2 resolution = {};
 		mutable int frame = 0;
