@@ -2,38 +2,40 @@
 #include "restir_diHF.hlsli"
 
 /**
- * ReSTIR DI - visibility temporal denoise pass.
+ * ReSTIR DI - diffuse irradiance temporal denoise pass.
  *
- * Reprojects the previous frame's accumulated visibility and blends the
- * fresh 1-sample shadow toward a running mean (weight 1 / historyLength),
- * giving a temporally denoised shadow. Depth/normal disocclusion resets
+ * Reprojects the previous frame's accumulated diffuse irradiance and blends
+ * the fresh per-frame sample toward a running mean (weight 1 / historyLength),
+ * giving a temporally denoised irradiance. Depth/normal disocclusion resets
  * the history on geometry changes.
  *
- * A shadow sweeping across static geometry is invisible to depth/normal
- * disocclusion and would smear into a trail under a long history. The
- * spatial reuse pass measures that change exactly (A-SVGF: it re-traces
- * the previous frame's sample under the current scene) and writes it to
- * the gradient texture; here that gradient is dilated and drives a
- * per-pixel history reset, so a changed shadow refreshes at once while
- * static shadows keep their full, clean history.
+ * The signal denoised here is the full diffuse contribution
+ * (radiance * W * visibility * NdotL, no albedo) produced by the spatial reuse
+ * pass, not the bare shadow visibility. Because standard (unbiased) reuse
+ * reselects a light every frame - bright when the visible light wins, black
+ * when the occluded one does - only the full contribution averages to the
+ * correct colour; a visibility channel cannot. Forward shading multiplies the
+ * denoised irradiance by albedo and adds specular from the reservoir.
  *
- * The pass is read-only on the reservoir: it writes the accumulated mean
- * only into the moments texture, and the spatial pass reads it back and
- * writes the final filtered value into reservoir.visibility (so the
- * spatial blur cannot feed back into temporal history).
+ * A shadow sweeping across static geometry is invisible to depth/normal
+ * disocclusion and would smear into a trail under a long history. The spatial
+ * reuse pass measures that change exactly (A-SVGF: it re-traces the previous
+ * frame's sample under the current scene) and writes it to the gradient
+ * texture; here that gradient is dilated and drives a per-pixel history reset,
+ * so a changed shadow refreshes at once while static shadows keep their full,
+ * clean history.
  */
 
 PUSHCONSTANT(push, RESTIRDIPushConstants);
 
-// (moment2, historyLength, unused, slowMean). The slow mean is both the
-// temporal history the next frame reprojects and the denoised visibility the
-// spatial pass filters; keeping it here (not in the reservoir) also stops the
-// spatial blur feeding back into temporal history.
-Texture2D<float4> momentsHistory : register(t0);
-ByteAddressBuffer reservoirCurrent : register(t1); // reservoir_final[cur]
-Texture2D<float> gradientTexture : register(t2);   // A-SVGF temporal gradient
+// (rgb = accumulated diffuse irradiance mean, a = history length). The mean is
+// both this frame's denoised irradiance (the spatial pass filters it) and the
+// temporal history the next frame reprojects.
+Texture2D<float4> accumHistory : register(t0);
+Texture2D<float3> rawIrradiance : register(t1);  // per-frame E (spatial pass)
+Texture2D<float> gradientTexture : register(t2); // A-SVGF temporal gradient
 
-RWTexture2D<float4> momentsOutput : register(u0);
+RWTexture2D<float4> accumOutput : register(u0);
 
 /**
  * Maximum temporal gradient over a small neighborhood.
@@ -76,30 +78,27 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		return;
 
 	const uint2 pixel = DTid.xy;
-	const uint flatIndex = pixel.y * push.resolution.x + pixel.x;
-
-	RESTIRDIReservoir reservoir =
-		RESTIRDIReservoirLoad(reservoirCurrent, flatIndex);
 
 	const float depth = texture_depth[pixel];
-	const float W = RESTIRDIReservoirGetInvPdf(reservoir);
 	[branch]
-	if (depth <= 0 || !(W > 0 && reservoir.targetPdf > 0))
+	if (depth <= 0)
 	{
-		// Sky or no valid sample: nothing to denoise, reset history.
-		momentsOutput[pixel] = 0;
+		// Sky / background: nothing to denoise, reset history.
+		accumOutput[pixel] = 0;
 		return;
 	}
 
-	const float freshVis = reservoir.visibility;
+	// This frame's single-sample diffuse irradiance. A legitimately black pixel
+	// (a frame that selected an occluded light) accumulates 0 - that is exactly
+	// the balancing sample the mean needs, so it is never rejected.
+	const float3 freshE = rawIrradiance[pixel];
 
 	// Exact shadow change here (dilated), measured by the spatial reuse pass.
 	const float reset = saturate(
 		DilateGradient(pixel) * RESTIR_DI_DENOISE_GRADIENT_SENSITIVITY);
 
 	// Start from this frame's single sample (history length 1).
-	float mean = freshVis;
-	float moment2 = freshVis * freshVis;
+	float3 mean = freshE;
 	float historyLength = 1;
 
 	const float2 uv = (pixel + 0.5) * push.resolutionRcp;
@@ -123,25 +122,18 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		if (abs(linearCur - linearPrev) <= 0.05 * linearCur &&
 			dot(prevN, N) >= 0.9)
 		{
-			const float4 prevMoments = momentsHistory[prevPixel];
-			const float prevMeanSlow = prevMoments.w;
-			const float prevHistory = prevMoments.y;
+			const float4 prevAccum = accumHistory[prevPixel];
 
 			// The exact temporal gradient resets the history where the shadow
 			// actually changed; everywhere else it accumulates up to the cap.
 			historyLength = lerp(
-				min(prevHistory + 1, RESTIR_DI_DENOISE_MAX_HISTORY),
+				min(prevAccum.a + 1, RESTIR_DI_DENOISE_MAX_HISTORY),
 				1.0, reset);
 
 			const float alpha = 1.0 / historyLength;
-			mean = lerp(prevMeanSlow, freshVis, alpha);
-			moment2 = lerp(prevMoments.x, freshVis * freshVis, alpha);
+			mean = lerp(prevAccum.rgb, freshE, alpha);
 		}
 	}
 
-	// The moments carry the second moment (variance for the spatial filter),
-	// the history length, and the slow mean. The slow mean is both this frame's
-	// denoised visibility (the spatial pass filters it) and the temporal
-	// history the next frame reprojects.
-	momentsOutput[pixel] = float4(moment2, historyLength, 0, mean);
+	accumOutput[pixel] = float4(mean, historyLength);
 }

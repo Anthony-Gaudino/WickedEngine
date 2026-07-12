@@ -577,6 +577,7 @@ namespace wi
 			getRaytracedReflectionEnabled() ||
 			getRaytracedDiffuseEnabled() ||
 			wi::renderer::GetRaytracedShadowsEnabled() ||
+			wi::renderer::GetReSTIRDIEnabled() || // denoiser reprojects on velocity
 			getAO() == AO::AO_RTAO ||
 			wi::renderer::GetVariableRateShadingClassification() ||
 			getFSR2Enabled() ||
@@ -744,10 +745,12 @@ namespace wi
 			// which reads frame before incrementing it).
 			const uint32_t cur = (uint32_t)(restirDIResources.frame & 1);
 			camera->buffer_restir_di_index = device->GetDescriptorIndex(&restirDIResources.reservoir_final[cur], SubresourceType::SRV);
+			camera->texture_restir_di_irradiance_index = device->GetDescriptorIndex(&restirDIResources.irradiance_final, SubresourceType::SRV);
 		}
 		else
 		{
 			camera->buffer_restir_di_index = -1;
+			camera->texture_restir_di_irradiance_index = -1;
 		}
 		camera->texture_rtdiffuse_index = device->GetDescriptorIndex(&rtRaytracedDiffuse, SubresourceType::SRV);
 		camera->texture_surfelgi_index = device->GetDescriptorIndex(&surfelGIResources.result, SubresourceType::SRV);
@@ -776,6 +779,7 @@ namespace wi
 		camera_reflection.texture_velocity_index = -1;
 		camera_reflection.texture_normal_roughness_index = -1;
 		camera_reflection.buffer_restir_di_index = -1; // reflection uses analytic direct lighting, not ReSTIR
+		camera_reflection.texture_restir_di_irradiance_index = -1;
 		camera_reflection.buffer_entitytiles_index = device->GetDescriptorIndex(&tiledLightResources_planarReflection.entityTiles, SubresourceType::SRV);
 		camera_reflection.texture_reflection_index = -1;
 		camera_reflection.texture_reflection_depth_index = -1;

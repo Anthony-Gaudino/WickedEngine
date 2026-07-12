@@ -11571,6 +11571,7 @@ void BindCameraCB(
 	shadercam.texture_ssgi_index = camera.texture_ssgi_index;
 	shadercam.texture_rtshadow_index = camera.texture_rtshadow_index;
 	shadercam.buffer_restir_di_index = camera.buffer_restir_di_index;
+	shadercam.texture_restir_di_irradiance_index = camera.texture_restir_di_irradiance_index;
 	shadercam.texture_rtdiffuse_index = camera.texture_rtdiffuse_index;
 	shadercam.texture_surfelgi_index = camera.texture_surfelgi_index;
 	shadercam.texture_depth_index_prev = camera_previous.texture_depth_index;
@@ -15677,24 +15678,24 @@ void CreateReSTIRDIResources(ReSTIRDIResources& res, XMUINT2 resolution)
 	device->CreateBufferZeroed(&bd, &res.reservoir_final[1]);
 	device->SetName(&res.reservoir_final[1], "restir_di.reservoir_final[1]");
 
-	// Visibility denoiser temporal state:
-	// (second moment, history length, fast-accumulator mean, unused).
+	// Diffuse-irradiance denoiser temporal state:
+	// (rgb = accumulated irradiance mean, a = history length).
 	TextureDesc td;
 	td.width = resolution.x;
 	td.height = resolution.y;
 	td.format = Format::R16G16B16A16_FLOAT;
 	td.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
 	td.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
-	device->CreateTexture(&td, nullptr, &res.visibility_moments[0]);
-	device->SetName(&res.visibility_moments[0], "restir_di.visibility_moments[0]");
-	device->CreateTexture(&td, nullptr, &res.visibility_moments[1]);
-	device->SetName(&res.visibility_moments[1], "restir_di.visibility_moments[1]");
+	device->CreateTexture(&td, nullptr, &res.irradiance_accum[0]);
+	device->SetName(&res.irradiance_accum[0], "restir_di.irradiance_accum[0]");
+	device->CreateTexture(&td, nullptr, &res.irradiance_accum[1]);
+	device->SetName(&res.irradiance_accum[1], "restir_di.irradiance_accum[1]");
 
-	// Spatial a-trous ping-pong scratch: (visibility, variance).
+	// Spatial a-trous ping-pong scratch: (rgb = irradiance, a = variance).
 	TextureDesc ad;
 	ad.width = resolution.x;
 	ad.height = resolution.y;
-	ad.format = Format::R16G16_FLOAT;
+	ad.format = Format::R16G16B16A16_FLOAT;
 	ad.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
 	ad.layout = ResourceState::UNORDERED_ACCESS;
 	device->CreateTexture(&ad, nullptr, &res.denoise_atrous[0]);
@@ -15702,17 +15703,32 @@ void CreateReSTIRDIResources(ReSTIRDIResources& res, XMUINT2 resolution)
 	device->CreateTexture(&ad, nullptr, &res.denoise_atrous[1]);
 	device->SetName(&res.denoise_atrous[1], "restir_di.denoise_atrous[1]");
 
-	// Raw visibility history (ping-pong) and the A-SVGF temporal gradient.
+	// Per-frame raw diffuse irradiance, ping-pong (compute-only; consumed by the
+	// temporal denoise and by the next frame's A-SVGF gradient).
+	TextureDesc id;
+	id.width = resolution.x;
+	id.height = resolution.y;
+	id.format = Format::R11G11B10_FLOAT;
+	id.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+	id.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
+	device->CreateTexture(&id, nullptr, &res.raw_irradiance[0]);
+	device->SetName(&res.raw_irradiance[0], "restir_di.raw_irradiance[0]");
+	device->CreateTexture(&id, nullptr, &res.raw_irradiance[1]);
+	device->SetName(&res.raw_irradiance[1], "restir_di.raw_irradiance[1]");
+
+	// Final denoised irradiance: sampled by the forward pixel shader, so it
+	// rests in the generic SHADER_RESOURCE state (not the compute-only one).
+	id.layout = ResourceState::SHADER_RESOURCE;
+	device->CreateTexture(&id, nullptr, &res.irradiance_final);
+	device->SetName(&res.irradiance_final, "restir_di.irradiance_final");
+
+	// A-SVGF temporal gradient.
 	TextureDesc gd;
 	gd.width = resolution.x;
 	gd.height = resolution.y;
 	gd.format = Format::R16_FLOAT;
 	gd.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
 	gd.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
-	device->CreateTexture(&gd, nullptr, &res.raw_visibility[0]);
-	device->SetName(&res.raw_visibility[0], "restir_di.raw_visibility[0]");
-	device->CreateTexture(&gd, nullptr, &res.raw_visibility[1]);
-	device->SetName(&res.raw_visibility[1], "restir_di.raw_visibility[1]");
 	device->CreateTexture(&gd, nullptr, &res.gradient);
 	device->SetName(&res.gradient, "restir_di.gradient");
 }
@@ -15805,67 +15821,68 @@ int ReSTIR_DI(
 			const GPUResource* srvs[] = {
 				&res.reservoir_temporal,
 				&res.reservoir_final[prev],
-				&res.raw_visibility[prev],
+				&res.raw_irradiance[prev],
 			};
 			device->BindResources(srvs, 0, arraysize(srvs), cmd);
 			device->BindUAV(&res.reservoir_final[cur], 0, cmd);
-			device->BindUAV(&res.raw_visibility[cur], 1, cmd);
-			device->BindUAV(&res.gradient, 2, cmd);
+			device->BindUAV(&res.gradient, 1, cmd);
+			device->BindUAV(&res.raw_irradiance[cur], 2, cmd);
 
 			GPUBarrier pre[] = {
 				GPUBarrier::Buffer(&res.reservoir_final[cur], ResourceState::SHADER_RESOURCE, ResourceState::UNORDERED_ACCESS),
-				GPUBarrier::Image(&res.raw_visibility[cur], res.raw_visibility[cur].desc.layout, ResourceState::UNORDERED_ACCESS),
 				GPUBarrier::Image(&res.gradient, res.gradient.desc.layout, ResourceState::UNORDERED_ACCESS),
+				GPUBarrier::Image(&res.raw_irradiance[cur], res.raw_irradiance[cur].desc.layout, ResourceState::UNORDERED_ACCESS),
 			};
 			device->Barrier(pre, arraysize(pre), cmd);
 			device->Dispatch(dispatch_x, dispatch_y, 1, cmd);
 			GPUBarrier post[] = {
 				GPUBarrier::Buffer(&res.reservoir_final[cur], ResourceState::UNORDERED_ACCESS, ResourceState::SHADER_RESOURCE),
-				GPUBarrier::Image(&res.raw_visibility[cur], ResourceState::UNORDERED_ACCESS, res.raw_visibility[cur].desc.layout),
 				GPUBarrier::Image(&res.gradient, ResourceState::UNORDERED_ACCESS, res.gradient.desc.layout),
+				GPUBarrier::Image(&res.raw_irradiance[cur], ResourceState::UNORDERED_ACCESS, res.raw_irradiance[cur].desc.layout),
 			};
 			device->Barrier(post, arraysize(post), cmd);
 			device->EventEnd(cmd);
 		}
 
-		// Visibility temporal denoise: accumulate the fresh 1-sample shadow
-		// into a running mean, written into the moments texture (slow mean).
-		// This pass is read-only on the reservoir; the exact A-SVGF gradient
-		// from the spatial pass drives the per-pixel history reset, and the
-		// spatial denoise reads the mean back from the moments.
+		// Irradiance temporal denoise: accumulate the fresh 1-sample diffuse
+		// irradiance into a running mean, written into the accumulation
+		// texture. The exact A-SVGF gradient from the spatial pass drives the
+		// per-pixel history reset, and the spatial denoise reads the mean back
+		// from it.
 		{
-			device->EventBegin("Visibility denoise", cmd);
+			device->EventBegin("Irradiance denoise", cmd);
 			device->BindComputeShader(&shaders[CSTYPE_RESTIR_DI_DENOISE_TEMPORAL], cmd);
 			device->PushConstants(&push, sizeof(push), cmd);
 
 			const GPUResource* srvs[] = {
-				&res.visibility_moments[prev],
-				&res.reservoir_final[cur],
+				&res.irradiance_accum[prev],
+				&res.raw_irradiance[cur],
 				&res.gradient,
 			};
 			device->BindResources(srvs, 0, arraysize(srvs), cmd);
-			device->BindUAV(&res.visibility_moments[cur], 0, cmd);
+			device->BindUAV(&res.irradiance_accum[cur], 0, cmd);
 
-			device->Barrier(GPUBarrier::Image(&res.visibility_moments[cur], res.visibility_moments[cur].desc.layout, ResourceState::UNORDERED_ACCESS), cmd);
+			device->Barrier(GPUBarrier::Image(&res.irradiance_accum[cur], res.irradiance_accum[cur].desc.layout, ResourceState::UNORDERED_ACCESS), cmd);
 			device->Dispatch(dispatch_x, dispatch_y, 1, cmd);
-			device->Barrier(GPUBarrier::Image(&res.visibility_moments[cur], ResourceState::UNORDERED_ACCESS, res.visibility_moments[cur].desc.layout), cmd);
+			device->Barrier(GPUBarrier::Image(&res.irradiance_accum[cur], ResourceState::UNORDERED_ACCESS, res.irradiance_accum[cur].desc.layout), cmd);
 			device->EventEnd(cmd);
 		}
 
-		// Spatial visibility denoise: an edge-aware a-trous over the temporally
-		// accumulated shadow, variance-guided so it removes the residual
-		// per-frame noise without smearing shadow edges. Filtering in space is
-		// what lets the temporal stage stay short (low ghosting). The filtered
-		// result is written back into reservoir_final[cur].visibility (shading
-		// reads it there); the temporal history lives in the moments texture, so
-		// this blur never feeds back into it. The two scratch textures stay in
-		// UNORDERED_ACCESS and are ping-ponged with a global memory barrier.
+		// Spatial irradiance denoise: an edge-aware a-trous over the temporally
+		// accumulated diffuse irradiance, variance-guided so it removes the
+		// residual per-frame noise without smearing shadow edges. Filtering in
+		// space is what lets the temporal stage stay short (low ghosting). The
+		// filtered result is written into irradiance_final, which forward
+		// shading samples; the temporal history lives in the accumulation
+		// texture, so this blur never feeds back into it. The two scratch
+		// textures stay in UNORDERED_ACCESS and are ping-ponged with a global
+		// memory barrier.
 		{
-			device->EventBegin("Visibility spatial denoise", cmd);
+			device->EventBegin("Irradiance spatial denoise", cmd);
 			device->BindComputeShader(&shaders[CSTYPE_RESTIR_DI_DENOISE_SPATIAL], cmd);
-			device->BindResource(&res.visibility_moments[cur], 0, cmd);
+			device->BindResource(&res.irradiance_accum[cur], 0, cmd);
 
-			device->Barrier(GPUBarrier::Buffer(&res.reservoir_final[cur], ResourceState::SHADER_RESOURCE, ResourceState::UNORDERED_ACCESS), cmd);
+			device->Barrier(GPUBarrier::Image(&res.irradiance_final, res.irradiance_final.desc.layout, ResourceState::UNORDERED_ACCESS), cmd);
 
 			for (uint32_t i = 0; i < RESTIR_DI_DENOISE_ATROUS_PASSES; ++i)
 			{
@@ -15880,7 +15897,7 @@ int ReSTIR_DI(
 
 				const uint32_t outIdx = i & 1u;
 				device->BindUAV(&res.denoise_atrous[outIdx], 0, cmd);
-				device->BindUAV(&res.reservoir_final[cur], 1, cmd);
+				device->BindUAV(&res.irradiance_final, 1, cmd);
 				device->BindUAV(&res.denoise_atrous[outIdx ^ 1u], 2, cmd);
 
 				if (i > 0)
@@ -15888,7 +15905,7 @@ int ReSTIR_DI(
 				device->Dispatch(dispatch_x, dispatch_y, 1, cmd);
 			}
 
-			device->Barrier(GPUBarrier::Buffer(&res.reservoir_final[cur], ResourceState::UNORDERED_ACCESS, ResourceState::SHADER_RESOURCE), cmd);
+			device->Barrier(GPUBarrier::Image(&res.irradiance_final, ResourceState::UNORDERED_ACCESS, res.irradiance_final.desc.layout), cmd);
 			device->EventEnd(cmd);
 		}
 	}

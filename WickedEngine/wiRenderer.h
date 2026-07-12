@@ -762,27 +762,32 @@ namespace wi::renderer
 		// Ping-pong final reservoir: current frame result / previous-frame history.
 		wi::graphics::GPUBuffer reservoir_final[2];
 
-		// Visibility denoiser temporal state, ping-pong per pixel: (second
-		// moment, history length, unused, slow mean). The slow mean is both the
-		// denoised visibility the spatial pass filters and the history the next
-		// frame reprojects (kept here, not in the reservoir, so the spatial
-		// blur cannot feed back into temporal history).
-		wi::graphics::Texture visibility_moments[2];
+		// Diffuse-irradiance denoiser temporal state, ping-pong per pixel: (rgb
+		// = accumulated diffuse irradiance mean, a = history length). The mean
+		// is both the denoised irradiance the spatial pass filters and the
+		// history the next frame reprojects.
+		wi::graphics::Texture irradiance_accum[2];
 
-		// Ping-pong scratch for the spatial a-trous visibility denoiser:
-		// (visibility, variance) per pixel. Never read by shading (the filtered
-		// visibility is written back into reservoir_final[].visibility).
+		// Ping-pong scratch for the spatial a-trous irradiance denoiser: (rgb =
+		// irradiance, a = variance) per pixel.
 		wi::graphics::Texture denoise_atrous[2];
 
-		// Ping-pong raw (undenoised) visibility per pixel. The spatial reuse
-		// pass stores this frame's fresh shadow-ray result so the next frame's
-		// A-SVGF temporal gradient can compare the same sample across frames.
-		wi::graphics::Texture raw_visibility[2];
+		// Ping-pong per-frame (undenoised) diffuse irradiance,
+		// radiance*W*visibility*NdotL without albedo, produced by the spatial
+		// reuse pass. The current slice is this frame's fresh sample for the
+		// temporal denoise; the previous slice lets the A-SVGF gradient compare
+		// the same sample's full contribution across frames (so both occluder
+		// motion and light motion are detected, not just shadow changes).
+		wi::graphics::Texture raw_irradiance[2];
 
-		// A-SVGF temporal gradient (exact shadow change per pixel), produced by
-		// the spatial reuse pass and consumed by the temporal denoise to reset
-		// history where the shadow actually changed. Not ping-ponged (written
-		// and consumed within the same frame).
+		// Final denoised diffuse irradiance, sampled by forward shading (which
+		// applies albedo and adds specular from the reservoir).
+		wi::graphics::Texture irradiance_final;
+
+		// A-SVGF temporal gradient (exact contribution change per pixel),
+		// produced by the spatial reuse pass and consumed by the temporal
+		// denoise to reset history where the lighting actually changed. Not
+		// ping-ponged (written and consumed within the same frame).
 		wi::graphics::Texture gradient;
 
 		XMUINT2 resolution = {};

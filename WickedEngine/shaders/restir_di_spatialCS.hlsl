@@ -55,12 +55,24 @@ void RESTIRDIResolveSample(
 PUSHCONSTANT(push, RESTIRDIPushConstants);
 
 ByteAddressBuffer reservoirInput : register(t0);
-ByteAddressBuffer reservoirHistory : register(t1);    // reservoir_final[prev]
-Texture2D<float> rawVisibilityHistory : register(t2); // raw_visibility[prev]
+ByteAddressBuffer reservoirHistory : register(t1);      // reservoir_final[prev]
+Texture2D<float3> rawIrradianceHistory : register(t2);  // raw_irradiance[prev]
 
 RWByteAddressBuffer reservoirOutput : register(u0);
-RWTexture2D<float> rawVisibilityOutput : register(u1); // raw_visibility[cur]
-RWTexture2D<float> gradientOutput : register(u2);      // A-SVGF gradient
+RWTexture2D<float> gradientOutput : register(u1);       // A-SVGF gradient
+RWTexture2D<float3> irradianceOutput : register(u2);    // per-frame diffuse E
+
+/**
+ * Rec. 709 luminance of a linear RGB value.
+ *
+ * @param[in] c - Linear RGB value.
+ *
+ * @return Scalar luminance.
+ */
+float RESTIRLuma(float3 c)
+{
+	return dot(c, float3(0.2126, 0.7152, 0.0722));
+}
 
 [numthreads(8, 8, 1)]
 void main(uint3 DTid : SV_DispatchThreadID)
@@ -73,10 +85,10 @@ void main(uint3 DTid : SV_DispatchThreadID)
 
 	RESTIRDIReservoir reservoir = RESTIRDIReservoirLoad(reservoirInput, flatIndex);
 
-	// A-SVGF temporal gradient and raw visibility for this pixel (written at
-	// the end; default 0 = no change / no valid sample).
+	// A-SVGF temporal gradient and per-frame diffuse irradiance for this pixel
+	// (written at the end; default 0 = no change / no valid sample).
 	float gradient = 0;
-	float rawVisibility = 0;
+	float3 irradiance = 0;
 
 	const float depth = texture_depth[pixel];
 	[branch]
@@ -145,13 +157,31 @@ void main(uint3 DTid : SV_DispatchThreadID)
 
 			reservoir.visibility =
 				RESTIRDITraceVisibility(P, N, reservoir.samplePosition, rng);
-			rawVisibility = reservoir.visibility;
 
-			// A-SVGF gradient: re-evaluate the previous frame's sample under
-			// the current scene and compare to its stored raw visibility. The
-			// ray is identical across the two frames, so any difference is an
-			// occluder that crossed it (an exact, noiseless "the shadow changed
-			// here").
+			// Per-frame diffuse irradiance for the full-signal denoiser: the
+			// chosen sample's contribution without albedo (radiance * W *
+			// visibility * NdotL). Denoising this - rather than the bare
+			// visibility - lets the stochastic per-frame light selection
+			// (bright when the visible light wins, black when the occluded one
+			// does) average to the correct colour, which the visibility channel
+			// alone cannot represent. W is firefly-clamped to the light count
+			// exactly as forward shading does.
+			const float Wclamp = min(W, (float)lights().item_count());
+			const float3 L = normalize(reservoir.samplePosition - P);
+			const float NdotL = saturate(dot(N, L));
+			float3 irr =
+				reservoir.sampleRadiance * Wclamp * reservoir.visibility * NdotL;
+			irradiance =
+				(any(isnan(irr)) || any(isinf(irr))) ? (float3)0 : irr;
+
+			// A-SVGF gradient: re-evaluate the previous frame's sample's full
+			// diffuse contribution under the current scene and compare to its
+			// stored value. Because the denoised signal is now irradiance (not
+			// bare visibility), the change detector must compare irradiance too
+			// - that is what makes a moving light update at once: its shadow
+			//   may not change (visibility 1 -> 1) yet its radiance / NdotL /
+			//   distance do, which a visibility-only gradient could never see
+			//   (the lit region would fade over the whole history instead).
 			const float2 prevUV = uv + texture_velocity[pixel];
 			[branch]
 			if (all(prevUV >= 0) && all(prevUV <= 1))
@@ -177,30 +207,38 @@ void main(uint3 DTid : SV_DispatchThreadID)
 					[branch]
 					if (prevRes.targetPdf > 0)
 					{
-						if (prevRes.lightIndex != reservoir.lightIndex)
-						{
-							// The chosen light switched between frames, so the
-							// visibility channel now means a different light.
-							// Force a reset to avoid averaging across the two
-							// lights (which ghosts on multi-light shadows).
-							gradient = 1;
-						}
-						else
-						{
-							// Same light: re-resolve its sample at the light's
-							// current transform (so a moved light is detected
-							// too) and re-trace under the current scene,
-							// comparing to the stored raw visibility.
-							float3 prevPos;
-							float3 prevRad;
-							RESTIRDIResolveSample(
-								prevRes.lightIndex, prevRes.uv, P, N,
-								prevPos, prevRad);
-							const float vReeval =
-								RESTIRDITraceVisibility(P, N, prevPos, rng);
-							gradient =
-								abs(vReeval - rawVisibilityHistory[prevPixel]);
-						}
+						// Re-resolve the previous frame's chosen sample at the
+						// light's current transform (so a moved light is
+						// detected too), re-trace it under the current scene,
+						// and rebuild its full diffuse contribution. The sample
+						// is identical across the two frames, so any difference
+						// is exact (noiseless): an occluder that crossed the
+						// ray, or the light itself moving. We do not force a
+						// reset when the chosen light switches - standard
+						// (unbiased) reuse reselects a light every frame, and
+						// the denoiser accumulates the contribution (meaningful
+						// across switches), so a switch is not a change to
+						// react to.
+						float3 prevPos;
+						float3 prevRad;
+						RESTIRDIResolveSample(
+							prevRes.lightIndex, prevRes.uv, P, N,
+							prevPos, prevRad);
+						const float vReeval =
+							RESTIRDITraceVisibility(P, N, prevPos, rng);
+						const float NdotLprev =
+							saturate(dot(N, normalize(prevPos - P)));
+						const float Wprev = min(
+							RESTIRDIReservoirGetInvPdf(prevRes),
+							(float)lights().item_count());
+						const float irrNow =
+							RESTIRLuma(prevRad * Wprev * vReeval * NdotLprev);
+						const float irrThen =
+							RESTIRLuma(rawIrradianceHistory[prevPixel]);
+						// Relative change in [0, 1] so the reset is scale-free
+						// across dim and bright lighting alike.
+						gradient = abs(irrNow - irrThen) /
+							(max(irrNow, irrThen) + 1e-3);
 					}
 				}
 			}
@@ -208,6 +246,6 @@ void main(uint3 DTid : SV_DispatchThreadID)
 	}
 
 	RESTIRDIReservoirStore(reservoirOutput, flatIndex, reservoir);
-	rawVisibilityOutput[pixel] = rawVisibility;
 	gradientOutput[pixel] = gradient;
+	irradianceOutput[pixel] = irradiance;
 }

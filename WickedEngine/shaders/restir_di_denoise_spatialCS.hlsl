@@ -2,28 +2,27 @@
 #include "restir_diHF.hlsli"
 
 /**
- * ReSTIR DI - spatial visibility denoise pass (edge-aware a-trous).
+ * ReSTIR DI - diffuse irradiance spatial denoise pass (edge-aware a-trous).
  *
  * Runs after the temporal denoise, which leaves the temporally accumulated
- * shadow visibility (still noisy, because a single light is resampled per
- * frame) in reservoir.visibility, and its temporal variance in the moments
- * texture.
- * This filter smooths that visibility across the surface with a 5-tap B3-spline
- * a-trous kernel, stopping at geometry edges (depth + normal) and at real
- * shadow edges (a variance-guided visibility stop): it blurs freely where the
- * temporal variance is high, which is exactly the sampling noise we want to
- * remove, while keeping crisp penumbra gradients where the variance is low.
- * Filtering in space is what lets the temporal stage stay short (low lag /
- * little ghosting).
+ * diffuse irradiance (still noisy, because a single light is resampled per
+ * frame) in the accumulation texture. This filter smooths that irradiance
+ * across the surface with a 5-tap B3-spline a-trous kernel, stopping at
+ * geometry edges (depth + normal) and at real shadow edges (a variance-guided
+ * luminance stop): it blurs freely where the temporal variance is high, which
+ * is exactly the sampling noise we want to remove, while keeping crisp penumbra
+ * gradients where the variance is low. Filtering in space is what lets the
+ * temporal stage stay short (low lag / little ghosting).
+ *
+ * The signal is the full diffuse contribution (radiance * W * visibility *
+ * NdotL, no albedo); forward shading multiplies the filtered result by albedo
+ * and adds specular from the reservoir.
  *
  * The caller dispatches RESTIR_DI_DENOISE_ATROUS_PASSES times with a doubling
- * tap stride. To keep the reservoir's temporal history clean, this pass never
- * writes the filtered value into the history: the first pass reads the temporal
- * mean straight from the reservoir (and variance from the moments),
- * intermediate
- * passes ping-pong two (visibility, variance) scratch textures, and the last
- * pass writes the filtered visibility back into reservoir.visibility, which is
- * the value forward shading reads.
+ * tap stride. The first pass reads the temporal mean from the accumulation
+ * texture, intermediate passes ping-pong two (irradiance, variance) scratch
+ * textures, and the last pass writes the filtered irradiance to a dedicated
+ * output texture that forward shading samples.
  *
  * References:
  * Schied et al. 2017, "Spatiotemporal Variance-Guided Filtering" (SVGF).
@@ -32,54 +31,68 @@
 
 PUSHCONSTANT(push, RESTIRDIDenoisePushConstants);
 
-// (moment2, historyLength, unused, slowMean); variance = moment2 - slowMean^2.
-Texture2D<float4> moments : register(t0);
+// (rgb = temporally accumulated irradiance mean, a = history length).
+Texture2D<float4> accum : register(t0);
 
-RWTexture2D<float2> atrousOutput : register(u0); // (visibility, variance)
-RWByteAddressBuffer reservoir : register(u1);    // reservoir_final[cur]
-RWTexture2D<float2> atrousInput : register(u2);  // (visibility, variance)
+RWTexture2D<float4> atrousOutput : register(u0); // (rgb irradiance, variance)
+RWTexture2D<float3> irradianceFinal : register(u1); // read by forward shading
+RWTexture2D<float4> atrousInput : register(u2);  // (rgb irradiance, variance)
 
 // B3-spline a-trous kernel, indexed by |offset|: {3/8, 1/4, 1/16}.
 static const float ATROUS_KERNEL[3] = { 0.375, 0.25, 0.0625 };
 
 /**
- * Fetches the (visibility, variance) pair for a pixel from this pass's input.
+ * Perceptual luminance of a linear RGB irradiance value.
  *
- * On the first pass the input is the moments texture: the temporally denoised
- * visibility (slow mean, .w) plus its variance (second moment .x - mean^2). The
- * temporal pass leaves it there rather than in the reservoir so its
- * neighborhood prefilter stays race-free. Afterwards the input is the ping-pong
- * texture.
+ * @param[in] c - Linear RGB value.
  *
- * @param[in] p - Pixel coordinate.
- *
- * @return float2(visibility, variance) at that pixel.
+ * @return Rec. 709 luminance.
  */
-float2 FetchVisVar(uint2 p)
+float Luma(float3 c)
 {
-	if (push.inputFromReservoir)
-	{
-		const float4 m = moments[p];
-		const float vis = m.w;
-		return float2(vis, max(0.0, m.x - vis * vis));
-	}
-	return atrousInput[p];
+	return dot(c, float3(0.2126, 0.7152, 0.0722));
 }
 
 /**
- * Estimates the visibility variance from a 5x5 spatial neighborhood.
+ * Fetches the (irradiance, variance) pair for a pixel from this pass's input.
+ *
+ * On the first pass the input is the accumulation texture (temporally denoised
+ * irradiance mean, .rgb); afterwards the input is the ping-pong texture, which
+ * carries the filtered variance in .a.
+ *
+ * @param[in] p - Pixel coordinate.
+ * @param[out] irradiance - Irradiance at that pixel.
+ * @param[out] variance - Variance of the irradiance luminance at that pixel.
+ */
+void FetchIrrVar(uint2 p, out float3 irradiance, out float variance)
+{
+	if (push.inputFromReservoir)
+	{
+		irradiance = accum[p].rgb;
+		variance = 0; // Estimated spatially by the caller on the first pass.
+	}
+	else
+	{
+		const float4 v = atrousInput[p];
+		irradiance = v.rgb;
+		variance = v.a;
+	}
+}
+
+/**
+ * Estimates the irradiance-luminance variance from a 5x5 spatial neighborhood.
  *
  * With only a couple of temporally accumulated frames the temporal variance is
- * a poor estimate, and the binary per-ray visibility (one shadow ray, so 0 or
- * 1) reads as spurious edges everywhere: a variance near zero would collapse
- * the luminance edge-stop and the filter would preserve the noise instead of
- * blurring it. Estimating the variance spatially (SVGF's low-history fallback)
- * recovers a usable value so the stop widens over noisy regions while still
- * tightening on real, low-variance shadow edges.
+ * a poor estimate and the noisy single-sample irradiance reads as spurious
+ * edges everywhere: a variance near zero would collapse the luminance
+ * edge-stop and the filter would preserve the noise instead of blurring it.
+ * Estimating the variance spatially (SVGF's low-history fallback) recovers a
+ * usable value so the stop widens over noisy regions while still tightening on
+ * real, low-variance shadow edges.
  *
  * @param[in] center - Pixel coordinate.
  *
- * @return Estimated variance of the visibility around the pixel (>= 0).
+ * @return Estimated variance of the irradiance luminance around it (>= 0).
  */
 float EstimateSpatialVariance(uint2 center)
 {
@@ -101,9 +114,12 @@ float EstimateSpatialVariance(uint2 center)
 			if (texture_depth[(uint2)tap] <= 0)
 				continue;
 
-			const float v = FetchVisVar((uint2)tap).x;
-			m1 += v;
-			m2 += v * v;
+			float3 irr;
+			float var;
+			FetchIrrVar((uint2)tap, irr, var);
+			const float l = Luma(irr);
+			m1 += l;
+			m2 += l * l;
 			count += 1;
 		}
 	}
@@ -124,32 +140,37 @@ void main(uint3 DTid : SV_DispatchThreadID)
 	const uint2 pixel = DTid.xy;
 
 	const float depth = texture_depth[pixel];
-	const float2 centerVV = FetchVisVar(pixel);
+	float3 centerIrr;
+	float centerVarIn;
+	FetchIrrVar(pixel, centerIrr, centerVarIn);
 
 	[branch]
 	if (depth <= 0)
 	{
 		// Sky / background: nothing to filter, pass the input through.
-		if (!push.outputToReservoir)
-			atrousOutput[pixel] = centerVV;
+		if (push.outputToReservoir)
+			irradianceFinal[pixel] = centerIrr;
+		else
+			atrousOutput[pixel] = float4(centerIrr, centerVarIn);
 		return;
 	}
 
 	const float centerZ = compute_lineardepth(depth);
 	const float3 centerN = decode_normal(texture_normal_roughness[pixel]);
+	const float centerLuma = Luma(centerIrr);
 
 	// While the temporal history is short the temporal variance is unreliable,
 	// so estimate it spatially (SVGF low-history fallback); otherwise use the
 	// variance carried in the ping-pong texture.
 	const float historyLength =
-		push.inputFromReservoir ? moments[pixel].y : 0.0;
+		push.inputFromReservoir ? accum[pixel].a : 0.0;
 	const float centerVar = (push.inputFromReservoir && historyLength < 4.0)
-		? max(centerVV.y, EstimateSpatialVariance(pixel))
-		: centerVV.y;
+		? max(centerVarIn, EstimateSpatialVariance(pixel))
+		: centerVarIn;
 	const float sigmaLuma =
 		RESTIR_DI_DENOISE_LUMINANCE_SCALE * sqrt(centerVar) + 1e-3;
 
-	float sumVis = 0;
+	float3 sumIrr = 0;
 	float sumVar = 0;
 	float sumWeight = 0;
 
@@ -172,7 +193,9 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			if (tapDepth <= 0)
 				continue; // Sky tap.
 
-			const float2 tapVV = FetchVisVar(tapPixel);
+			float3 tapIrr;
+			float tapVar;
+			FetchIrrVar(tapPixel, tapIrr, tapVar);
 			const float tapZ = compute_lineardepth(tapDepth);
 			const float3 tapN = decode_normal(texture_normal_roughness[tapPixel]);
 
@@ -183,35 +206,28 @@ void main(uint3 DTid : SV_DispatchThreadID)
 				-abs(centerZ - tapZ) /
 				(RESTIR_DI_DENOISE_DEPTH_SCALE * centerZ + 1e-3));
 			const float wLuma =
-				exp(-abs(centerVV.x - tapVV.x) / sigmaLuma);
+				exp(-abs(centerLuma - Luma(tapIrr)) / sigmaLuma);
 
 			const float w = wKernel * wNormal * wDepth * wLuma;
 
-			sumVis += tapVV.x * w;
+			sumIrr += tapIrr * w;
 			// Variance transforms with the square of the weights.
-			sumVar += tapVV.y * w * w;
+			sumVar += tapVar * w * w;
 			sumWeight += w;
 		}
 	}
 
-	const float outVis = (sumWeight > 0) ? sumVis / sumWeight : centerVV.x;
+	const float3 outIrr = (sumWeight > 0) ? sumIrr / sumWeight : centerIrr;
 	// Seed the ping-pong variance with the (spatial) center estimate on the
 	// first pass; afterwards carry the filtered variance so later passes stay
 	// guided.
 	const float outVar = push.inputFromReservoir
 		? centerVar
-		: ((sumWeight > 0) ? sumVar / (sumWeight * sumWeight) : centerVV.y);
+		: ((sumWeight > 0) ? sumVar / (sumWeight * sumWeight) : centerVarIn);
 
 	[branch]
 	if (push.outputToReservoir)
-	{
-		const uint index = pixel.y * push.resolution.x + pixel.x;
-		RESTIRDIReservoir r = RESTIRDIReservoirLoad(reservoir, index);
-		r.visibility = outVis;
-		RESTIRDIReservoirStore(reservoir, index, r);
-	}
+		irradianceFinal[pixel] = outIrr;
 	else
-	{
-		atrousOutput[pixel] = float2(outVis, outVar);
-	}
+		atrousOutput[pixel] = float4(outIrr, outVar);
 }

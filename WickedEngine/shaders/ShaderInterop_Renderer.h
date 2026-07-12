@@ -1403,6 +1403,11 @@ struct alignas(16) ShaderCamera
 	int texture_reprojected_depth_index;
 	uint options;
 
+	// Denoised ReSTIR DI diffuse irradiance (radiance * W * visibility * NdotL,
+	// no albedo); forward shading applies albedo and adds specular from the
+	// reservoir. -1 when ReSTIR DI is off.
+	int texture_restir_di_irradiance_index;
+
 #ifdef __cplusplus
 	inline void init()
 	{
@@ -1460,6 +1465,7 @@ struct alignas(16) ShaderCamera
 		texture_velocity_index = -1;
 		texture_normal_roughness_index = -1;
 		buffer_restir_di_index = -1;
+		texture_restir_di_irradiance_index = -1;
 		buffer_entitytiles_index = -1;
 		texture_reflection_index = -1;
 		texture_refraction_index = -1;

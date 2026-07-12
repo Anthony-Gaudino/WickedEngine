@@ -102,19 +102,24 @@ inline bool RESTIRDIReservoirUpdate(
  * The merged sample carries over its cached visibility, and is re-weighted by
  * its target function evaluated at self's surface.
  *
- * Visibility-aware reuse: other's contribution (both its resampling weight and
- * its confidence M) is scaled by its cached visibility, so a shadowed reused
- * sample is effectively discarded rather than kept at full weight. This makes
- * the reservoir converge to the light that actually lights the pixel instead of
- * oscillating between a shadowed and a visible light when several compete
-   (which
- * flickers at multi-light shadow boundaries). Scaling M as well as the weight
- * keeps the estimator's energy correct - down-weighting the weight alone would
- * inflate M and darken the result.
+ * Standard (unbiased) reuse: other's full confidence M is combined, so occluded
+ * candidates stay eligible for selection. This is deliberate. RIS uses the
+ * unshadowed target function, so it is only unbiased in expectation: a region
+ * lit by one light through another light's shadow is correct only because the
+ * occluded light is sometimes selected and contributes the black frames that
+ * balance the over-bright frames (whose W folds in every candidate's unshadowed
+ * target). Down-weighting the occluded reused samples by their visibility
+ * (which an earlier revision did, to hide the per-frame flicker) removes those
+ * black frames and leaves a net over-estimate - the shadow reads brighter than
+ * the fully-shadowed surface, which is wrong. The per-frame variance this
+ * reintroduces is instead removed by denoising the full diffuse contribution
+ * (radiance x W x visibility x NdotL), where the bright and black frames
+ * average to the correct colour. See [[wickedengine-restir]].
  *
  * @param[in,out] self - Reservoir receiving the merge.
  * @param[in] other - Reservoir to merge in.
- * @param[in] targetPdfAtSelf - other's sample target function at self's surface.
+ * @param[in] targetPdfAtSelf - other's sample target function at self's
+ * surface.
  * @param[in] maxW - Firefly clamp for other's unbiased weight (typically the
  *   light count: uniform RIS cannot legitimately exceed it, so this bounds a
  *   near-zero-target sample from injecting spurious energy through reuse).
@@ -128,10 +133,9 @@ inline void RESTIRDIReservoirMerge(
 	inout RNG rng)
 {
 	const float otherW = min(RESTIRDIReservoirGetInvPdf(other), maxW);
-	const float confidence = other.M * other.visibility;
-	const float risWeight = targetPdfAtSelf * otherW * confidence;
+	const float risWeight = targetPdfAtSelf * otherW * other.M;
 
-	self.M += confidence;
+	self.M += other.M;
 	self.weightSum += risWeight;
 
 	if (self.weightSum > 0 && rng.next_float() * self.weightSum < risWeight)
