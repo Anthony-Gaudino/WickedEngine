@@ -99,6 +99,16 @@ inline bool RESTIRDIReservoirUpdate(
  * The merged sample carries over its cached visibility, and is re-weighted by
  * its target function evaluated at self's surface.
  *
+ * Visibility-aware reuse: other's contribution (both its resampling weight and
+ * its confidence M) is scaled by its cached visibility, so a shadowed reused
+ * sample is effectively discarded rather than kept at full weight. This makes
+ * the reservoir converge to the light that actually lights the pixel instead of
+ * oscillating between a shadowed and a visible light when several compete
+   (which
+ * flickers at multi-light shadow boundaries). Scaling M as well as the weight
+ * keeps the estimator's energy correct - down-weighting the weight alone would
+ * inflate M and darken the result.
+ *
  * @param[in,out] self - Reservoir receiving the merge.
  * @param[in] other - Reservoir to merge in.
  * @param[in] targetPdfAtSelf - other's sample target function at self's surface.
@@ -115,9 +125,10 @@ inline void RESTIRDIReservoirMerge(
 	inout RNG rng)
 {
 	const float otherW = min(RESTIRDIReservoirGetInvPdf(other), maxW);
-	const float risWeight = targetPdfAtSelf * otherW * other.M;
+	const float confidence = other.M * other.visibility;
+	const float risWeight = targetPdfAtSelf * otherW * confidence;
 
-	self.M += other.M;
+	self.M += confidence;
 	self.weightSum += risWeight;
 
 	if (self.weightSum > 0 && rng.next_float() * self.weightSum < risWeight)
