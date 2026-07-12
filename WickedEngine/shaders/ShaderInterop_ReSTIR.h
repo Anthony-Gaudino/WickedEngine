@@ -414,6 +414,14 @@ struct RESTIRDIReservoir
 	 * empty.
 	 */
 	uint lightIndex;
+
+	/**
+	 * Sample parameterization on the light's area, in [0, 1)^2. Together with
+	 * lightIndex it re-resolves samplePosition/sampleRadiance at the light's
+	 * current transform each frame, so a moving light's shadow tracks instead
+	 * of lagging behind a stale resolved position.
+	 */
+	float2 uv;
 };
 
 /**
@@ -431,6 +439,7 @@ inline RESTIRDIReservoir RESTIRDIReservoirInit()
 	r.M = 0;
 	r.visibility = 0;
 	r.lightIndex = RESTIR_INVALID_LIGHT_INDEX;
+	r.uv = float2(0, 0);
 	return r;
 }
 
@@ -451,7 +460,7 @@ inline float RESTIRDIReservoirGetInvPdf(RESTIRDIReservoir r)
 #endif // __cplusplus
 
 /**
- * GPU-storable packed DI reservoir (32 bytes), one per screen pixel.
+ * GPU-storable packed DI reservoir (48 bytes), one per screen pixel.
  *
  * Backs the temporal history and spatial reuse buffers of the ReSTIR DI passes.
  */
@@ -459,6 +468,7 @@ struct RESTIRDIReservoirPacked
 {
 	uint4 data0;
 	uint4 data1;
+	uint4 data2;
 
 #ifndef __cplusplus
 	/**
@@ -472,10 +482,13 @@ struct RESTIRDIReservoirPacked
 		data0.w = Pack_R11G11B10_FLOAT(r.sampleRadiance);
 		data1.x = asuint(r.targetPdf);
 		data1.y = asuint(r.weightSum);
-		// M (confidence, small) and visibility ([0, 1]) share one 16:16 word so
-		// the light index fits without growing the reservoir past 32 bytes.
+		// M (confidence, small) and visibility ([0, 1]) share one 16:16 word.
 		data1.z = pack_half2(r.M, r.visibility);
 		data1.w = r.lightIndex;
+		// Sample uv (re-resolves the light each frame for moving-light
+		// tracking).
+		data2.x = pack_half2(r.uv.x, r.uv.y);
+		data2.yzw = uint3(0, 0, 0);
 	}
 
 	/**
@@ -494,6 +507,7 @@ struct RESTIRDIReservoirPacked
 		r.M = mv.x;
 		r.visibility = mv.y;
 		r.lightIndex = data1.w;
+		r.uv = unpack_half2(data2.x);
 		return r;
 	}
 #endif // __cplusplus

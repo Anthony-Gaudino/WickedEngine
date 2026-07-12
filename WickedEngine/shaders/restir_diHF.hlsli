@@ -63,7 +63,8 @@ inline float RESTIRDITargetFunction(
  * @param[in,out] r - Reservoir to update.
  * @param[in] samplePosition - World-space point on the candidate light.
  * @param[in] sampleRadiance - Unshadowed incident radiance of the candidate.
- * @param[in] lightIndex - Index of the candidate light (for the denoiser).
+ * @param[in] lightIndex - Index of the candidate light.
+ * @param[in] uv - Sample parameterization on the light (for re-resolution).
  * @param[in] targetPdf - Target function value p_hat of the candidate.
  * @param[in] risWeight - Resampling weight p_hat / p_source of the candidate.
  * @param[in,out] rng - Random generator.
@@ -75,6 +76,7 @@ inline bool RESTIRDIReservoirUpdate(
 	float3 samplePosition,
 	float3 sampleRadiance,
 	uint lightIndex,
+	float2 uv,
 	float targetPdf,
 	float risWeight,
 	inout RNG rng)
@@ -87,6 +89,7 @@ inline bool RESTIRDIReservoirUpdate(
 		r.samplePosition = samplePosition;
 		r.sampleRadiance = sampleRadiance;
 		r.lightIndex = lightIndex;
+		r.uv = uv;
 		r.targetPdf = targetPdf;
 		return true;
 	}
@@ -136,6 +139,7 @@ inline void RESTIRDIReservoirMerge(
 		self.samplePosition = other.samplePosition;
 		self.sampleRadiance = other.sampleRadiance;
 		self.lightIndex = other.lightIndex;
+		self.uv = other.uv;
 		self.targetPdf = targetPdfAtSelf;
 		self.visibility = other.visibility;
 	}
@@ -145,7 +149,7 @@ inline void RESTIRDIReservoirMerge(
  * Loads a DI reservoir from a raw reservoir buffer.
  *
  * The buffers are raw (ByteAddressBuffer) so the same resource can be read both
- * by the DI passes and bindlessly by forward shading. Each entry is 32 bytes.
+ * by the DI passes and bindlessly by forward shading. Each entry is 48 bytes.
  *
  * @param[in] buf - Reservoir byte-address buffer.
  * @param[in] index - Flat pixel index (y * width + x).
@@ -155,8 +159,9 @@ inline void RESTIRDIReservoirMerge(
 inline RESTIRDIReservoir RESTIRDIReservoirLoad(ByteAddressBuffer buf, uint index)
 {
 	RESTIRDIReservoirPacked p;
-	p.data0 = buf.Load4(index * 32);
-	p.data1 = buf.Load4(index * 32 + 16);
+	p.data0 = buf.Load4(index * 48);
+	p.data1 = buf.Load4(index * 48 + 16);
+	p.data2 = buf.Load4(index * 48 + 32);
 	return p.load();
 }
 
@@ -171,8 +176,9 @@ inline RESTIRDIReservoir RESTIRDIReservoirLoad(ByteAddressBuffer buf, uint index
 inline RESTIRDIReservoir RESTIRDIReservoirLoad(RWByteAddressBuffer buf, uint index)
 {
 	RESTIRDIReservoirPacked p;
-	p.data0 = buf.Load4(index * 32);
-	p.data1 = buf.Load4(index * 32 + 16);
+	p.data0 = buf.Load4(index * 48);
+	p.data1 = buf.Load4(index * 48 + 16);
+	p.data2 = buf.Load4(index * 48 + 32);
 	return p.load();
 }
 
@@ -188,8 +194,9 @@ inline void RESTIRDIReservoirStore(
 {
 	RESTIRDIReservoirPacked p;
 	p.store(r);
-	buf.Store4(index * 32, p.data0);
-	buf.Store4(index * 32 + 16, p.data1);
+	buf.Store4(index * 48, p.data0);
+	buf.Store4(index * 48 + 16, p.data1);
+	buf.Store4(index * 48 + 32, p.data2);
 }
 
 #endif // WI_RESTIR_DI_HF

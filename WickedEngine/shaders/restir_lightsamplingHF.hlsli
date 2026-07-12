@@ -128,18 +128,38 @@ inline float RESTIRTargetFunction(RESTIRLightSample s, float3 N)
 }
 
 /**
+ * Cosine-weighted hemisphere sample from an explicit 2D sample point.
+ *
+ * The deterministic counterpart of sample_hemisphere_cos: reproducible from a
+ * stored uv so a light sample can be re-resolved at a moving light's current
+ * transform.
+ *
+ * @param[in] normal - Hemisphere axis.
+ * @param[in] uv - Sample point in [0, 1)^2.
+ *
+ * @return A direction in the hemisphere around normal.
+ */
+inline float3 RESTIRHemisphereCos(float3 normal, float2 uv)
+{
+	return mul(hemispherepoint_cos(uv.x, uv.y), get_tangentspace(normal));
+}
+
+/**
  * Resolves an analytic ShaderEntity light into a point sample at point P.
  *
- * Area extent (sphere radius, tube length, rectangle) is stochastically sampled
- * with rng, mirroring the sampling used by surfel_raytraceCS so results match.
- * The returned radiance includes distance/spot attenuation but NOT visibility.
- * solidAnglePdf is left at 1: the light-selection probability is carried by the
- * RIS source pdf in the driver, not here.
+ * Deterministic form: the area extent (sphere radius, rectangle) is sampled
+ * from the explicit uv, so the same sample can be reproduced at the light's
+ * current transform (used to re-resolve a reused sample so a moving light's
+ * shadow does not lag). The tube-length dimension is not parameterized by uv
+ * and is sampled at the center. The returned radiance includes distance/spot
+ * attenuation but NOT visibility. solidAnglePdf is left at 1: the
+ * light-selection probability is carried by the RIS source pdf in the driver,
+ * not here.
  *
  * @param[in] light - The analytic light entity.
  * @param[in] P - World-space shading point.
  * @param[in] N - World-space shading normal (unused here; kept for symmetry).
- * @param[in,out] rng - Random generator.
+ * @param[in] uv - Sample parameterization on the light's area, in [0, 1)^2.
  *
  * @return The resolved sample; radiance is 0 when the light does not reach P.
  */
@@ -147,7 +167,7 @@ inline RESTIRLightSample RESTIRResolveAnalyticLight(
 	ShaderEntity light,
 	float3 P,
 	float3 N,
-	inout RNG rng)
+	float2 uv)
 {
 	RESTIRLightSample s;
 	s.direction = float3(0, 0, 1);
@@ -160,7 +180,7 @@ inline RESTIRLightSample RESTIRResolveAnalyticLight(
 	case ENTITY_TYPE_DIRECTIONALLIGHT:
 	{
 		float3 L = light.GetDirection().xyz;
-		L += sample_hemisphere_cos(L, rng) * light.GetRadius();
+		L += RESTIRHemisphereCos(L, uv) * light.GetRadius();
 		L = normalize(L);
 		s.direction = L;
 		s.distance = FLT_MAX;
@@ -177,8 +197,7 @@ inline RESTIRLightSample RESTIRResolveAnalyticLight(
 	case ENTITY_TYPE_POINTLIGHT:
 	{
 		float3 pos = light.position;
-		pos += light.GetDirection() * (rng.next_float() - 0.5) * light.GetLength();
-		pos += sample_hemisphere_cos(normalize(pos - P), rng) * light.GetRadius();
+		pos += RESTIRHemisphereCos(normalize(pos - P), uv) * light.GetRadius();
 		float3 L = pos - P;
 		const float dist2 = dot(L, L);
 		const float range = light.GetRange();
@@ -197,7 +216,7 @@ inline RESTIRLightSample RESTIRResolveAnalyticLight(
 	{
 		const float3 Loriginal = normalize(light.position - P);
 		float3 pos = light.position;
-		pos += sample_hemisphere_cos(normalize(light.position - P), rng) * light.GetRadius();
+		pos += RESTIRHemisphereCos(normalize(light.position - P), uv) * light.GetRadius();
 		float3 L = pos - P;
 		const float dist2 = dot(L, L);
 		const float range = light.GetRange();
@@ -231,8 +250,8 @@ inline RESTIRLightSample RESTIRResolveAnalyticLight(
 		if (dot(P - light.position, forward) > 0) // in front of the light
 		{
 			float3 pos = light.position;
-			pos += right * (rng.next_float() - 0.5) * light.GetLength();
-			pos += up * (rng.next_float() - 0.5) * light.GetHeight();
+			pos += right * (uv.x - 0.5) * light.GetLength();
+			pos += up * (uv.y - 0.5) * light.GetHeight();
 			float3 L = pos - P;
 			const float dist2 = dot(L, L);
 			const float range = light.GetRange();
@@ -251,6 +270,29 @@ inline RESTIRLightSample RESTIRResolveAnalyticLight(
 	}
 
 	return s;
+}
+
+/**
+ * Draws a fresh uv and resolves the light (stochastic convenience overload).
+ *
+ * Kept for the light-only consumers (SurfelGI / DDGI) that do not persist a
+ * sample and just need a random one each call.
+ *
+ * @param[in] light - The analytic light entity.
+ * @param[in] P - World-space shading point.
+ * @param[in] N - World-space shading normal.
+ * @param[in,out] rng - Random generator.
+ *
+ * @return The resolved sample; radiance is 0 when the light does not reach P.
+ */
+inline RESTIRLightSample RESTIRResolveAnalyticLight(
+	ShaderEntity light,
+	float3 P,
+	float3 N,
+	inout RNG rng)
+{
+	const float2 uv = float2(rng.next_float(), rng.next_float());
+	return RESTIRResolveAnalyticLight(light, P, N, uv);
 }
 
 /*

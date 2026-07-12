@@ -2,8 +2,41 @@
 #include "globals.hlsli"
 #include "raytracingHF.hlsli"
 #include "lightingHF.hlsli"
+#include "restir_lightsamplingHF.hlsli"
 #include "restir_diHF.hlsli"
 #include "restir_di_visibilityHF.hlsli"
+
+/**
+ * Re-resolves a reservoir sample's world position at the light's current
+ * transform.
+ *
+ * The reservoir stores a light reference (index + uv); resolving it against the
+ * live light entity each frame makes a moving light's sample track the light
+ * instead of lagging behind the stale resolved position carried through reuse.
+ *
+ * @param[in] lightIndex - Chosen light index.
+ * @param[in] uv - Stored sample parameterization on the light.
+ * @param[in] P - World-space shading point.
+ * @param[in] N - World-space shading normal.
+ * @param[out] samplePosition - Resolved world-space point on the light.
+ * @param[out] sampleRadiance - Resolved unshadowed incident radiance.
+ */
+void RESTIRDIResolveSample(
+	uint lightIndex,
+	float2 uv,
+	float3 P,
+	float3 N,
+	out float3 samplePosition,
+	out float3 sampleRadiance)
+{
+	const ShaderEntity light = load_entity(lightIndex);
+	const RESTIRLightSample s = RESTIRResolveAnalyticLight(light, P, N, uv);
+	// Directional samples have no finite position; anchor them far along the
+	// sample direction (matches the initial pass).
+	const float dist = (s.distance >= FLT_MAX * 0.5) ? 100000.0 : s.distance;
+	samplePosition = P + s.direction * dist;
+	sampleRadiance = s.radiance;
+}
 
 // ReSTIR DI - spatial resampling pass.
 //
@@ -103,6 +136,13 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		[branch]
 		if (W > 0 && reservoir.targetPdf > 0)
 		{
+			// Re-resolve the chosen sample at the light's CURRENT transform so
+			// a moving light's shadow tracks it instead of lagging behind the
+			// stale resolved point carried through spatiotemporal reuse.
+			RESTIRDIResolveSample(
+				reservoir.lightIndex, reservoir.uv, P, N,
+				reservoir.samplePosition, reservoir.sampleRadiance);
+
 			reservoir.visibility =
 				RESTIRDITraceVisibility(P, N, reservoir.samplePosition, rng);
 			rawVisibility = reservoir.visibility;
@@ -147,11 +187,17 @@ void main(uint3 DTid : SV_DispatchThreadID)
 						}
 						else
 						{
-							// Same light: re-evaluate its sample under the
-							// current scene and compare to the stored raw
-							// visibility.
-							const float vReeval = RESTIRDITraceVisibility(
-								P, N, prevRes.samplePosition, rng);
+							// Same light: re-resolve its sample at the light's
+							// current transform (so a moved light is detected
+							// too) and re-trace under the current scene,
+							// comparing to the stored raw visibility.
+							float3 prevPos;
+							float3 prevRad;
+							RESTIRDIResolveSample(
+								prevRes.lightIndex, prevRes.uv, P, N,
+								prevPos, prevRad);
+							const float vReeval =
+								RESTIRDITraceVisibility(P, N, prevPos, rng);
 							gradient =
 								abs(vReeval - rawVisibilityHistory[prevPixel]);
 						}

@@ -56,7 +56,8 @@ inline RESTIRDIReservoir RESTIRDISampleInitial(
 		const uint lightIndex = iterator.first_item() + rng.next_uint(lightCount);
 		const ShaderEntity light = load_entity(lightIndex);
 
-		const RESTIRLightSample s = RESTIRResolveAnalyticLight(light, P, N, rng);
+		const float2 uv = float2(rng.next_float(), rng.next_float());
+		const RESTIRLightSample s = RESTIRResolveAnalyticLight(light, P, N, uv);
 
 		// Resolve to a world-space point on the light. Directional samples have
 		// no finite position, so anchor them far along the sample direction.
@@ -69,7 +70,7 @@ inline RESTIRDIReservoir RESTIRDISampleInitial(
 		const float risWeight = targetPdf * invSourcePdf;
 
 		RESTIRDIReservoirUpdate(
-			r, samplePosition, s.radiance, lightIndex, targetPdf, risWeight,
+			r, samplePosition, s.radiance, lightIndex, uv, targetPdf, risWeight,
 			rng);
 	}
 
@@ -113,8 +114,5 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		}
 	}
 
-	RESTIRDIReservoirPacked packed;
-	packed.store(reservoir);
-	reservoirOutput.Store4(flatIndex * 32, packed.data0);
-	reservoirOutput.Store4(flatIndex * 32 + 16, packed.data1);
+	RESTIRDIReservoirStore(reservoirOutput, flatIndex, reservoir);
 }
