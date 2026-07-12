@@ -34,8 +34,22 @@ PUSHCONSTANT(push, RESTIRDIPushConstants);
 Texture2D<float4> accumHistory : register(t0);
 Texture2D<float3> rawIrradiance : register(t1);  // per-frame E (spatial pass)
 Texture2D<float> gradientTexture : register(t2); // A-SVGF temporal gradient
+Texture2D<float> moment2History : register(t3);  // accumulated luma 2nd moment
 
 RWTexture2D<float4> accumOutput : register(u0);
+RWTexture2D<float> moment2Output : register(u1); // luma 2nd moment for variance
+
+/**
+ * Rec. 709 luminance of a linear RGB value.
+ *
+ * @param[in] c - Linear RGB value.
+ *
+ * @return Scalar luminance.
+ */
+float RESTIRLuma(float3 c)
+{
+	return dot(c, float3(0.2126, 0.7152, 0.0722));
+}
 
 /**
  * Maximum temporal gradient over a small neighborhood.
@@ -85,6 +99,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
 	{
 		// Sky / background: nothing to denoise, reset history.
 		accumOutput[pixel] = 0;
+		moment2Output[pixel] = 0;
 		return;
 	}
 
@@ -92,13 +107,18 @@ void main(uint3 DTid : SV_DispatchThreadID)
 	// (a frame that selected an occluded light) accumulates 0 - that is exactly
 	// the balancing sample the mean needs, so it is never rejected.
 	const float3 freshE = rawIrradiance[pixel];
+	const float freshLuma = RESTIRLuma(freshE);
 
 	// Exact shadow change here (dilated), measured by the spatial reuse pass.
 	const float reset = saturate(
 		DilateGradient(pixel) * RESTIR_DI_DENOISE_GRADIENT_SENSITIVITY);
 
-	// Start from this frame's single sample (history length 1).
+	// Start from this frame's single sample (history length 1). The second
+	// luminance moment tracks the temporal variance the spatial filter needs to
+	// tell residual sampling noise (high variance -> blur) from a real, static
+	// shadow edge (low variance -> keep sharp) even after history is long.
 	float3 mean = freshE;
+	float moment2 = freshLuma * freshLuma;
 	float historyLength = 1;
 
 	const float2 uv = (pixel + 0.5) * push.resolutionRcp;
@@ -132,8 +152,11 @@ void main(uint3 DTid : SV_DispatchThreadID)
 
 			const float alpha = 1.0 / historyLength;
 			mean = lerp(prevAccum.rgb, freshE, alpha);
+			moment2 = lerp(
+				moment2History[prevPixel], freshLuma * freshLuma, alpha);
 		}
 	}
 
 	accumOutput[pixel] = float4(mean, historyLength);
+	moment2Output[pixel] = moment2;
 }

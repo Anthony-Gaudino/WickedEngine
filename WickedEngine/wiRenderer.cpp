@@ -15691,6 +15691,18 @@ void CreateReSTIRDIResources(ReSTIRDIResources& res, XMUINT2 resolution)
 	device->CreateTexture(&td, nullptr, &res.irradiance_accum[1]);
 	device->SetName(&res.irradiance_accum[1], "restir_di.irradiance_accum[1]");
 
+	// Accumulated luminance second moment (for the temporal variance).
+	TextureDesc md;
+	md.width = resolution.x;
+	md.height = resolution.y;
+	md.format = Format::R16_FLOAT;
+	md.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+	md.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
+	device->CreateTexture(&md, nullptr, &res.irradiance_moment2[0]);
+	device->SetName(&res.irradiance_moment2[0], "restir_di.irradiance_moment2[0]");
+	device->CreateTexture(&md, nullptr, &res.irradiance_moment2[1]);
+	device->SetName(&res.irradiance_moment2[1], "restir_di.irradiance_moment2[1]");
+
 	// Spatial a-trous ping-pong scratch: (rgb = irradiance, a = variance).
 	TextureDesc ad;
 	ad.width = resolution.x;
@@ -15858,13 +15870,23 @@ int ReSTIR_DI(
 				&res.irradiance_accum[prev],
 				&res.raw_irradiance[cur],
 				&res.gradient,
+				&res.irradiance_moment2[prev],
 			};
 			device->BindResources(srvs, 0, arraysize(srvs), cmd);
 			device->BindUAV(&res.irradiance_accum[cur], 0, cmd);
+			device->BindUAV(&res.irradiance_moment2[cur], 1, cmd);
 
-			device->Barrier(GPUBarrier::Image(&res.irradiance_accum[cur], res.irradiance_accum[cur].desc.layout, ResourceState::UNORDERED_ACCESS), cmd);
+			GPUBarrier pre[] = {
+				GPUBarrier::Image(&res.irradiance_accum[cur], res.irradiance_accum[cur].desc.layout, ResourceState::UNORDERED_ACCESS),
+				GPUBarrier::Image(&res.irradiance_moment2[cur], res.irradiance_moment2[cur].desc.layout, ResourceState::UNORDERED_ACCESS),
+			};
+			device->Barrier(pre, arraysize(pre), cmd);
 			device->Dispatch(dispatch_x, dispatch_y, 1, cmd);
-			device->Barrier(GPUBarrier::Image(&res.irradiance_accum[cur], ResourceState::UNORDERED_ACCESS, res.irradiance_accum[cur].desc.layout), cmd);
+			GPUBarrier post[] = {
+				GPUBarrier::Image(&res.irradiance_accum[cur], ResourceState::UNORDERED_ACCESS, res.irradiance_accum[cur].desc.layout),
+				GPUBarrier::Image(&res.irradiance_moment2[cur], ResourceState::UNORDERED_ACCESS, res.irradiance_moment2[cur].desc.layout),
+			};
+			device->Barrier(post, arraysize(post), cmd);
 			device->EventEnd(cmd);
 		}
 
@@ -15881,6 +15903,7 @@ int ReSTIR_DI(
 			device->EventBegin("Irradiance spatial denoise", cmd);
 			device->BindComputeShader(&shaders[CSTYPE_RESTIR_DI_DENOISE_SPATIAL], cmd);
 			device->BindResource(&res.irradiance_accum[cur], 0, cmd);
+			device->BindResource(&res.irradiance_moment2[cur], 1, cmd);
 
 			device->Barrier(GPUBarrier::Image(&res.irradiance_final, res.irradiance_final.desc.layout, ResourceState::UNORDERED_ACCESS), cmd);
 

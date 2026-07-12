@@ -33,6 +33,7 @@ PUSHCONSTANT(push, RESTIRDIDenoisePushConstants);
 
 // (rgb = temporally accumulated irradiance mean, a = history length).
 Texture2D<float4> accum : register(t0);
+Texture2D<float> moment2 : register(t1); // accumulated luma 2nd moment
 
 RWTexture2D<float4> atrousOutput : register(u0); // (rgb irradiance, variance)
 RWTexture2D<float3> irradianceFinal : register(u1); // read by forward shading
@@ -159,14 +160,28 @@ void main(uint3 DTid : SV_DispatchThreadID)
 	const float3 centerN = decode_normal(texture_normal_roughness[pixel]);
 	const float centerLuma = Luma(centerIrr);
 
-	// While the temporal history is short the temporal variance is unreliable,
-	// so estimate it spatially (SVGF low-history fallback); otherwise use the
-	// variance carried in the ping-pong texture.
+	// On the first pass the variance is the temporal luminance variance
+	// (moment2 - mean^2); this is what keeps the luminance stop open over
+	// residual noise even once history is long (static), so the filter never
+	// freezes the noise in place - while staying tight on a real, static shadow
+	// edge, whose temporal variance is low. While the history is still short
+	// the temporal estimate is unreliable, so fall back to a spatial estimate
+	// (SVGF low-history fallback). Later passes carry the filtered variance.
 	const float historyLength =
 		push.inputFromReservoir ? accum[pixel].a : 0.0;
-	const float centerVar = (push.inputFromReservoir && historyLength < 4.0)
-		? max(centerVarIn, EstimateSpatialVariance(pixel))
-		: centerVarIn;
+	float centerVar;
+	if (push.inputFromReservoir)
+	{
+		const float temporalVar =
+			max(0.0, moment2[pixel] - centerLuma * centerLuma);
+		centerVar = (historyLength < 4.0)
+			? max(temporalVar, EstimateSpatialVariance(pixel))
+			: temporalVar;
+	}
+	else
+	{
+		centerVar = centerVarIn;
+	}
 	const float sigmaLuma =
 		RESTIR_DI_DENOISE_LUMINANCE_SCALE * sqrt(centerVar) + 1e-3;
 

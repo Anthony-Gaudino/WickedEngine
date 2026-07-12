@@ -768,6 +768,12 @@ namespace wi::renderer
 		// history the next frame reprojects.
 		wi::graphics::Texture irradiance_accum[2];
 
+		// Accumulated luminance second moment, ping-pong per pixel. With the
+		// mean it gives the temporal variance the spatial a-trous uses to
+		// separate residual sampling noise (high variance, blur) from real
+		// static shadow edges (low variance, keep sharp).
+		wi::graphics::Texture irradiance_moment2[2];
+
 		// Ping-pong scratch for the spatial a-trous irradiance denoiser: (rgb =
 		// irradiance, a = variance) per pixel.
 		wi::graphics::Texture denoise_atrous[2];
