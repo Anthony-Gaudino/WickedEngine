@@ -146,6 +146,7 @@ bool DDGI_ENABLED = false;
 bool DDGI_DEBUG_ENABLED = false;
 uint32_t DDGI_RAYCOUNT = 256u;
 bool RESTIR_DI_ENABLED = false;
+bool RESTIR_GI_ENABLED = false;
 float DDGI_BLEND_SPEED = 0.1f;
 float GI_BOOST = 1.0f;
 bool MESH_SHADER_ALLOWED = false;
@@ -1182,6 +1183,14 @@ void LoadShaders()
 	}
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_DI_DENOISE_TEMPORAL], "restir_di_denoise_temporalCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_DI_DENOISE_SPATIAL], "restir_di_denoise_spatialCS.cso"); });
+	if (device->CheckCapability(GraphicsDeviceCapability::RAYTRACING))
+	{
+		wi::jobsystem::Execute(raytracing_ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_GI_TRACE], "restir_gi_traceCS_rtapi.cso", ShaderModel::SM_6_5); });
+	}
+	else
+	{
+		wi::jobsystem::Execute(raytracing_ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_GI_TRACE], "restir_gi_traceCS.cso"); });
+	}
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_TERRAIN_VIRTUALTEXTURE_UPDATE_BASECOLORMAP], "terrainVirtualTextureUpdateCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_TERRAIN_VIRTUALTEXTURE_UPDATE_NORMALMAP], "terrainVirtualTextureUpdateCS_normalmap.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_TERRAIN_VIRTUALTEXTURE_UPDATE_SURFACEMAP], "terrainVirtualTextureUpdateCS_surfacemap.cso"); });
@@ -11572,6 +11581,7 @@ void BindCameraCB(
 	shadercam.texture_rtshadow_index = camera.texture_rtshadow_index;
 	shadercam.buffer_restir_di_index = camera.buffer_restir_di_index;
 	shadercam.texture_restir_di_irradiance_index = camera.texture_restir_di_irradiance_index;
+	shadercam.texture_restir_gi_index = camera.texture_restir_gi_index;
 	shadercam.texture_rtdiffuse_index = camera.texture_rtdiffuse_index;
 	shadercam.texture_surfelgi_index = camera.texture_surfelgi_index;
 	shadercam.texture_depth_index_prev = camera_previous.texture_depth_index;
@@ -15940,6 +15950,220 @@ int ReSTIR_DI(
 
 	return device->GetDescriptorIndex(&res.reservoir_final[cur], SubresourceType::SRV);
 }
+void CreateReSTIRGIResources(ReSTIRGIResources& res, XMUINT2 resolution)
+{
+	res.resolution = resolution;
+	res.frame = 0;
+
+	GPUBufferDesc bd;
+	bd.size = (uint64_t)sizeof(RESTIRGIReservoirPacked) * resolution.x * resolution.y;
+	bd.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+	bd.misc_flags = ResourceMiscFlag::BUFFER_RAW;
+	device->CreateBufferZeroed(&bd, &res.reservoir[0]);
+	device->SetName(&res.reservoir[0], "restir_gi.reservoir[0]");
+	device->CreateBufferZeroed(&bd, &res.reservoir[1]);
+	device->SetName(&res.reservoir[1], "restir_gi.reservoir[1]");
+
+	// Temporal accumulation (rgb mean + history length).
+	TextureDesc td;
+	td.width = resolution.x;
+	td.height = resolution.y;
+	td.format = Format::R16G16B16A16_FLOAT;
+	td.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+	td.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
+	device->CreateTexture(&td, nullptr, &res.irradiance_accum[0]);
+	device->SetName(&res.irradiance_accum[0], "restir_gi.irradiance_accum[0]");
+	device->CreateTexture(&td, nullptr, &res.irradiance_accum[1]);
+	device->SetName(&res.irradiance_accum[1], "restir_gi.irradiance_accum[1]");
+
+	// Luminance second moment (temporal variance).
+	TextureDesc md;
+	md.width = resolution.x;
+	md.height = resolution.y;
+	md.format = Format::R16_FLOAT;
+	md.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+	md.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
+	device->CreateTexture(&md, nullptr, &res.irradiance_moment2[0]);
+	device->SetName(&res.irradiance_moment2[0], "restir_gi.irradiance_moment2[0]");
+	device->CreateTexture(&md, nullptr, &res.irradiance_moment2[1]);
+	device->SetName(&res.irradiance_moment2[1], "restir_gi.irradiance_moment2[1]");
+
+	// Spatial a-trous ping-pong scratch (rgb + variance).
+	TextureDesc ad;
+	ad.width = resolution.x;
+	ad.height = resolution.y;
+	ad.format = Format::R16G16B16A16_FLOAT;
+	ad.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+	ad.layout = ResourceState::UNORDERED_ACCESS;
+	device->CreateTexture(&ad, nullptr, &res.denoise_atrous[0]);
+	device->SetName(&res.denoise_atrous[0], "restir_gi.denoise_atrous[0]");
+	device->CreateTexture(&ad, nullptr, &res.denoise_atrous[1]);
+	device->SetName(&res.denoise_atrous[1], "restir_gi.denoise_atrous[1]");
+
+	// Per-frame raw irradiance (compute-only) and the antilag gradient.
+	TextureDesc id;
+	id.width = resolution.x;
+	id.height = resolution.y;
+	id.format = Format::R11G11B10_FLOAT;
+	id.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+	id.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
+	device->CreateTexture(&id, nullptr, &res.raw_irradiance);
+	device->SetName(&res.raw_irradiance, "restir_gi.raw_irradiance");
+
+	// Final denoised irradiance: sampled by the forward pixel shader.
+	id.layout = ResourceState::SHADER_RESOURCE;
+	device->CreateTexture(&id, nullptr, &res.irradiance_final);
+	device->SetName(&res.irradiance_final, "restir_gi.irradiance_final");
+
+	TextureDesc gd;
+	gd.width = resolution.x;
+	gd.height = resolution.y;
+	gd.format = Format::R16_FLOAT;
+	gd.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+	gd.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
+	device->CreateTexture(&gd, nullptr, &res.gradient);
+	device->SetName(&res.gradient, "restir_gi.gradient");
+}
+int ReSTIR_GI(
+	const ReSTIRGIResources& res,
+	const wi::scene::Scene& scene,
+	CommandList cmd
+)
+{
+	if (!scene.TLAS.IsValid() && !scene.BVH.IsValid())
+		return -1;
+	if (!res.reservoir[0].IsValid())
+		return -1;
+	if (wi::jobsystem::IsBusy(raytracing_ctx))
+		return -1;
+
+	device->EventBegin("ReSTIR_GI", cmd);
+	auto prof_range = wi::profiler::BeginRangeGPU("ReSTIR GI", cmd);
+
+	BindCommonResources(cmd);
+
+	const uint32_t cur = (uint32_t)(res.frame & 1);
+	const uint32_t prev = 1u - cur;
+
+	const uint32_t dispatch_x = (res.resolution.x + 7) / 8;
+	const uint32_t dispatch_y = (res.resolution.y + 7) / 8;
+
+	const XMFLOAT2 resolutionRcp =
+		XMFLOAT2(1.0f / res.resolution.x, 1.0f / res.resolution.y);
+
+	// Initial sample generation: trace one hemisphere ray per pixel, shade the
+	// hit, and build this pixel's GI reservoir + per-frame indirect irradiance.
+	{
+		device->EventBegin("Trace", cmd);
+		device->BindComputeShader(&shaders[CSTYPE_RESTIR_GI_TRACE], cmd);
+
+		RESTIRGIPushConstants push = {};
+		push.resolution = res.resolution;
+		push.resolutionRcp = resolutionRcp;
+		push.frameIndex = (uint)res.frame;
+		push.candidateCount = RESTIR_GI_INITIAL_CANDIDATES;
+		push.spatialSampleCount = RESTIR_GI_SPATIAL_SAMPLES;
+		push.spatialRadius = RESTIR_GI_SPATIAL_RADIUS;
+		push.instanceInclusionMask = 0xFF;
+		device->PushConstants(&push, sizeof(push), cmd);
+
+		device->BindUAV(&res.reservoir[cur], 0, cmd);
+		device->BindUAV(&res.raw_irradiance, 1, cmd);
+		device->BindUAV(&res.gradient, 2, cmd);
+
+		GPUBarrier pre[] = {
+			GPUBarrier::Buffer(&res.reservoir[cur], ResourceState::SHADER_RESOURCE, ResourceState::UNORDERED_ACCESS),
+			GPUBarrier::Image(&res.raw_irradiance, res.raw_irradiance.desc.layout, ResourceState::UNORDERED_ACCESS),
+			GPUBarrier::Image(&res.gradient, res.gradient.desc.layout, ResourceState::UNORDERED_ACCESS),
+		};
+		device->Barrier(pre, arraysize(pre), cmd);
+		device->Dispatch(dispatch_x, dispatch_y, 1, cmd);
+		GPUBarrier post[] = {
+			GPUBarrier::Buffer(&res.reservoir[cur], ResourceState::UNORDERED_ACCESS, ResourceState::SHADER_RESOURCE),
+			GPUBarrier::Image(&res.raw_irradiance, ResourceState::UNORDERED_ACCESS, res.raw_irradiance.desc.layout),
+			GPUBarrier::Image(&res.gradient, ResourceState::UNORDERED_ACCESS, res.gradient.desc.layout),
+		};
+		device->Barrier(post, arraysize(post), cmd);
+		device->EventEnd(cmd);
+	}
+
+	// Denoise: reuse the ReSTIR DI diffuse-irradiance denoiser (it is generic
+	// over the irradiance/gradient/moment textures and never touches a
+	// reservoir). Temporal accumulation then variance-guided a-trous.
+	RESTIRDIPushConstants dnPush = {};
+	dnPush.resolution = res.resolution;
+	dnPush.resolutionRcp = resolutionRcp;
+	dnPush.frameIndex = (uint)res.frame;
+
+	{
+		device->EventBegin("Irradiance denoise", cmd);
+		device->BindComputeShader(&shaders[CSTYPE_RESTIR_DI_DENOISE_TEMPORAL], cmd);
+		device->PushConstants(&dnPush, sizeof(dnPush), cmd);
+
+		const GPUResource* srvs[] = {
+			&res.irradiance_accum[prev],
+			&res.raw_irradiance,
+			&res.gradient,
+			&res.irradiance_moment2[prev],
+		};
+		device->BindResources(srvs, 0, arraysize(srvs), cmd);
+		device->BindUAV(&res.irradiance_accum[cur], 0, cmd);
+		device->BindUAV(&res.irradiance_moment2[cur], 1, cmd);
+
+		GPUBarrier pre[] = {
+			GPUBarrier::Image(&res.irradiance_accum[cur], res.irradiance_accum[cur].desc.layout, ResourceState::UNORDERED_ACCESS),
+			GPUBarrier::Image(&res.irradiance_moment2[cur], res.irradiance_moment2[cur].desc.layout, ResourceState::UNORDERED_ACCESS),
+		};
+		device->Barrier(pre, arraysize(pre), cmd);
+		device->Dispatch(dispatch_x, dispatch_y, 1, cmd);
+		GPUBarrier post[] = {
+			GPUBarrier::Image(&res.irradiance_accum[cur], ResourceState::UNORDERED_ACCESS, res.irradiance_accum[cur].desc.layout),
+			GPUBarrier::Image(&res.irradiance_moment2[cur], ResourceState::UNORDERED_ACCESS, res.irradiance_moment2[cur].desc.layout),
+		};
+		device->Barrier(post, arraysize(post), cmd);
+		device->EventEnd(cmd);
+	}
+
+	{
+		device->EventBegin("Irradiance spatial denoise", cmd);
+		device->BindComputeShader(&shaders[CSTYPE_RESTIR_DI_DENOISE_SPATIAL], cmd);
+		device->BindResource(&res.irradiance_accum[cur], 0, cmd);
+		device->BindResource(&res.irradiance_moment2[cur], 1, cmd);
+
+		device->Barrier(GPUBarrier::Image(&res.irradiance_final, res.irradiance_final.desc.layout, ResourceState::UNORDERED_ACCESS), cmd);
+
+		for (uint32_t i = 0; i < RESTIR_DI_DENOISE_ATROUS_PASSES; ++i)
+		{
+			RESTIRDIDenoisePushConstants dpush = {};
+			dpush.resolution = res.resolution;
+			dpush.resolutionRcp = resolutionRcp;
+			dpush.stepSize = 1u << i;
+			dpush.inputFromReservoir = (i == 0) ? 1u : 0u;
+			dpush.outputToReservoir =
+				(i + 1 == RESTIR_DI_DENOISE_ATROUS_PASSES) ? 1u : 0u;
+			device->PushConstants(&dpush, sizeof(dpush), cmd);
+
+			const uint32_t outIdx = i & 1u;
+			device->BindUAV(&res.denoise_atrous[outIdx], 0, cmd);
+			device->BindUAV(&res.irradiance_final, 1, cmd);
+			device->BindUAV(&res.denoise_atrous[outIdx ^ 1u], 2, cmd);
+
+			if (i > 0)
+				device->Barrier(GPUBarrier::Memory(), cmd);
+			device->Dispatch(dispatch_x, dispatch_y, 1, cmd);
+		}
+
+		device->Barrier(GPUBarrier::Image(&res.irradiance_final, ResourceState::UNORDERED_ACCESS, res.irradiance_final.desc.layout), cmd);
+		device->EventEnd(cmd);
+	}
+
+	res.frame++;
+
+	wi::profiler::EndRange(prof_range);
+	device->EventEnd(cmd);
+
+	return device->GetDescriptorIndex(&res.irradiance_final, SubresourceType::SRV);
+}
 void CreateRTShadowResources(RTShadowResources& res, XMUINT2 resolution)
 {
 	res.frame = 0;
@@ -20061,6 +20285,14 @@ void SetReSTIRDIEnabled(bool value)
 bool GetReSTIRDIEnabled()
 {
 	return RESTIR_DI_ENABLED;
+}
+void SetReSTIRGIEnabled(bool value)
+{
+	RESTIR_GI_ENABLED = value;
+}
+bool GetReSTIRGIEnabled()
+{
+	return RESTIR_GI_ENABLED;
 }
 void SetDDGIDebugEnabled(bool value)
 {

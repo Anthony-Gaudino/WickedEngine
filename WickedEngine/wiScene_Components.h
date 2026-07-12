@@ -1468,6 +1468,7 @@ namespace wi::scene
 		int texture_surfelgi_index = -1;
 		int buffer_restir_di_index = -1;
 		int texture_restir_di_irradiance_index = -1;
+		int texture_restir_gi_index = -1;
 		int buffer_entitytiles_index = -1;
 		int texture_vxgi_diffuse_index = -1;
 		int texture_vxgi_specular_index = -1;

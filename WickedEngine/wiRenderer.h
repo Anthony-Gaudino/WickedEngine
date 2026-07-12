@@ -808,6 +808,42 @@ namespace wi::renderer
 		const wi::scene::Scene& scene,
 		wi::graphics::CommandList cmd
 	);
+	struct ReSTIRGIResources
+	{
+		// Ping-pong per-pixel GI sample reservoir (48 bytes,
+		// RESTIRGIReservoirPacked). The trace pass writes [cur]; [prev] is the
+		// history the (upcoming) temporal reuse pass reprojects.
+		wi::graphics::GPUBuffer reservoir[2];
+
+		// Diffuse-irradiance denoiser state, shared layout with ReSTIR DI so
+		// the same denoise shaders filter it: temporal accumulation (rgb mean +
+		// history length), luminance second moment (temporal variance), and the
+		// a-trous ping-pong scratch (rgb + variance).
+		wi::graphics::Texture irradiance_accum[2];
+		wi::graphics::Texture irradiance_moment2[2];
+		wi::graphics::Texture denoise_atrous[2];
+
+		// Per-frame (undenoised) indirect irradiance written by the trace pass,
+		// and the final denoised irradiance sampled by forward shading.
+		wi::graphics::Texture raw_irradiance;
+		wi::graphics::Texture irradiance_final;
+
+		// Antilag gradient consumed by the temporal denoise (zero until the
+		// reuse stages produce a real one).
+		wi::graphics::Texture gradient;
+
+		XMUINT2 resolution = {};
+		mutable int frame = 0;
+	};
+	void CreateReSTIRGIResources(ReSTIRGIResources& res, XMUINT2 resolution);
+	// Runs the ReSTIR GI passes. Returns the SRV descriptor index of this
+	// frame's denoised indirect-irradiance texture (to store in the camera), or
+	// -1 when the passes did not run.
+	int ReSTIR_GI(
+		const ReSTIRGIResources& res,
+		const wi::scene::Scene& scene,
+		wi::graphics::CommandList cmd
+	);
 	struct ScreenSpaceShadowResources
 	{
 		wi::graphics::Texture lowres;
@@ -1324,6 +1360,8 @@ namespace wi::renderer
 	bool GetDDGIEnabled();
 	void SetReSTIRDIEnabled(bool value);
 	bool GetReSTIRDIEnabled();
+	void SetReSTIRGIEnabled(bool value);
+	bool GetReSTIRGIEnabled();
 	void SetDDGIDebugEnabled(bool value);
 	bool GetDDGIDebugEnabled();
 	void SetDDGIRayCount(uint32_t value);

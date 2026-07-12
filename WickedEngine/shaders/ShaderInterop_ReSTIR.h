@@ -515,6 +515,152 @@ struct RESTIRDIReservoirPacked
 
 /*
 ################################################################################
+Screen-space GI reservoir
+################################################################################
+*/
+
+/** ReSTIR GI initial-sample count per pixel (hemisphere rays traced). */
+static const uint RESTIR_GI_INITIAL_CANDIDATES = 1;
+
+/** Spatial-reuse neighbor count per pixel. */
+static const uint RESTIR_GI_SPATIAL_SAMPLES = 4;
+
+/** Spatial-reuse search radius, in pixels. */
+static const float RESTIR_GI_SPATIAL_RADIUS = 16.0;
+
+/**
+ * Firefly clamp for the per-frame indirect irradiance (max luminance).
+ *
+ * The unbiased weight W = pi / cos(theta) blows up at grazing hemisphere
+ * angles, so a single sample that escapes to the bright sky or lands on a
+ * faintly lit surface can spike to a huge value the denoiser cannot absorb (a
+ * flickering white speckle). Clamping the sample luminance suppresses those
+ * fireflies at the cost of a small, bounded energy loss on genuinely bright
+ * indirect bounces.
+ */
+static const float RESTIR_GI_FIREFLY_CLAMP = 8.0;
+
+#ifndef __cplusplus
+/**
+ * A screen-space ReSTIR GI reservoir.
+ *
+ * Holds one indirect-lighting *sample point*: the world-space point a
+ * hemisphere ray hit, its normal, and the radiance leaving it toward this
+ * pixel's surface. Unlike the DI reservoir (which references a light), GI
+ * resamples surface points in the scene, so reuse across pixels needs the hit
+ * position and normal to re-evaluate the target function and the reconnection
+ * Jacobian at a different visible point.
+ *
+ * References: Ouyang et al. 2021, "ReSTIR GI: Path Resampling for Real-Time
+ * Path Tracing".
+ */
+struct RESTIRGIReservoir
+{
+	/** World-space indirect hit point (the sample point). */
+	float3 samplePosition;
+
+	/**
+	 * World-space normal at the hit point (for reuse Jacobian + validation).
+	 */
+	float3 sampleNormal;
+
+	/**
+	 * Radiance leaving the hit point toward this pixel's surface (view-
+	 * independent diffuse outgoing radiance; no receiver albedo).
+	 */
+	float3 sampleRadiance;
+
+	/** Target function value p_hat of the held sample at the owning pixel. */
+	float targetPdf;
+
+	/** Running sum of resampling weights. */
+	float weightSum;
+
+	/** Confidence (effective candidate count). */
+	float M;
+};
+
+/**
+ * Resets a GI reservoir to empty.
+ *
+ * @return A GI reservoir holding no sample (all fields zero).
+ */
+inline RESTIRGIReservoir RESTIRGIReservoirInit()
+{
+	RESTIRGIReservoir r;
+	r.samplePosition = float3(0, 0, 0);
+	r.sampleNormal = float3(0, 0, 0);
+	r.sampleRadiance = float3(0, 0, 0);
+	r.targetPdf = 0;
+	r.weightSum = 0;
+	r.M = 0;
+	return r;
+}
+
+/**
+ * Unbiased contribution weight W = weightSum / (M * targetPdf).
+ *
+ * @param[in] r - The GI reservoir to weigh.
+ *
+ * @return The unbiased contribution weight W (>= 0).
+ */
+inline float RESTIRGIReservoirGetInvPdf(RESTIRGIReservoir r)
+{
+	const float denom = r.M * r.targetPdf;
+	return denom > 0 ? r.weightSum / denom : 0;
+}
+#endif // __cplusplus
+
+/**
+ * GPU-storable packed GI reservoir (48 bytes), one per screen pixel.
+ *
+ * Backs the trace output, temporal history and spatial reuse buffers of the
+ * ReSTIR GI passes.
+ */
+struct RESTIRGIReservoirPacked
+{
+	uint4 data0;
+	uint4 data1;
+	uint4 data2;
+
+#ifndef __cplusplus
+	/**
+	 * Packs a GI reservoir into this storage slot.
+	 *
+	 * @param[in] r - The GI reservoir to store.
+	 */
+	inline void store(RESTIRGIReservoir r)
+	{
+		data0.xyz = asuint(r.samplePosition);
+		data0.w = Pack_R11G11B10_FLOAT(r.sampleRadiance);
+		data1.xyz = asuint(r.sampleNormal);
+		data1.w = asuint(r.targetPdf);
+		data2.x = asuint(r.weightSum);
+		data2.y = asuint(r.M);
+		data2.zw = uint2(0, 0);
+	}
+
+	/**
+	 * Unpacks the stored GI reservoir.
+	 *
+	 * @return The reconstructed GI reservoir.
+	 */
+	inline RESTIRGIReservoir load()
+	{
+		RESTIRGIReservoir r;
+		r.samplePosition = asfloat(data0.xyz);
+		r.sampleRadiance = Unpack_R11G11B10_FLOAT(data0.w);
+		r.sampleNormal = asfloat(data1.xyz);
+		r.targetPdf = asfloat(data1.w);
+		r.weightSum = asfloat(data2.x);
+		r.M = asfloat(data2.y);
+		return r;
+	}
+#endif // __cplusplus
+};
+
+/*
+################################################################################
 Push constants
 ################################################################################
 */
@@ -531,6 +677,26 @@ struct RESTIRDIPushConstants
 	uint candidateCount;
 	uint spatialSampleCount;
 	float spatialRadius;
+};
+
+/**
+ * Parameters shared by the ReSTIR GI compute passes
+ * (trace / temporal / spatial).
+ */
+struct RESTIRGIPushConstants
+{
+	uint2 resolution;
+	float2 resolutionRcp;
+	uint frameIndex;
+	uint candidateCount;
+	uint spatialSampleCount;
+	float spatialRadius;
+
+	/** Ray-tracing instance inclusion mask for the indirect bounce ray. */
+	uint instanceInclusionMask;
+	uint pad0;
+	uint pad1;
+	uint pad2;
 };
 
 /**

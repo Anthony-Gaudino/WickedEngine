@@ -1408,6 +1408,10 @@ struct alignas(16) ShaderCamera
 	// reservoir. -1 when ReSTIR DI is off.
 	int texture_restir_di_irradiance_index;
 
+	// Denoised ReSTIR GI indirect-diffuse irradiance (albedo-free); consumed in
+	// the indirect-diffuse slot like SurfelGI/RTDiffuse. -1 when GI is off.
+	int texture_restir_gi_index;
+
 #ifdef __cplusplus
 	inline void init()
 	{
@@ -1466,6 +1470,7 @@ struct alignas(16) ShaderCamera
 		texture_normal_roughness_index = -1;
 		buffer_restir_di_index = -1;
 		texture_restir_di_irradiance_index = -1;
+		texture_restir_gi_index = -1;
 		buffer_entitytiles_index = -1;
 		texture_reflection_index = -1;
 		texture_refraction_index = -1;

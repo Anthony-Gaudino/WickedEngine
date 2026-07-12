@@ -179,6 +179,16 @@ inline void TiledLighting(inout Surface surface, inout Lighting lighting, uint f
 #endif //DISABLE_VOXELGI
 
 #ifndef TRANSPARENT
+	// ReSTIR GI (opaque only): denoised indirect diffuse irradiance,
+	// albedo-free. Takes the indirect-diffuse slot ahead of the other GI
+	// sources when on.
+	[branch]
+	if (!surface.IsGIApplied() && camera.texture_restir_gi_index >= 0)
+	{
+		lighting.indirect.diffuse = bindless_textures[descriptor_index(camera.texture_restir_gi_index)][surface.pixel].rgb;
+		surface.SetGIApplied(true);
+	}
+
 	[branch]
 	if (!surface.IsGIApplied() && camera.texture_rtdiffuse_index >= 0)
 	{

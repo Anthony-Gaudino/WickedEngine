@@ -148,6 +148,7 @@ namespace wi
 		wi::renderer::SSGIResources ssgiResources;
 		wi::renderer::RTShadowResources rtshadowResources;
 		wi::renderer::ReSTIRDIResources restirDIResources;
+		wi::renderer::ReSTIRGIResources restirGIResources;
 		wi::renderer::ScreenSpaceShadowResources screenspaceshadowResources;
 		wi::renderer::DepthOfFieldResources depthoffieldResources;
 		wi::renderer::MotionBlurResources motionblurResources;

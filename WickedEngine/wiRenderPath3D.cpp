@@ -327,6 +327,7 @@ namespace wi
 			if (wi::renderer::GetSurfelGIEnabled() ||
 				wi::renderer::GetDDGIEnabled() ||
 				wi::renderer::GetReSTIRDIEnabled() ||
+				wi::renderer::GetReSTIRGIEnabled() ||
 				(hw_raytrace && wi::renderer::GetRaytracedShadowsEnabled()) ||
 				(hw_raytrace && getAO() == AO_RTAO) ||
 				(hw_raytrace && getRaytracedReflectionEnabled()) ||
@@ -466,6 +467,20 @@ namespace wi
 			restirDIResources = {};
 		}
 
+		if (wi::renderer::GetReSTIRGIEnabled() && device->CheckCapability(GraphicsDeviceCapability::RAYTRACING))
+		{
+			if (!restirGIResources.reservoir[0].IsValid() ||
+				restirGIResources.resolution.x != internalResolution.x ||
+				restirGIResources.resolution.y != internalResolution.y)
+			{
+				wi::renderer::CreateReSTIRGIResources(restirGIResources, internalResolution);
+			}
+		}
+		else
+		{
+			restirGIResources = {};
+		}
+
 		if (scene->weather.IsRealisticSky() && scene->weather.IsRealisticSkyAerialPerspective())
 		{
 			if (!aerialperspectiveResources.texture_output.IsValid())
@@ -578,6 +593,7 @@ namespace wi
 			getRaytracedDiffuseEnabled() ||
 			wi::renderer::GetRaytracedShadowsEnabled() ||
 			wi::renderer::GetReSTIRDIEnabled() || // denoiser reprojects on velocity
+			wi::renderer::GetReSTIRGIEnabled() ||
 			getAO() == AO::AO_RTAO ||
 			wi::renderer::GetVariableRateShadingClassification() ||
 			getFSR2Enabled() ||
@@ -642,6 +658,7 @@ namespace wi
 			wi::renderer::GetScreenSpaceShadowsEnabled() ||
 			wi::renderer::GetRaytracedShadowsEnabled() ||
 			wi::renderer::GetReSTIRDIEnabled() ||
+			wi::renderer::GetReSTIRGIEnabled() ||
 			wi::renderer::GetVXGIEnabled()
 			)
 		{
@@ -752,6 +769,14 @@ namespace wi
 			camera->buffer_restir_di_index = -1;
 			camera->texture_restir_di_irradiance_index = -1;
 		}
+		if (wi::renderer::GetReSTIRGIEnabled() && restirGIResources.irradiance_final.IsValid())
+		{
+			camera->texture_restir_gi_index = device->GetDescriptorIndex(&restirGIResources.irradiance_final, SubresourceType::SRV);
+		}
+		else
+		{
+			camera->texture_restir_gi_index = -1;
+		}
 		camera->texture_rtdiffuse_index = device->GetDescriptorIndex(&rtRaytracedDiffuse, SubresourceType::SRV);
 		camera->texture_surfelgi_index = device->GetDescriptorIndex(&surfelGIResources.result, SubresourceType::SRV);
 		camera->texture_vxgi_diffuse_index = device->GetDescriptorIndex(&vxgiResources.diffuse, SubresourceType::SRV);
@@ -780,6 +805,7 @@ namespace wi
 		camera_reflection.texture_normal_roughness_index = -1;
 		camera_reflection.buffer_restir_di_index = -1; // reflection uses analytic direct lighting, not ReSTIR
 		camera_reflection.texture_restir_di_irradiance_index = -1;
+		camera_reflection.texture_restir_gi_index = -1;
 		camera_reflection.buffer_entitytiles_index = device->GetDescriptorIndex(&tiledLightResources_planarReflection.entityTiles, SubresourceType::SRV);
 		camera_reflection.texture_reflection_index = -1;
 		camera_reflection.texture_reflection_depth_index = -1;
@@ -1071,6 +1097,7 @@ namespace wi
 				wi::renderer::GetScreenSpaceShadowsEnabled() ||
 				wi::renderer::GetRaytracedShadowsEnabled() ||
 				wi::renderer::GetReSTIRDIEnabled() ||
+				wi::renderer::GetReSTIRGIEnabled() ||
 				wi::renderer::GetVXGIEnabled()
 				)
 			{
@@ -1142,6 +1169,11 @@ namespace wi
 			if (wi::renderer::GetReSTIRDIEnabled())
 			{
 				wi::renderer::ReSTIR_DI(restirDIResources, *scene, cmd);
+			}
+
+			if (wi::renderer::GetReSTIRGIEnabled())
+			{
+				wi::renderer::ReSTIR_GI(restirGIResources, *scene, cmd);
 			}
 
 			if (getMeshBlendEnabled() && visibility_main.IsMeshBlendVisible())

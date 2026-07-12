@@ -259,6 +259,16 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 	restirDICheckBox.SetCheck(wi::renderer::GetReSTIRDIEnabled());
 	AddWidget(&restirDICheckBox);
 
+	restirGICheckBox.Create("ReSTIR GI: ");
+	restirGICheckBox.SetTooltip("Toggle ReSTIR global illumination (reservoir-based resampling of one-bounce indirect diffuse). Independent of ReSTIR DI; replaces the other indirect GI sources when on. Requires raytracing support.");
+	restirGICheckBox.SetPos(XMFLOAT2(x, y += step));
+	restirGICheckBox.SetSize(XMFLOAT2(itemheight, itemheight));
+	restirGICheckBox.OnClick([](wi::gui::EventArgs args) {
+		wi::renderer::SetReSTIRGIEnabled(args.bValue);
+		});
+	restirGICheckBox.SetCheck(wi::renderer::GetReSTIRGIEnabled());
+	AddWidget(&restirGICheckBox);
+
 	ddgiBlendSpeedSlider.Create(0, 0.2f, 0.1f, 1000, "DDGI Blend Speed: ");
 	ddgiBlendSpeedSlider.SetTooltip("Adjust the contribution of newly traced rays. Higher values will make the DDGI update faster, but can result in increased flickering.");
 	ddgiBlendSpeedSlider.SetSize(XMFLOAT2(wid, itemheight));
@@ -2054,6 +2064,7 @@ void GraphicsWindow::ResizeLayout()
 		layout.add(ddgiRayCountSlider);
 		layout.add(ddgiBlendSpeedSlider);
 		layout.add(restirDICheckBox);
+		layout.add(restirGICheckBox);
 		layout.add(ddgiSmoothBackfaceSlider);
 
 		layout.jump();
