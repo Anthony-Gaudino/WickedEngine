@@ -1191,6 +1191,7 @@ void LoadShaders()
 	{
 		wi::jobsystem::Execute(raytracing_ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_GI_TRACE], "restir_gi_traceCS.cso"); });
 	}
+	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_GI_TEMPORAL], "restir_gi_temporalCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_TERRAIN_VIRTUALTEXTURE_UPDATE_BASECOLORMAP], "terrainVirtualTextureUpdateCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_TERRAIN_VIRTUALTEXTURE_UPDATE_NORMALMAP], "terrainVirtualTextureUpdateCS_normalmap.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_TERRAIN_VIRTUALTEXTURE_UPDATE_SURFACEMAP], "terrainVirtualTextureUpdateCS_surfacemap.cso"); });
@@ -15959,6 +15960,8 @@ void CreateReSTIRGIResources(ReSTIRGIResources& res, XMUINT2 resolution)
 	bd.size = (uint64_t)sizeof(RESTIRGIReservoirPacked) * resolution.x * resolution.y;
 	bd.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
 	bd.misc_flags = ResourceMiscFlag::BUFFER_RAW;
+	device->CreateBufferZeroed(&bd, &res.reservoir_initial);
+	device->SetName(&res.reservoir_initial, "restir_gi.reservoir_initial");
 	device->CreateBufferZeroed(&bd, &res.reservoir[0]);
 	device->SetName(&res.reservoir[0], "restir_gi.reservoir[0]");
 	device->CreateBufferZeroed(&bd, &res.reservoir[1]);
@@ -16051,22 +16054,40 @@ int ReSTIR_GI(
 	const XMFLOAT2 resolutionRcp =
 		XMFLOAT2(1.0f / res.resolution.x, 1.0f / res.resolution.y);
 
+	RESTIRGIPushConstants push = {};
+	push.resolution = res.resolution;
+	push.resolutionRcp = resolutionRcp;
+	push.frameIndex = (uint)res.frame;
+	push.candidateCount = RESTIR_GI_INITIAL_CANDIDATES;
+	push.spatialSampleCount = RESTIR_GI_SPATIAL_SAMPLES;
+	push.spatialRadius = RESTIR_GI_SPATIAL_RADIUS;
+	push.instanceInclusionMask = 0xFF;
+
 	// Initial sample generation: trace one hemisphere ray per pixel, shade the
-	// hit, and build this pixel's GI reservoir + per-frame indirect irradiance.
+	// hit, and build this pixel's initial reservoir.
 	{
 		device->EventBegin("Trace", cmd);
 		device->BindComputeShader(&shaders[CSTYPE_RESTIR_GI_TRACE], cmd);
-
-		RESTIRGIPushConstants push = {};
-		push.resolution = res.resolution;
-		push.resolutionRcp = resolutionRcp;
-		push.frameIndex = (uint)res.frame;
-		push.candidateCount = RESTIR_GI_INITIAL_CANDIDATES;
-		push.spatialSampleCount = RESTIR_GI_SPATIAL_SAMPLES;
-		push.spatialRadius = RESTIR_GI_SPATIAL_RADIUS;
-		push.instanceInclusionMask = 0xFF;
 		device->PushConstants(&push, sizeof(push), cmd);
 
+		device->BindUAV(&res.reservoir_initial, 0, cmd);
+
+		device->Barrier(GPUBarrier::Buffer(&res.reservoir_initial, ResourceState::SHADER_RESOURCE, ResourceState::UNORDERED_ACCESS), cmd);
+		device->Dispatch(dispatch_x, dispatch_y, 1, cmd);
+		device->Barrier(GPUBarrier::Buffer(&res.reservoir_initial, ResourceState::UNORDERED_ACCESS, ResourceState::SHADER_RESOURCE), cmd);
+		device->EventEnd(cmd);
+	}
+
+	// Temporal resampling: merge the reprojected previous reservoir into the
+	// initial one (bounded confidence, disocclusion rejected), then resolve
+	// this frame's indirect irradiance + antilag gradient for the denoiser.
+	{
+		device->EventBegin("Temporal", cmd);
+		device->BindComputeShader(&shaders[CSTYPE_RESTIR_GI_TEMPORAL], cmd);
+		device->PushConstants(&push, sizeof(push), cmd);
+
+		device->BindResource(&res.reservoir_initial, 0, cmd);
+		device->BindResource(&res.reservoir[prev], 1, cmd);
 		device->BindUAV(&res.reservoir[cur], 0, cmd);
 		device->BindUAV(&res.raw_irradiance, 1, cmd);
 		device->BindUAV(&res.gradient, 2, cmd);

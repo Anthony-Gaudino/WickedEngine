@@ -28,9 +28,9 @@ PUSHCONSTANT(push, RESTIRGIPushConstants);
 // RIS candidate count for shading the bounce hit's direct lighting.
 static const uint RESTIR_GI_LIGHT_CANDIDATES = 8;
 
+// Initial per-pixel reservoir; the temporal pass merges history into it and
+// resolves the denoiser inputs.
 RWByteAddressBuffer reservoirOutput : register(u0);
-RWTexture2D<float3> irradianceOutput : register(u1); // per-frame indirect E
-RWTexture2D<float> gradientOutput : register(u2);     // antilag (0 in stage 1)
 
 /**
  * Shades a bounce-ray hit surface: its direct lighting plus emission, i.e. the
@@ -79,7 +79,6 @@ void main(uint3 DTid : SV_DispatchThreadID)
 	const uint flatIndex = pixel.y * push.resolution.x + pixel.x;
 
 	RESTIRGIReservoir reservoir = RESTIRGIReservoirInit();
-	float3 irradiance = 0;
 
 	const float depth = texture_depth[pixel];
 	[branch]
@@ -186,23 +185,9 @@ void main(uint3 DTid : SV_DispatchThreadID)
 				reservoir, samplePosition, sampleNormal, sampleRadiance,
 				targetPdf, risWeight, rng);
 		}
-
-		float3 irr = RESTIRGIResolve(reservoir, P, N);
-		irr = (any(isnan(irr)) || any(isinf(irr))) ? (float3)0 : irr;
-
-		// Firefly clamp: the grazing-angle weight (W = PI / cosTheta) can spike
-		// a single sample (sky escape / faint hit) beyond what the denoiser can
-		// absorb. Clamp the sample luminance, preserving hue.
-		const float lum = dot(irr, float3(0.2126, 0.7152, 0.0722));
-		if (lum > RESTIR_GI_FIREFLY_CLAMP)
-			irr *= RESTIR_GI_FIREFLY_CLAMP / lum;
-
-		irradiance = irr;
 	}
 
+	// The temporal pass merges history into this initial reservoir and resolves
+	// the denoiser inputs (irradiance + gradient).
 	RESTIRGIReservoirStore(reservoirOutput, flatIndex, reservoir);
-	irradianceOutput[pixel] = irradiance;
-	// Stage 1 has no antilag gradient yet; a zero gradient makes the denoiser
-	// fall back to pure temporal accumulation with depth/normal disocclusion.
-	gradientOutput[pixel] = 0;
 }

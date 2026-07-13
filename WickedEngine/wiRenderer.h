@@ -810,9 +810,13 @@ namespace wi::renderer
 	);
 	struct ReSTIRGIResources
 	{
-		// Ping-pong per-pixel GI sample reservoir (48 bytes,
-		// RESTIRGIReservoirPacked). The trace pass writes [cur]; [prev] is the
-		// history the (upcoming) temporal reuse pass reprojects.
+		// Initial per-pixel reservoir written by the trace pass (one hemisphere
+		// sample), consumed by the temporal pass.
+		wi::graphics::GPUBuffer reservoir_initial;
+
+		// Ping-pong per-pixel GI history reservoir (48 bytes,
+		// RESTIRGIReservoirPacked). The temporal pass reads [prev] and writes
+		// [cur]; [cur] becomes next frame's history.
 		wi::graphics::GPUBuffer reservoir[2];
 
 		// Diffuse-irradiance denoiser state, shared layout with ReSTIR DI so
