@@ -269,6 +269,16 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 	restirGICheckBox.SetCheck(wi::renderer::GetReSTIRGIEnabled());
 	AddWidget(&restirGICheckBox);
 
+	restirDIVisibilityRejectCheckBox.Create("ReSTIR DI vis-reject: ");
+	restirDIVisibilityRejectCheckBox.SetTooltip("Toggle the RTXDI initial-visibility test for ReSTIR DI: invalidate occluded initial samples so reuse converges to the visible light. Removes the multi-light shadow-overlap flash/shimmer; turn off to compare against the keep-occluded (full-signal) behavior.");
+	restirDIVisibilityRejectCheckBox.SetPos(XMFLOAT2(x, y += step));
+	restirDIVisibilityRejectCheckBox.SetSize(XMFLOAT2(itemheight, itemheight));
+	restirDIVisibilityRejectCheckBox.OnClick([](wi::gui::EventArgs args) {
+		wi::renderer::SetReSTIRDIVisibilityRejectEnabled(args.bValue);
+		});
+	restirDIVisibilityRejectCheckBox.SetCheck(wi::renderer::GetReSTIRDIVisibilityRejectEnabled());
+	AddWidget(&restirDIVisibilityRejectCheckBox);
+
 	ddgiBlendSpeedSlider.Create(0, 0.2f, 0.1f, 1000, "DDGI Blend Speed: ");
 	ddgiBlendSpeedSlider.SetTooltip("Adjust the contribution of newly traced rays. Higher values will make the DDGI update faster, but can result in increased flickering.");
 	ddgiBlendSpeedSlider.SetSize(XMFLOAT2(wid, itemheight));
@@ -2065,6 +2075,7 @@ void GraphicsWindow::ResizeLayout()
 		layout.add(ddgiBlendSpeedSlider);
 		layout.add(restirDICheckBox);
 		layout.add(restirGICheckBox);
+		layout.add(restirDIVisibilityRejectCheckBox);
 		layout.add(ddgiSmoothBackfaceSlider);
 
 		layout.jump();

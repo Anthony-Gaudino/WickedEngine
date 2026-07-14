@@ -781,6 +781,21 @@ struct RESTIRDIPushConstants
 	uint candidateCount;
 	uint spatialSampleCount;
 	float spatialRadius;
+
+	/**
+	 * 1 = invalidate an occluded initial sample (set its weight to 0) so
+	 * spatiotemporal reuse converges to the visible light. This is the standard
+	 * RTXDI initial-visibility test: in a region shadowed by one light but lit
+	 * by another it removes the per-frame black<->over-bright swing (flash on
+	 * motion, shimmer when static) of the unbiased unshadowed-target estimator,
+	 * by locking the reservoir onto the visible light with the correct weight
+	 * rather than keeping the occluded sample and relying on the denoiser to
+	 * average the swing. 0 = the previous keep-occluded (full-signal) behavior.
+	 */
+	uint visibilityReject;
+	uint pad0;
+	uint pad1;
+	uint pad2;
 };
 
 /**

@@ -29,6 +29,7 @@ public:
 	wi::gui::CheckBox ddgiDebugCheckBox;
 	wi::gui::CheckBox restirDICheckBox;
 	wi::gui::CheckBox restirGICheckBox;
+	wi::gui::CheckBox restirDIVisibilityRejectCheckBox;
 	wi::gui::TextInputField ddgiX;
 	wi::gui::TextInputField ddgiY;
 	wi::gui::TextInputField ddgiZ;

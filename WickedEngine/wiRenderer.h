@@ -1364,6 +1364,8 @@ namespace wi::renderer
 	bool GetReSTIRDIEnabled();
 	void SetReSTIRGIEnabled(bool value);
 	bool GetReSTIRGIEnabled();
+	void SetReSTIRDIVisibilityRejectEnabled(bool value);
+	bool GetReSTIRDIVisibilityRejectEnabled();
 	void SetDDGIDebugEnabled(bool value);
 	bool GetDDGIDebugEnabled();
 	void SetDDGIRayCount(uint32_t value);

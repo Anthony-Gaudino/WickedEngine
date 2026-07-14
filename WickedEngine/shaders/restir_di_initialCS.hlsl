@@ -111,6 +111,18 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		{
 			reservoir.visibility =
 				RESTIRDITraceVisibility(P, N, reservoir.samplePosition, rng);
+
+			// RTXDI initial-visibility test: an occluded initial sample carries
+			// no weight into reuse, so temporal/spatial resampling converges to
+			// the visible light instead of keeping the occluded one and
+			// swinging black<->over-bright each frame (see visibilityReject).
+			// weightSum=0 makes the merge start empty so a visible
+			// history/neighbor wins.
+			[branch]
+			if (push.visibilityReject != 0 && reservoir.visibility <= 0)
+			{
+				reservoir.weightSum = 0;
+			}
 		}
 	}
 

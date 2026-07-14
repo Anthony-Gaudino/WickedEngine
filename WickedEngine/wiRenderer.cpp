@@ -147,6 +147,7 @@ bool DDGI_DEBUG_ENABLED = false;
 uint32_t DDGI_RAYCOUNT = 256u;
 bool RESTIR_DI_ENABLED = false;
 bool RESTIR_GI_ENABLED = false;
+bool RESTIR_DI_VISIBILITY_REJECT = true;
 float DDGI_BLEND_SPEED = 0.1f;
 float GI_BOOST = 1.0f;
 bool MESH_SHADER_ALLOWED = false;
@@ -15788,6 +15789,8 @@ int ReSTIR_DI(
 	push.candidateCount = RESTIR_DI_INITIAL_CANDIDATES;
 	push.spatialSampleCount = RESTIR_DI_SPATIAL_SAMPLES;
 	push.spatialRadius = RESTIR_DI_SPATIAL_RADIUS;
+	push.visibilityReject = RESTIR_DI_VISIBILITY_REJECT ? 1u : 0u;
+	push.pad0 = push.pad1 = push.pad2 = 0;
 
 	const uint32_t dispatch_x = (res.resolution.x + 7) / 8;
 	const uint32_t dispatch_y = (res.resolution.y + 7) / 8;
@@ -20318,6 +20321,14 @@ void SetReSTIRGIEnabled(bool value)
 bool GetReSTIRGIEnabled()
 {
 	return RESTIR_GI_ENABLED;
+}
+void SetReSTIRDIVisibilityRejectEnabled(bool value)
+{
+	RESTIR_DI_VISIBILITY_REJECT = value;
+}
+bool GetReSTIRDIVisibilityRejectEnabled()
+{
+	return RESTIR_DI_VISIBILITY_REJECT;
 }
 void SetDDGIDebugEnabled(bool value)
 {
