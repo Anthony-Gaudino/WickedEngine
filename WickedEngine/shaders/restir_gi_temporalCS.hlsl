@@ -78,11 +78,15 @@ void main(uint3 DTid : SV_DispatchThreadID)
 				RESTIRGIReservoir history =
 					RESTIRGIReservoirLoad(reservoirHistory, prevFlat);
 
-				if (history.M > (float)RESTIR_MAX_HISTORY_LENGTH)
+				// The M-cap is scaled down on the frames a light moved so the
+				// reservoir sheds its stale (old-light) samples fast instead of
+				// lingering for the full history (see historyScale).
+				const float maxHistory = max(1.0,
+					(float)RESTIR_MAX_HISTORY_LENGTH * push.historyScale);
+				if (history.M > maxHistory)
 				{
-					history.weightSum *=
-						(float)RESTIR_MAX_HISTORY_LENGTH / history.M;
-					history.M = (float)RESTIR_MAX_HISTORY_LENGTH;
+					history.weightSum *= maxHistory / history.M;
+					history.M = maxHistory;
 				}
 
 				[branch]

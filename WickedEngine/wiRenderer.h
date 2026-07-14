@@ -836,6 +836,10 @@ namespace wi::renderer
 
 		XMUINT2 resolution = {};
 		mutable int frame = 0;
+		// Hash of the light transforms last frame; a mismatch drops the
+		// temporal history caps for a frame so a moving light's indirect does
+		// not lag.
+		mutable size_t prevLightHash = 0;
 	};
 	void CreateReSTIRGIResources(ReSTIRGIResources& res, XMUINT2 resolution);
 	// Runs the ReSTIR GI passes. Returns the SRV descriptor index of this

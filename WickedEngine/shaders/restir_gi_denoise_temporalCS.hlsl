@@ -20,7 +20,7 @@
  * References: EmbarkStudios/kajiya - rtdgi/temporal_filter.hlsl (color bbox).
  */
 
-PUSHCONSTANT(push, RESTIRDIPushConstants);
+PUSHCONSTANT(push, RESTIRGIPushConstants);
 
 // (rgb = accumulated indirect irradiance mean, a = history length).
 Texture2D<float4> accumHistory : register(t0);
@@ -139,9 +139,11 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			const float staleness =
 				saturate(clampDelta / ref * RESTIR_DENOISE_STALE_SENSITIVITY);
 
-			historyLength = lerp(
-				min(prevAccum.a + 1, RESTIR_DI_DENOISE_MAX_HISTORY),
-				1.0, staleness);
+			// The history cap is scaled down on the frames a light moved so the
+			// indirect adapts fast instead of lingering (see historyScale).
+			const float maxHistory = max(1.0,
+				RESTIR_DI_DENOISE_MAX_HISTORY * push.historyScale);
+			historyLength = lerp(min(prevAccum.a + 1, maxHistory), 1.0, staleness);
 
 			const float alpha = 1.0 / historyLength;
 			mean = lerp(clampedHistory, freshE, alpha);

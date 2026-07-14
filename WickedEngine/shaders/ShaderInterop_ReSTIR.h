@@ -554,6 +554,21 @@ static const float RESTIR_GI_FIREFLY_CLAMP = 8.0;
 static const float RESTIR_GI_MAX_W = 8.0;
 
 /**
+ * History-cap scale applied on the frames a light moved (see
+ * RESTIRGIPushConstants::historyScale).
+ *
+ * The reservoir M-cap and the denoiser history cap are multiplied by this and
+ * floored at 1, so the indirect adapts over roughly (cap * scale) frames
+ * instead of the full ~20-32. 0 fully resets the history (caps = 1) for zero
+ * temporal lag - the moving light tracks instantly, denoised only spatially
+ * (resolve filter + a-trous), and re-converges to clean the moment it stops.
+ * Raise it toward 1 to keep more temporal history during motion (less noise, a
+ * little more lag). Only in effect while a light is moving, so static GI is
+ * unaffected.
+ */
+static const float RESTIR_GI_LIGHTCHANGE_SCALE = 0.0;
+
+/**
  * SSAO-similarity falloff for the spatial resolve filter (per unit AO
  * difference, in exp2 units).
  *
@@ -813,9 +828,20 @@ struct RESTIRGIPushConstants
 
 	/** Ray-tracing instance inclusion mask for the indirect bounce ray. */
 	uint instanceInclusionMask;
+
+	/**
+	 * Scales the temporal history caps (reservoir M-cap and denoiser history)
+	 * for this frame. 1 in the steady state; dropped toward
+	 * RESTIR_GI_LIGHTCHANGE_SCALE on the frames a light actually moved, so the
+	 * indirect adapts in a few frames instead of lingering for the full history
+	 * - GI's substitute for the A-SVGF antilag that DI gets from its light-
+	 * reference reservoir (GI stores radiance, not a light, so it has no exact
+	 * per-pixel change signal). Detected on the CPU from the light transforms,
+	 * so it never fires on GI's own sampling noise.
+	 */
+	float historyScale;
 	uint pad0;
 	uint pad1;
-	uint pad2;
 };
 
 /**

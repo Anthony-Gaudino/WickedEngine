@@ -16053,6 +16053,31 @@ int ReSTIR_GI(
 	const XMFLOAT2 resolutionRcp =
 		XMFLOAT2(1.0f / res.resolution.x, 1.0f / res.resolution.y);
 
+	// Detect light motion on the CPU: hash every light's transform and params,
+	// and if it changed since last frame drop the temporal history caps for
+	// this frame so a moving light's indirect adapts fast instead of lingering
+	// (GI has no A-SVGF antilag - it stores radiance, not a light reference).
+	// Exact float comparison never fires on a static light (its values are
+	// recomputed identically), so static GI is unaffected.
+	size_t lightHash = scene.lights.GetCount();
+	for (size_t i = 0; i < scene.lights.GetCount(); ++i)
+	{
+		const wi::scene::LightComponent& light = scene.lights[i];
+		wi::helper::hash_combine(lightHash, light.position.x);
+		wi::helper::hash_combine(lightHash, light.position.y);
+		wi::helper::hash_combine(lightHash, light.position.z);
+		wi::helper::hash_combine(lightHash, light.direction.x);
+		wi::helper::hash_combine(lightHash, light.direction.y);
+		wi::helper::hash_combine(lightHash, light.direction.z);
+		wi::helper::hash_combine(lightHash, light.color.x);
+		wi::helper::hash_combine(lightHash, light.color.y);
+		wi::helper::hash_combine(lightHash, light.color.z);
+		wi::helper::hash_combine(lightHash, light.intensity);
+		wi::helper::hash_combine(lightHash, light.range);
+	}
+	const bool lightsMoved = (res.frame > 0) && (lightHash != res.prevLightHash);
+	res.prevLightHash = lightHash;
+
 	RESTIRGIPushConstants push = {};
 	push.resolution = res.resolution;
 	push.resolutionRcp = resolutionRcp;
@@ -16061,6 +16086,7 @@ int ReSTIR_GI(
 	push.spatialSampleCount = RESTIR_GI_SPATIAL_SAMPLES;
 	push.spatialRadius = RESTIR_GI_SPATIAL_RADIUS;
 	push.instanceInclusionMask = 0xFF;
+	push.historyScale = lightsMoved ? RESTIR_GI_LIGHTCHANGE_SCALE : 1.0f;
 
 	// Initial sample generation: trace one hemisphere ray per pixel, shade the
 	// hit, and build this pixel's initial reservoir.
@@ -16117,16 +16143,12 @@ int ReSTIR_GI(
 
 	// Denoise: GI-specific temporal accumulation (anti-ghost color clamp, no
 	// A-SVGF gradient) then the shared variance-guided a-trous, which is generic
-	// over the irradiance/moment textures.
-	RESTIRDIPushConstants dnPush = {};
-	dnPush.resolution = res.resolution;
-	dnPush.resolutionRcp = resolutionRcp;
-	dnPush.frameIndex = (uint)res.frame;
-
+	// over the irradiance/moment textures. The temporal pass reuses the GI push
+	// (it needs historyScale for the moving-light history reset).
 	{
 		device->EventBegin("Irradiance denoise", cmd);
 		device->BindComputeShader(&shaders[CSTYPE_RESTIR_GI_DENOISE_TEMPORAL], cmd);
-		device->PushConstants(&dnPush, sizeof(dnPush), cmd);
+		device->PushConstants(&push, sizeof(push), cmd);
 
 		const GPUResource* srvs[] = {
 			&res.irradiance_accum[prev],
