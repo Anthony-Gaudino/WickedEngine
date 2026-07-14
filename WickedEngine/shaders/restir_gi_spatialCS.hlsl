@@ -24,7 +24,6 @@ PUSHCONSTANT(push, RESTIRGIPushConstants);
 ByteAddressBuffer reservoirInput : register(t0); // temporal reservoirs
 
 RWTexture2D<float3> irradianceOutput : register(u0); // per-frame indirect E
-RWTexture2D<float> gradientOutput : register(u1);     // antilag (0 for now)
 
 [numthreads(8, 8, 1)]
 void main(uint3 DTid : SV_DispatchThreadID)
@@ -149,7 +148,4 @@ void main(uint3 DTid : SV_DispatchThreadID)
 	}
 
 	irradianceOutput[pixel] = irradiance;
-	// No antilag gradient yet; a zero gradient makes the denoiser rely on pure
-	// temporal accumulation with depth/normal disocclusion.
-	gradientOutput[pixel] = 0;
 }

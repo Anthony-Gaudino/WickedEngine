@@ -828,14 +828,11 @@ namespace wi::renderer
 		wi::graphics::Texture irradiance_moment2[2];
 		wi::graphics::Texture denoise_atrous[2];
 
-		// Per-frame (undenoised) indirect irradiance written by the trace pass,
-		// and the final denoised irradiance sampled by forward shading.
+		// Per-frame (undenoised) indirect irradiance written by the spatial
+		// resolve, and the final denoised irradiance sampled by forward
+		// shading.
 		wi::graphics::Texture raw_irradiance;
 		wi::graphics::Texture irradiance_final;
-
-		// Antilag gradient consumed by the temporal denoise (zero until the
-		// reuse stages produce a real one).
-		wi::graphics::Texture gradient;
 
 		XMUINT2 resolution = {};
 		mutable int frame = 0;

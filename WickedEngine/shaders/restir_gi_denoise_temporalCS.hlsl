@@ -12,8 +12,8 @@
  * Unlike the shared ReSTIR DI temporal denoise, this one has no A-SVGF gradient
  * (GI has no exact per-pixel change signal) and instead clamps the reprojected
  * history to the current frame's local irradiance color box before blending
- * (see RESTIR_GI_HISTORY_CLAMP_K). That anti-ghost clamp is what stops a stale
- * value - a dark trail a camera move drags across an area, or a lingering
+ * (see RESTIR_DENOISE_HISTORY_CLAMP_K). That anti-ghost clamp is what stops a
+ * stale value - a dark trail a camera move drags across an area, or a lingering
  * bright one - from ghosting, since the history is pulled back into the range
  * the current frame actually observes.
  *

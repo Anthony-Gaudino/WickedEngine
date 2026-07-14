@@ -16022,15 +16022,6 @@ void CreateReSTIRGIResources(ReSTIRGIResources& res, XMUINT2 resolution)
 	id.layout = ResourceState::SHADER_RESOURCE;
 	device->CreateTexture(&id, nullptr, &res.irradiance_final);
 	device->SetName(&res.irradiance_final, "restir_gi.irradiance_final");
-
-	TextureDesc gd;
-	gd.width = resolution.x;
-	gd.height = resolution.y;
-	gd.format = Format::R16_FLOAT;
-	gd.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
-	gd.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
-	device->CreateTexture(&gd, nullptr, &res.gradient);
-	device->SetName(&res.gradient, "restir_gi.gradient");
 }
 int ReSTIR_GI(
 	const ReSTIRGIResources& res,
@@ -16114,19 +16105,10 @@ int ReSTIR_GI(
 
 		device->BindResource(&res.reservoir[cur], 0, cmd);
 		device->BindUAV(&res.raw_irradiance, 0, cmd);
-		device->BindUAV(&res.gradient, 1, cmd);
 
-		GPUBarrier pre[] = {
-			GPUBarrier::Image(&res.raw_irradiance, res.raw_irradiance.desc.layout, ResourceState::UNORDERED_ACCESS),
-			GPUBarrier::Image(&res.gradient, res.gradient.desc.layout, ResourceState::UNORDERED_ACCESS),
-		};
-		device->Barrier(pre, arraysize(pre), cmd);
+		device->Barrier(GPUBarrier::Image(&res.raw_irradiance, res.raw_irradiance.desc.layout, ResourceState::UNORDERED_ACCESS), cmd);
 		device->Dispatch(dispatch_x, dispatch_y, 1, cmd);
-		GPUBarrier post[] = {
-			GPUBarrier::Image(&res.raw_irradiance, ResourceState::UNORDERED_ACCESS, res.raw_irradiance.desc.layout),
-			GPUBarrier::Image(&res.gradient, ResourceState::UNORDERED_ACCESS, res.gradient.desc.layout),
-		};
-		device->Barrier(post, arraysize(post), cmd);
+		device->Barrier(GPUBarrier::Image(&res.raw_irradiance, ResourceState::UNORDERED_ACCESS, res.raw_irradiance.desc.layout), cmd);
 		device->EventEnd(cmd);
 	}
 
