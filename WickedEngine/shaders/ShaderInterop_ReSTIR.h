@@ -553,6 +553,32 @@ static const float RESTIR_GI_FIREFLY_CLAMP = 8.0;
  */
 static const float RESTIR_GI_MAX_W = 8.0;
 
+/**
+ * SSAO-similarity falloff for the spatial resolve filter (per unit AO
+ * difference, in exp2 units).
+ *
+ * A neighbor's weight is scaled by \[ 2^{-k\,|ao_c - ao_n|} \]: reuse across an
+ * occlusion boundary (a corner, where ambient occlusion differs) is strongly
+ * down-weighted, so a bright bounce sample in a tight corner is not spread onto
+ * a differently occluded neighbor - the main source of the residual corner
+ * fireflies. Applied only when an AO texture is available.
+ *
+ * References: EmbarkStudios/kajiya - rtdgi/restir_resolve.hlsl.
+ */
+static const float RESTIR_GI_SSAO_WEIGHT = 20.0;
+
+/**
+ * Spatial outlier-clamp factor for the resolve filter.
+ *
+ * Indirect diffuse irradiance is spatially smooth, so a pixel whose own
+ * contribution is more than this many times its neighborhood mean is almost
+ * certainly a firefly (an isolated bright bounce sample that the resolve
+ * average did not dilute because its neighbors were rejected). Its contribution
+ * is scaled back toward the neighbor mean, which removes single-pixel fireflies
+ * without touching spatially coherent regions.
+ */
+static const float RESTIR_GI_OUTLIER_CLAMP = 4.0;
+
 #ifndef __cplusplus
 /**
  * A screen-space ReSTIR GI reservoir.

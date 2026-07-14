@@ -49,10 +49,20 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		RNG rng;
 		rng.init(pixel, GetFrame().frame_count + 2u);
 
-		// Center reservoir contributes with full weight.
-		float3 weighted = RESTIRGIResolve(
-			RESTIRGIReservoirLoad(reservoirInput, flatIndex), P, N);
-		float wsum = 1;
+		// SSAO similarity down-weights reuse across occlusion boundaries
+		// (corners), where a bright bounce sample must not spread onto a
+		// differently occluded neighbor - the main source of the residual
+		// corner fireflies. Only available when an AO texture is bound.
+		const int aoIndex = GetCamera().texture_ao_index;
+		const float centerAO = (aoIndex >= 0)
+			? bindless_textures_half4[descriptor_index(aoIndex)].SampleLevel(
+				sampler_linear_clamp, uv, 0).r
+			: 1.0;
+
+		// Accumulate the neighbors separately from the center so the center can
+		// be outlier-clamped against the neighbor mean below.
+		float3 neighborWeighted = 0;
+		float neighborWsum = 0;
 
 		for (uint i = 0; i < push.spatialSampleCount; ++i)
 		{
@@ -86,16 +96,47 @@ void main(uint3 DTid : SV_DispatchThreadID)
 				RESTIR_DI_DENOISE_NORMAL_POWER);
 			const float wDepth = exp(-abs(linearNeighbor - linearCenter) /
 				(RESTIR_DI_DENOISE_DEPTH_SCALE * linearCenter + 1e-3));
-			const float w = wNormal * wDepth;
+			float w = wNormal * wDepth;
+
+			[branch]
+			if (aoIndex >= 0)
+			{
+				const float2 neighborUV =
+					(neighborPixel + 0.5) * push.resolutionRcp;
+				const float neighborAO =
+					bindless_textures_half4[descriptor_index(aoIndex)].SampleLevel(
+						sampler_linear_clamp, neighborUV, 0).r;
+				w *= exp2(-RESTIR_GI_SSAO_WEIGHT * abs(centerAO - neighborAO));
+			}
 
 			const uint neighborFlat =
 				neighborPixel.y * push.resolution.x + neighborPixel.x;
-			weighted += RESTIRGIResolve(
+			neighborWeighted += RESTIRGIResolve(
 				RESTIRGIReservoirLoad(reservoirInput, neighborFlat), P, N) * w;
-			wsum += w;
+			neighborWsum += w;
 		}
 
-		float3 irr = weighted / max(wsum, 1e-4);
+		float3 centerContribution = RESTIRGIResolve(
+			RESTIRGIReservoirLoad(reservoirInput, flatIndex), P, N);
+
+		// Spatial outlier clamp: an isolated pixel whose contribution is far
+		// brighter than its neighbor mean is a firefly (indirect diffuse is
+		// smooth); scale it back toward the neighbor mean. Coherent regions
+		// (where the neighbors are equally bright) are untouched.
+		[branch]
+		if (neighborWsum > 0)
+		{
+			const float3 neighborMean = neighborWeighted / neighborWsum;
+			const float centerLuma =
+				dot(centerContribution, float3(0.2126, 0.7152, 0.0722));
+			const float maxLuma = dot(neighborMean,
+				float3(0.2126, 0.7152, 0.0722)) * RESTIR_GI_OUTLIER_CLAMP + 1e-3;
+			if (centerLuma > maxLuma)
+				centerContribution *= maxLuma / centerLuma;
+		}
+
+		float3 irr = (centerContribution + neighborWeighted) /
+			(1.0 + neighborWsum);
 		irr = (any(isnan(irr)) || any(isinf(irr))) ? (float3)0 : irr;
 
 		// Firefly clamp: bound the resolved irradiance luminance (preserving
