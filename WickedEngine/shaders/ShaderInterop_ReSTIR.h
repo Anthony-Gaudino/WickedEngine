@@ -541,14 +541,17 @@ static const float RESTIR_GI_SPATIAL_RADIUS = 16.0;
 static const float RESTIR_GI_FIREFLY_CLAMP = 8.0;
 
 /**
- * Upper bound on the reconnection-shift Jacobian used during reuse.
+ * Upper bound on the unbiased contribution weight W of a GI sample.
  *
- * The Jacobian J = (cos_r * d_q^2) / (cos_q * d_r^2) diverges when a reused
- * sample was connected to its source visible point at a grazing angle (tiny
- * cos_q). Clamping it keeps a single reused neighbor from spiking the estimate
- * into a firefly, at the cost of a small bias on those rare grazing reuses.
+ * The cosine-weighted source pdf gives W = pi / cos(theta), which explodes for
+ * grazing hemisphere samples: a single such sample (or a neighbor carrying one
+ * through reuse) becomes a bright spike the temporal denoiser cannot absorb,
+ * seen as flickering blobs and an over-bright estimate on freshly disoccluded
+ * pixels. Clamping W bounds the spike (a small dark bias at grazing angles),
+ * and unlike the post-resolve luminance clamp it also bounds the weight a
+ * reused neighbor contributes during resampling, before it can dominate.
  */
-static const float RESTIR_GI_JACOBIAN_CLAMP = 10.0;
+static const float RESTIR_GI_MAX_W = 8.0;
 
 #ifndef __cplusplus
 /**

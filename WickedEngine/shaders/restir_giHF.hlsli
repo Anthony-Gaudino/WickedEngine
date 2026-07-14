@@ -76,7 +76,9 @@ inline float3 RESTIRGIResolve(RESTIRGIReservoir r, float3 P, float3 N)
 		return float3(0, 0, 0);
 
 	const float cosTheta = saturate(dot(N, d * rsqrt(dist2)));
-	return r.sampleRadiance * (cosTheta / PI) * W;
+	// Clamp the grazing-angle weight spike (W = PI / cosTheta) before it
+	// resolves into a firefly (see RESTIR_GI_MAX_W).
+	return r.sampleRadiance * (cosTheta / PI) * min(W, RESTIR_GI_MAX_W);
 }
 
 /**
@@ -117,78 +119,30 @@ inline bool RESTIRGIReservoirUpdate(
 }
 
 /**
- * Reconnection-shift Jacobian for reusing a sample point across visible points.
- *
- * A sample point x_s was drawn from a source visible point (by hemisphere,
- * i.e. solid-angle, sampling). Reusing it at a different target visible point
- * changes the solid angle x_s subtends, so its measure must be corrected:
- *
- * \[
- * J = \frac{|\cos\theta_r|\; \lVert x_q - x_s \rVert^2}
- *          {|\cos\theta_q|\; \lVert x_r - x_s \rVert^2}
- * \]
- *
- * where \(\theta_q,\theta_r\) are the angles at the sample-point normal toward
- * the source and target visible points. Clamped to a bounded range so a grazing
- * source connection (tiny \(\cos\theta_q\)) cannot spike the reused weight into
- * a firefly.
- *
- * References: Ouyang et al. 2021, "ReSTIR GI", eq. (11).
- *
- * @param[in] samplePosition - World-space sample (hit) point x_s.
- * @param[in] sampleNormal - World-space normal at x_s.
- * @param[in] sourceP - Visible point the sample was drawn from.
- * @param[in] targetP - Visible point the sample is reused at.
- *
- * @return The (clamped) reconnection Jacobian (>= 0).
- */
-inline float RESTIRGIReconnectionJacobian(
-	float3 samplePosition,
-	float3 sampleNormal,
-	float3 sourceP,
-	float3 targetP)
-{
-	const float3 dq = sourceP - samplePosition;
-	const float3 dr = targetP - samplePosition;
-	const float dq2 = dot(dq, dq);
-	const float dr2 = dot(dr, dr);
-	if (dq2 <= 0 || dr2 <= 0)
-		return 0;
-
-	const float cosQ = abs(dot(sampleNormal, dq * rsqrt(dq2)));
-	const float cosR = abs(dot(sampleNormal, dr * rsqrt(dr2)));
-	if (cosQ <= 1e-4)
-		return 0;
-
-	const float j = (cosR * dq2) / (cosQ * dr2);
-	return clamp(j, 0.0, RESTIR_GI_JACOBIAN_CLAMP);
-}
-
-/**
- * Merges reservoir 'other' into 'self' with the reconnection Jacobian
- * (spatial/temporal reuse).
+ * Merges reservoir 'other' into 'self' (temporal reuse).
  *
  * The other reservoir's sample is re-weighted by its target function evaluated
- * at self's surface and by the shift-map Jacobian, keeping the merge unbiased
- * across differing visible points.
+ * at self's surface. Temporal reuse tracks the same surface point across frames
+ * (the reprojection reconnects the same visible point), so no reconnection
+ * Jacobian is needed here - the source and target visible points coincide.
  *
  * @param[in,out] self - Reservoir receiving the merge (M and weightSum grow).
  * @param[in] other - Reservoir to merge in.
  * @param[in] targetPdfAtSelf - other's sample target function evaluated at
  *   self's surface (see RESTIRGITargetFunction).
- * @param[in] jacobian - Reconnection Jacobian (1 for temporal reuse, where the
- *   visible point is tracked across frames).
+ * @param[in] maxW - Upper bound on the reused sample's weight (grazing-angle
+ *   firefly guard; see RESTIR_GI_MAX_W).
  * @param[in,out] rng - Random generator.
  */
 inline void RESTIRGIReservoirMerge(
 	inout RESTIRGIReservoir self,
 	RESTIRGIReservoir other,
 	float targetPdfAtSelf,
-	float jacobian,
+	float maxW,
 	inout RNG rng)
 {
 	const float risWeight = targetPdfAtSelf
-		* RESTIRGIReservoirGetInvPdf(other) * other.M * jacobian;
+		* min(RESTIRGIReservoirGetInvPdf(other), maxW) * other.M;
 
 	self.M += other.M;
 	self.weightSum += risWeight;

@@ -814,9 +814,10 @@ namespace wi::renderer
 		// sample), consumed by the temporal pass.
 		wi::graphics::GPUBuffer reservoir_initial;
 
-		// Ping-pong per-pixel GI history reservoir (48 bytes,
+		// Ping-pong per-pixel GI temporal reservoir (48 bytes,
 		// RESTIRGIReservoirPacked). The temporal pass reads [prev] and writes
-		// [cur]; [cur] becomes next frame's history.
+		// [cur]; the spatial resolve filter reads [cur] (and its neighbors),
+		// and [cur] becomes next frame's history.
 		wi::graphics::GPUBuffer reservoir[2];
 
 		// Diffuse-irradiance denoiser state, shared layout with ReSTIR DI so

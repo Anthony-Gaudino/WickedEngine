@@ -1192,6 +1192,7 @@ void LoadShaders()
 		wi::jobsystem::Execute(raytracing_ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_GI_TRACE], "restir_gi_traceCS.cso"); });
 	}
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_GI_TEMPORAL], "restir_gi_temporalCS.cso"); });
+	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_GI_SPATIAL], "restir_gi_spatialCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_TERRAIN_VIRTUALTEXTURE_UPDATE_BASECOLORMAP], "terrainVirtualTextureUpdateCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_TERRAIN_VIRTUALTEXTURE_UPDATE_NORMALMAP], "terrainVirtualTextureUpdateCS_normalmap.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_TERRAIN_VIRTUALTEXTURE_UPDATE_SURFACEMAP], "terrainVirtualTextureUpdateCS_surfacemap.cso"); });
@@ -16079,8 +16080,8 @@ int ReSTIR_GI(
 	}
 
 	// Temporal resampling: merge the reprojected previous reservoir into the
-	// initial one (bounded confidence, disocclusion rejected), then resolve
-	// this frame's indirect irradiance + antilag gradient for the denoiser.
+	// initial one (bounded confidence, disocclusion rejected). The result is
+	// this frame's temporal reservoir (and next frame's history).
 	{
 		device->EventBegin("Temporal", cmd);
 		device->BindComputeShader(&shaders[CSTYPE_RESTIR_GI_TEMPORAL], cmd);
@@ -16089,18 +16090,35 @@ int ReSTIR_GI(
 		device->BindResource(&res.reservoir_initial, 0, cmd);
 		device->BindResource(&res.reservoir[prev], 1, cmd);
 		device->BindUAV(&res.reservoir[cur], 0, cmd);
-		device->BindUAV(&res.raw_irradiance, 1, cmd);
-		device->BindUAV(&res.gradient, 2, cmd);
+
+		device->Barrier(GPUBarrier::Buffer(&res.reservoir[cur], ResourceState::SHADER_RESOURCE, ResourceState::UNORDERED_ACCESS), cmd);
+		device->Dispatch(dispatch_x, dispatch_y, 1, cmd);
+		device->Barrier(GPUBarrier::Buffer(&res.reservoir[cur], ResourceState::UNORDERED_ACCESS, ResourceState::SHADER_RESOURCE), cmd);
+		device->EventEnd(cmd);
+	}
+
+	// Spatial resolve filter: resolve this frame's indirect irradiance as a
+	// geometry-weighted average of each pixel's own and its neighbors' temporal
+	// reservoir contributions. Averaging dilutes localized bright samples (no
+	// firefly blobs) while still filling disoccluded pixels and lowering
+	// variance. Does not modify the reservoir; only produces the denoiser
+	// input.
+	{
+		device->EventBegin("Spatial resolve", cmd);
+		device->BindComputeShader(&shaders[CSTYPE_RESTIR_GI_SPATIAL], cmd);
+		device->PushConstants(&push, sizeof(push), cmd);
+
+		device->BindResource(&res.reservoir[cur], 0, cmd);
+		device->BindUAV(&res.raw_irradiance, 0, cmd);
+		device->BindUAV(&res.gradient, 1, cmd);
 
 		GPUBarrier pre[] = {
-			GPUBarrier::Buffer(&res.reservoir[cur], ResourceState::SHADER_RESOURCE, ResourceState::UNORDERED_ACCESS),
 			GPUBarrier::Image(&res.raw_irradiance, res.raw_irradiance.desc.layout, ResourceState::UNORDERED_ACCESS),
 			GPUBarrier::Image(&res.gradient, res.gradient.desc.layout, ResourceState::UNORDERED_ACCESS),
 		};
 		device->Barrier(pre, arraysize(pre), cmd);
 		device->Dispatch(dispatch_x, dispatch_y, 1, cmd);
 		GPUBarrier post[] = {
-			GPUBarrier::Buffer(&res.reservoir[cur], ResourceState::UNORDERED_ACCESS, ResourceState::SHADER_RESOURCE),
 			GPUBarrier::Image(&res.raw_irradiance, ResourceState::UNORDERED_ACCESS, res.raw_irradiance.desc.layout),
 			GPUBarrier::Image(&res.gradient, ResourceState::UNORDERED_ACCESS, res.gradient.desc.layout),
 		};
