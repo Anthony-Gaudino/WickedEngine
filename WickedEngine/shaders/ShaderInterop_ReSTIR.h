@@ -579,6 +579,71 @@ static const float RESTIR_GI_SSAO_WEIGHT = 20.0;
  */
 static const float RESTIR_GI_OUTLIER_CLAMP = 4.0;
 
+/**
+ * Neighborhood color-clamp width for the GI temporal denoiser (in std devs).
+ *
+ * The reprojected history is clamped to the current frame's local irradiance
+ * color box \[ [\mu - k\sigma,\ \mu + k\sigma] \] (a 3x3 neighborhood of the
+ * resolved irradiance) before it is blended. A stale value - a dark trail that
+ * a camera move drags across an area, or a lingering bright one - cannot then
+ * ghost, because it is pulled back into the range the current frame actually
+ * observes. Larger keeps more history (smoother, but more ghosting); smaller
+ * reacts faster (less ghosting, more noise).
+ *
+ * A shared denoiser constant: both ReSTIR DI and GI clamp their reprojected
+ * history to this color box. It catches temporal bleed across a lighting-
+ * contrast edge (e.g. a multi-light shadow overlap) that the geometric
+ * disocclusion and the A-SVGF gradient both miss, because the surface, depth
+ * and normal are continuous there - only the lighting changes.
+ *
+ * References: EmbarkStudios/kajiya - rtdgi/temporal_filter.hlsl (color bbox).
+ */
+static const float RESTIR_DENOISE_HISTORY_CLAMP_K = 2.0;
+
+/**
+ * Sensitivity of the history-confidence reset to color staleness (shared by
+ * ReSTIR DI and GI).
+ *
+ * The neighborhood color clamp bounds a ghost's magnitude, but the slow
+ * 1/historyLength blend would still drag a clamped (stale) value out over many
+ * frames. This measures how far the reprojected history lay outside the current
+ * color box (relative to the local brightness) and resets the pixel's history
+ * length toward 1 in proportion - a soft, color-based disocclusion on top of
+ * the geometric one, so a detected ghost fades in about a frame instead of the
+ * whole history. Larger resets more eagerly (less ghosting, more noise).
+ */
+static const float RESTIR_DENOISE_STALE_SENSITIVITY = 4.0;
+
+/**
+ * Number of edge-aware a-trous passes for the GI spatial denoiser.
+ *
+ * More than the DI pass count: a freshly disoccluded region has no temporal
+ * history, so the only way to fill it is spatially, from converged neighbors.
+ * Each extra pass doubles the a-trous stride, widening the reach so a
+ * disocclusion band survives fast camera motion. Indirect diffuse is
+ * low-frequency, so the extra blur costs little detail, and the variance /
+ * depth / normal edge-stops keep converged regions sharp.
+ */
+static const uint RESTIR_GI_DENOISE_ATROUS_PASSES = 6;
+
+/**
+ * Low-history variance boost for the a-trous spatial denoiser (shared by ReSTIR
+ * DI and GI).
+ *
+ * On a disoccluded pixel (short history) the a-trous edge-stop must open so the
+ * pixel can be filled from its neighbors. The luminance-difference tolerance is
+ * scaled up by up to this factor as history length falls toward 1, and relaxes
+ * to 1 as the history reaches the denoise cap - the SVGF low-history spatial
+ * fallback, made explicit.
+ *
+ * For DI this is what averages a freshly disoccluded multi-light shadow overlap
+ * across its black/over-bright per-frame swing frames, so the region resolves
+ * to the correct mean at once instead of flashing.
+ *
+ * References: Schied et al. 2017, "Spatiotemporal Variance-Guided Filtering".
+ */
+static const float RESTIR_DENOISE_LOWHISTORY_BOOST = 8.0;
+
 #ifndef __cplusplus
 /**
  * A screen-space ReSTIR GI reservoir.
@@ -760,7 +825,12 @@ struct RESTIRDIDenoisePushConstants
 	/** 1 on the last pass: write the filtered visibility into the reservoir. */
 	uint outputToReservoir;
 
-	float pad;
+	/**
+	 * Low-history variance boost (0 disables it). Set by ReSTIR GI to
+	 * RESTIR_GI_DENOISE_LOWHISTORY_BOOST so disoccluded pixels blur wider; left
+	 * 0 by ReSTIR DI.
+	 */
+	float lowHistoryBoost;
 };
 
 /**

@@ -1193,6 +1193,7 @@ void LoadShaders()
 	}
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_GI_TEMPORAL], "restir_gi_temporalCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_GI_SPATIAL], "restir_gi_spatialCS.cso"); });
+	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_GI_DENOISE_TEMPORAL], "restir_gi_denoise_temporalCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_TERRAIN_VIRTUALTEXTURE_UPDATE_BASECOLORMAP], "terrainVirtualTextureUpdateCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_TERRAIN_VIRTUALTEXTURE_UPDATE_NORMALMAP], "terrainVirtualTextureUpdateCS_normalmap.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_TERRAIN_VIRTUALTEXTURE_UPDATE_SURFACEMAP], "terrainVirtualTextureUpdateCS_surfacemap.cso"); });
@@ -15928,6 +15929,9 @@ int ReSTIR_DI(
 				dpush.inputFromReservoir = (i == 0) ? 1u : 0u;
 				dpush.outputToReservoir =
 					(i + 1 == RESTIR_DI_DENOISE_ATROUS_PASSES) ? 1u : 0u;
+				// Fill freshly disoccluded pixels from neighbors so a multi-light
+				// shadow overlap resolves to its mean at once instead of flashing.
+				dpush.lowHistoryBoost = RESTIR_DENOISE_LOWHISTORY_BOOST;
 				device->PushConstants(&dpush, sizeof(dpush), cmd);
 
 				const uint32_t outIdx = i & 1u;
@@ -16126,9 +16130,9 @@ int ReSTIR_GI(
 		device->EventEnd(cmd);
 	}
 
-	// Denoise: reuse the ReSTIR DI diffuse-irradiance denoiser (it is generic
-	// over the irradiance/gradient/moment textures and never touches a
-	// reservoir). Temporal accumulation then variance-guided a-trous.
+	// Denoise: GI-specific temporal accumulation (anti-ghost color clamp, no
+	// A-SVGF gradient) then the shared variance-guided a-trous, which is generic
+	// over the irradiance/moment textures.
 	RESTIRDIPushConstants dnPush = {};
 	dnPush.resolution = res.resolution;
 	dnPush.resolutionRcp = resolutionRcp;
@@ -16136,13 +16140,12 @@ int ReSTIR_GI(
 
 	{
 		device->EventBegin("Irradiance denoise", cmd);
-		device->BindComputeShader(&shaders[CSTYPE_RESTIR_DI_DENOISE_TEMPORAL], cmd);
+		device->BindComputeShader(&shaders[CSTYPE_RESTIR_GI_DENOISE_TEMPORAL], cmd);
 		device->PushConstants(&dnPush, sizeof(dnPush), cmd);
 
 		const GPUResource* srvs[] = {
 			&res.irradiance_accum[prev],
 			&res.raw_irradiance,
-			&res.gradient,
 			&res.irradiance_moment2[prev],
 		};
 		device->BindResources(srvs, 0, arraysize(srvs), cmd);
@@ -16171,7 +16174,7 @@ int ReSTIR_GI(
 
 		device->Barrier(GPUBarrier::Image(&res.irradiance_final, res.irradiance_final.desc.layout, ResourceState::UNORDERED_ACCESS), cmd);
 
-		for (uint32_t i = 0; i < RESTIR_DI_DENOISE_ATROUS_PASSES; ++i)
+		for (uint32_t i = 0; i < RESTIR_GI_DENOISE_ATROUS_PASSES; ++i)
 		{
 			RESTIRDIDenoisePushConstants dpush = {};
 			dpush.resolution = res.resolution;
@@ -16179,7 +16182,8 @@ int ReSTIR_GI(
 			dpush.stepSize = 1u << i;
 			dpush.inputFromReservoir = (i == 0) ? 1u : 0u;
 			dpush.outputToReservoir =
-				(i + 1 == RESTIR_DI_DENOISE_ATROUS_PASSES) ? 1u : 0u;
+				(i + 1 == RESTIR_GI_DENOISE_ATROUS_PASSES) ? 1u : 0u;
+			dpush.lowHistoryBoost = RESTIR_DENOISE_LOWHISTORY_BOOST;
 			device->PushConstants(&dpush, sizeof(dpush), cmd);
 
 			const uint32_t outIdx = i & 1u;

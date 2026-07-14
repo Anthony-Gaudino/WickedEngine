@@ -177,6 +177,21 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		centerVar = (historyLength < 4.0)
 			? max(temporalVar, EstimateSpatialVariance(pixel))
 			: temporalVar;
+
+		// Low-history variance boost: a freshly disoccluded pixel has no
+		// temporal data, so amplify its variance - by up to lowHistoryBoost at
+		// history 1, relaxing to 1 by history 4 (the same low-history threshold
+		// used above)
+		// - to open the luminance edge-stop and let it be filled from converged
+		//   neighbors. It must relax fast: a still-converging shadow (moderate
+		//   history) that stayed boosted would over-blur and never stabilize.
+		[branch]
+		if (push.lowHistoryBoost > 0)
+		{
+			const float boost = lerp(push.lowHistoryBoost, 1.0,
+				saturate((historyLength - 1.0) / 3.0));
+			centerVar *= boost;
+		}
 	}
 	else
 	{
