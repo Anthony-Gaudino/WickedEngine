@@ -522,6 +522,20 @@ Screen-space GI reservoir
 /** ReSTIR GI initial-sample count per pixel (hemisphere rays traced). */
 static const uint RESTIR_GI_INITIAL_CANDIDATES = 1;
 
+/**
+ * Multi-bounce feedback factor (screen-space infinite bounce).
+ *
+ * At a bounce-ray hit the shading adds the *previous* frame's indirect
+ * irradiance at the hit (reprojected into the GI output that still holds last
+ * frame's result), so the stored radiance carries 2nd, 3rd, ... bounces instead
+ * of a single one - the indirect looks fuller and less dark. The factor (< 1),
+ * together with surface albedo, keeps the temporal feedback loop convergent and
+ * suppresses runaway/fireflies. Only the on-screen part of a bounce hit gets
+ * multi-bounce (the screen-space limitation); off-screen hits stay single-
+ * bounce.
+ */
+static const float RESTIR_GI_MULTIBOUNCE = 0.9;
+
 /** Spatial-reuse neighbor count per pixel. */
 static const uint RESTIR_GI_SPATIAL_SAMPLES = 4;
 

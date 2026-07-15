@@ -33,8 +33,56 @@ static const uint RESTIR_GI_LIGHT_CANDIDATES = 8;
 RWByteAddressBuffer reservoirOutput : register(u0);
 
 /**
- * Shades a bounce-ray hit surface: its direct lighting plus emission, i.e. the
- * radiance leaving the hit toward the ray origin.
+ * Previous-frame indirect irradiance at a bounce hit (screen-space
+ * multi-bounce).
+ *
+ * Reprojects the world-space hit into the previous frame's screen and samples
+ * the GI output texture, which at trace time still holds last frame's result
+ * (it is overwritten only by this frame's denoise, later). A depth check
+ * against the previous depth buffer rejects a reprojection that landed on a
+ * different (foreground) surface, so its irradiance cannot leak onto a hidden
+ * hit.
+ *
+ * @param[in] hitP - World-space bounce hit point.
+ *
+ * @return Albedo-free indirect irradiance at the hit; 0 when off-screen,
+ *   disoccluded, or GI output is unavailable.
+ */
+float3 RESTIRGISamplePreviousBounce(float3 hitP)
+{
+	const int giIndex = GetCamera().texture_restir_gi_index;
+	if (giIndex < 0)
+		return 0;
+
+	const float4 prevClip =
+		mul(GetCamera().previous_view_projection, float4(hitP, 1));
+	if (prevClip.w <= 0)
+		return 0;
+
+	const float2 prevUV = clipspace_to_uv(prevClip.xy / prevClip.w);
+	if (any(prevUV < 0) || any(prevUV > 1))
+		return 0;
+
+	// Reject a reprojection onto a different surface (leak guard).
+	const float prevDepth =
+		texture_depth_history.SampleLevel(sampler_linear_clamp, prevUV, 0);
+	if (prevDepth <= 0)
+		return 0;
+	const float3 prevSurfaceP = reconstruct_position(
+		prevUV, prevDepth, GetCamera().previous_inverse_view_projection);
+	const float tolerance =
+		max(0.1, 0.02 * length(hitP - GetCamera().position));
+	if (distance(prevSurfaceP, hitP) > tolerance)
+		return 0;
+
+	return bindless_textures[descriptor_index(giIndex)].SampleLevel(
+		sampler_linear_clamp, prevUV, 0).rgb;
+}
+
+/**
+ * Shades a bounce-ray hit surface: its direct lighting, the previous frame's
+ * indirect (multi-bounce), and emission, i.e. the radiance leaving the hit
+ * toward the ray origin.
  *
  * @param[in,out] surface - The loaded, updated hit surface.
  * @param[in,out] rng - Random generator.
@@ -65,8 +113,13 @@ float3 RESTIRGIShadeHit(inout Surface surface, inout RNG rng)
 		direct += shadow * winning.radiance * NdotL * W / PI;
 	}
 
-	// Lambertian outgoing radiance = albedo * irradiance + emission.
-	return max(0, direct) * surface.albedo + surface.emissiveColor;
+	// Multi-bounce: the previous frame's indirect irradiance at the hit, so the
+	// stored radiance carries further bounces (energy-conserved for stability).
+	const float3 indirect =
+		RESTIRGISamplePreviousBounce(surface.P) * RESTIR_GI_MULTIBOUNCE;
+
+	// Lambertian outgoing radiance = albedo * (direct + indirect) + emission.
+	return (max(0, direct) + indirect) * surface.albedo + surface.emissiveColor;
 }
 
 [numthreads(8, 8, 1)]
