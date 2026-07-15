@@ -799,6 +799,11 @@ namespace wi::renderer
 		XMUINT2 resolution = {};
 		mutable int frame = 0;
 	};
+	// Rebuilds the shared pre-sampled light tiles for this frame (RTXDI light
+	// pre-sampling), consumed by both ReSTIR_DI and ReSTIR_GI. Call once before
+	// them when either is enabled. Returns the SRV descriptor index of the tile
+	// buffer, or -1.
+	int ReSTIR_PresampleLights(wi::graphics::CommandList cmd);
 	void CreateReSTIRDIResources(ReSTIRDIResources& res, XMUINT2 resolution);
 	// Runs the ReSTIR DI passes (initial -> temporal -> spatial). Returns the
 	// SRV descriptor index of this frame's final reservoir buffer (to store in

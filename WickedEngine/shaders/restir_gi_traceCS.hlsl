@@ -85,19 +85,22 @@ float3 RESTIRGISamplePreviousBounce(float3 hitP)
  * toward the ray origin.
  *
  * @param[in,out] surface - The loaded, updated hit surface.
+ * @param[in] pixel - Primary-surface pixel (selects the pre-sampled tile).
  * @param[in,out] rng - Random generator.
  *
  * @return Outgoing radiance from the hit (RGB, >= 0).
  */
-float3 RESTIRGIShadeHit(inout Surface surface, inout RNG rng)
+float3 RESTIRGIShadeHit(inout Surface surface, uint2 pixel, inout RNG rng)
 {
 	float3 direct = 0;
 
-	// Direct lighting at the hit (ReSTIR RIS over the analytic light list) with
-	// one shadow ray for the winner - mirrors the DDGI/Surfel bounce shading.
+	// Direct lighting at the hit (ReSTIR RIS over the analytic light list, from
+	// a pre-sampled tile when available) with one shadow ray for the winner -
+	// mirrors the DDGI/Surfel bounce shading.
 	RESTIRLightSample winning;
-	const RESTIRReservoir reservoir = RESTIRSampleLightsUniform(
-		surface.P, surface.N, RESTIR_GI_LIGHT_CANDIDATES, false, rng, winning);
+	const RESTIRReservoir reservoir = RESTIRSampleLights(
+		surface.P, surface.N, RESTIR_GI_LIGHT_CANDIDATES, push.lightTileBuffer,
+		pixel, push.frameIndex, false, rng, winning);
 
 	const float W = RESTIRReservoirGetInvPdf(reservoir);
 	const float NdotL = saturate(dot(winning.direction, surface.N));
@@ -221,7 +224,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
 
 				samplePosition = hitPos;
 				sampleNormal = surface.N;
-				sampleRadiance = RESTIRGIShadeHit(surface, rng);
+				sampleRadiance = RESTIRGIShadeHit(surface, pixel, rng);
 			}
 
 			// Clamp to the half-float storage range (R11G11B10) so a bright sky

@@ -24,14 +24,15 @@ RWByteAddressBuffer reservoirOutput : register(u0);
 /**
  * Builds an initial DI reservoir by resampling the analytic light list.
  *
- * Draws candidateCount lights uniformly, resolves each to a world-space sample
- * (via the light-sampling core), and resamples by the diffuse target function.
- * The chosen sample's visibility is left unset for the caller to fill after a
- * shadow ray.
+ * Draws candidateCount lights (from a pre-sampled tile when available, else
+ * uniformly), resolves each to a world-space sample via the light-sampling
+ * core, and resamples by the diffuse target function. The chosen sample's
+ * visibility is left unset for the caller to fill after a shadow ray.
  *
  * @param[in] P - World-space shading point.
  * @param[in] N - World-space shading normal.
  * @param[in] candidateCount - Number of RIS candidates (>= 1).
+ * @param[in] pixel - Screen pixel (selects the pre-sampled tile).
  * @param[in,out] rng - Random generator.
  *
  * @return The initial reservoir (visibility unset).
@@ -40,40 +41,31 @@ inline RESTIRDIReservoir RESTIRDISampleInitial(
 	float3 P,
 	float3 N,
 	uint candidateCount,
+	uint2 pixel,
 	inout RNG rng)
 {
 	RESTIRDIReservoir r = RESTIRDIReservoirInit();
 
-	const ShaderEntityIterator iterator = lights();
-	const uint lightCount = iterator.item_count();
-	if (lightCount == 0)
+	RESTIRLightSample winning;
+	const RESTIRReservoir lr = RESTIRSampleLights(
+		P, N, candidateCount, push.lightTileBuffer, pixel, push.frameIndex,
+		false, rng, winning);
+
+	if (lr.lightIndex == RESTIR_INVALID_LIGHT_INDEX)
 		return r;
 
-	const float invSourcePdf = (float)lightCount;
+	// Resolve the winner to a world-space point on the light. Directional
+	// samples have no finite position, so anchor them far along the direction.
+	const float sampleDist =
+		(winning.distance >= FLT_MAX * 0.5) ? 100000.0 : winning.distance;
 
-	for (uint i = 0; i < candidateCount; ++i)
-	{
-		const uint lightIndex = iterator.first_item() + rng.next_uint(lightCount);
-		const ShaderEntity light = load_entity(lightIndex);
-
-		const float2 uv = float2(rng.next_float(), rng.next_float());
-		const RESTIRLightSample s = RESTIRResolveAnalyticLight(light, P, N, uv);
-
-		// Resolve to a world-space point on the light. Directional samples have
-		// no finite position, so anchor them far along the sample direction.
-		const float sampleDist = (s.distance >= FLT_MAX * 0.5) ? 100000.0 : s.distance;
-		const float3 samplePosition = P + s.direction * sampleDist;
-
-		const float NdotL = saturate(dot(s.direction, N));
-		const float luma = dot(s.radiance, float3(0.2126, 0.7152, 0.0722));
-		const float targetPdf = luma * NdotL;
-		const float risWeight = targetPdf * invSourcePdf;
-
-		RESTIRDIReservoirUpdate(
-			r, samplePosition, s.radiance, lightIndex, uv, targetPdf, risWeight,
-			rng);
-	}
-
+	r.samplePosition = P + winning.direction * sampleDist;
+	r.sampleRadiance = winning.radiance;
+	r.targetPdf = lr.targetPdf;
+	r.weightSum = lr.weightSum;
+	r.M = lr.M;
+	r.lightIndex = lr.lightIndex;
+	r.uv = lr.uv;
 	return r;
 }
 
@@ -99,7 +91,8 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		RNG rng;
 		rng.init(pixel, GetFrame().frame_count);
 
-		reservoir = RESTIRDISampleInitial(P, N, push.candidateCount, rng);
+		reservoir =
+			RESTIRDISampleInitial(P, N, push.candidateCount, pixel, rng);
 
 		// Cache visibility for the chosen sample. This is used directly when
 		// spatiotemporal reuse is off; with reuse on, the spatial pass

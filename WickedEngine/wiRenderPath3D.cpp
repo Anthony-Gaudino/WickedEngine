@@ -1166,6 +1166,13 @@ namespace wi
 				}
 			}
 
+			if (wi::renderer::GetReSTIRDIEnabled() ||
+				wi::renderer::GetReSTIRGIEnabled())
+			{
+				// Shared light tiles for both passes; rebuild once per frame.
+				wi::renderer::ReSTIR_PresampleLights(cmd);
+			}
+
 			if (wi::renderer::GetReSTIRDIEnabled())
 			{
 				wi::renderer::ReSTIR_DI(restirDIResources, *scene, cmd);

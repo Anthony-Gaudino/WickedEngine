@@ -37,6 +37,17 @@ static const uint RESTIR_LIGHT_TILE_TOTAL =
 	RESTIR_LIGHT_TILE_SIZE * RESTIR_LIGHT_TILE_COUNT;
 
 /**
+ * Number of uniform candidates the pre-sampling pass resamples per tile slot.
+ *
+ * Each tile slot runs a small RIS over this many uniformly-drawn lights,
+ * keeping one winner importance-sampled by emitted power. A larger budget
+ * tightens the power-proportionality of the tile (less per-pixel variance) at a
+ * linear build cost; the build is a one-per-frame pass over
+ * RESTIR_LIGHT_TILE_TOTAL slots, so it stays cheap.
+ */
+static const uint RESTIR_PRESAMPLE_CANDIDATES = 8;
+
+/**
  * Confidence cap for temporal reuse.
  *
  * A reservoir's history weight (M) is clamped to this so stale samples cannot
@@ -822,7 +833,14 @@ struct RESTIRDIPushConstants
 	 * average the swing. 0 = the previous keep-occluded (full-signal) behavior.
 	 */
 	uint visibilityReject;
-	uint pad0;
+
+	/**
+	 * Bindless SRV index of the pre-sampled light-tile buffer (RESTIRLightRef,
+	 * raw). -1 falls the initial pass back to uniform light selection over the
+	 * full analytic list.
+	 */
+	int lightTileBuffer;
+
 	uint pad1;
 	uint pad2;
 };
@@ -854,7 +872,14 @@ struct RESTIRGIPushConstants
 	 * so it never fires on GI's own sampling noise.
 	 */
 	float historyScale;
-	uint pad0;
+
+	/**
+	 * Bindless SRV index of the pre-sampled light-tile buffer (RESTIRLightRef,
+	 * raw). -1 falls the bounce-hit shading back to uniform light selection
+	 * over the full analytic list.
+	 */
+	int lightTileBuffer;
+
 	uint pad1;
 };
 

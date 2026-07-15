@@ -148,6 +148,9 @@ uint32_t DDGI_RAYCOUNT = 256u;
 bool RESTIR_DI_ENABLED = false;
 bool RESTIR_GI_ENABLED = false;
 bool RESTIR_DI_VISIBILITY_REJECT = true;
+// Shared, resolution-independent pre-sampled light tiles (RESTIRLightRef, raw),
+// rebuilt once per frame and read by both the DI initial and GI trace passes.
+GPUBuffer restir_light_tiles;
 float DDGI_BLEND_SPEED = 0.1f;
 float GI_BOOST = 1.0f;
 bool MESH_SHADER_ALLOWED = false;
@@ -1165,6 +1168,7 @@ void LoadShaders()
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_DDGI_INDIRECTPREPARE], "ddgi_indirectprepareCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_DDGI_UPDATE], "ddgi_updateCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_DDGI_UPDATE_DEPTH], "ddgi_updateCS_depth.cso"); });
+	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_PRESAMPLE_LIGHTS], "restir_presampleLightsCS.cso"); });
 	if (device->CheckCapability(GraphicsDeviceCapability::RAYTRACING))
 	{
 		wi::jobsystem::Execute(raytracing_ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_DI_INITIAL], "restir_di_initialCS_rtapi.cso", ShaderModel::SM_6_5); });
@@ -15673,6 +15677,47 @@ void Postprocess_SSR(
 	wi::profiler::EndRange(range);
 	device->EventEnd(cmd);
 }
+int ReSTIR_PresampleLights(CommandList cmd)
+{
+	// Rebuild the shared light tiles for this frame. The buffer is resolution-
+	// independent, so it is created lazily on first use.
+	if (!restir_light_tiles.IsValid())
+	{
+		GPUBufferDesc bd;
+		bd.size = (uint64_t)sizeof(RESTIRLightRef) * RESTIR_LIGHT_TILE_TOTAL;
+		bd.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+		bd.misc_flags = ResourceMiscFlag::BUFFER_RAW;
+		device->CreateBufferZeroed(&bd, &restir_light_tiles);
+		device->SetName(&restir_light_tiles, "restir.light_tiles");
+	}
+
+	device->EventBegin("ReSTIR PresampleLights", cmd);
+	auto prof_range = wi::profiler::BeginRangeGPU("ReSTIR PresampleLights", cmd);
+
+	BindCommonResources(cmd);
+
+	RESTIRPresamplePushConstants push = {};
+	push.frameIndex = (uint)device->GetFrameCount();
+	push.emissiveTriangleCount = 0; // emissive-triangle lights not built yet
+	push.lightTileBuffer =
+		device->GetDescriptorIndex(&restir_light_tiles, SubresourceType::UAV);
+	push.emissiveTriangleBuffer = -1;
+
+	device->BindComputeShader(&shaders[CSTYPE_RESTIR_PRESAMPLE_LIGHTS], cmd);
+	device->PushConstants(&push, sizeof(push), cmd);
+	device->BindUAV(&restir_light_tiles, 0, cmd);
+
+	device->Barrier(GPUBarrier::Buffer(&restir_light_tiles, ResourceState::SHADER_RESOURCE, ResourceState::UNORDERED_ACCESS), cmd);
+	const uint32_t thread_count = (RESTIR_LIGHT_TILE_TOTAL + 63u) / 64u;
+	device->Dispatch(thread_count, 1, 1, cmd);
+	device->Barrier(GPUBarrier::Buffer(&restir_light_tiles, ResourceState::UNORDERED_ACCESS, ResourceState::SHADER_RESOURCE), cmd);
+
+	wi::profiler::EndRange(prof_range);
+	device->EventEnd(cmd);
+
+	return device->GetDescriptorIndex(
+		&restir_light_tiles, SubresourceType::SRV);
+}
 void CreateReSTIRDIResources(ReSTIRDIResources& res, XMUINT2 resolution)
 {
 	res.resolution = resolution;
@@ -15790,7 +15835,10 @@ int ReSTIR_DI(
 	push.spatialSampleCount = RESTIR_DI_SPATIAL_SAMPLES;
 	push.spatialRadius = RESTIR_DI_SPATIAL_RADIUS;
 	push.visibilityReject = RESTIR_DI_VISIBILITY_REJECT ? 1u : 0u;
-	push.pad0 = push.pad1 = push.pad2 = 0;
+	push.lightTileBuffer = restir_light_tiles.IsValid()
+		? device->GetDescriptorIndex(&restir_light_tiles, SubresourceType::SRV)
+		: -1;
+	push.pad1 = push.pad2 = 0;
 
 	const uint32_t dispatch_x = (res.resolution.x + 7) / 8;
 	const uint32_t dispatch_y = (res.resolution.y + 7) / 8;
@@ -16087,6 +16135,9 @@ int ReSTIR_GI(
 	push.spatialRadius = RESTIR_GI_SPATIAL_RADIUS;
 	push.instanceInclusionMask = 0xFF;
 	push.historyScale = lightsMoved ? RESTIR_GI_LIGHTCHANGE_SCALE : 1.0f;
+	push.lightTileBuffer = restir_light_tiles.IsValid()
+		? device->GetDescriptorIndex(&restir_light_tiles, SubresourceType::SRV)
+		: -1;
 
 	// Initial sample generation: trace one hemisphere ray per pixel, shade the
 	// hit, and build this pixel's initial reservoir.

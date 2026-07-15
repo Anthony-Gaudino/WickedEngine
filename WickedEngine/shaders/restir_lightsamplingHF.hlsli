@@ -128,6 +128,27 @@ inline float RESTIRTargetFunction(RESTIRLightSample s, float3 N)
 }
 
 /**
+ * Emitted-power proxy of an analytic light, used to importance-sample the
+ * pre-sampled light tiles.
+ *
+ * A cheap, view-independent scalar proportional to the light's contribution:
+ * the luminance of its (energy-scaled) color. It is only a *sampling* weight -
+ * the per-pixel estimator stays unbiased for any positive proxy because the
+ * tile carries the exact reciprocal source pdf - so an approximate proxy just
+ * trades variance, never correctness. A small floor keeps every light reachable
+ * (a zero would make a light unsamplable and bias the estimate dark).
+ *
+ * @param[in] light - The analytic light entity.
+ *
+ * @return A positive power proxy (>= a small epsilon).
+ */
+inline float RESTIRLightPower(ShaderEntity light)
+{
+	const float luma = dot(light.GetColor().rgb, float3(0.2126, 0.7152, 0.0722));
+	return max(luma, 1e-3);
+}
+
+/**
  * Cosine-weighted hemisphere sample from an explicit 2D sample point.
  *
  * The deterministic counterpart of sample_hemisphere_cos: reproducible from a
@@ -375,6 +396,147 @@ inline RESTIRReservoir RESTIRSampleLightsUniform(
 		const float risWeight = targetPdf * invSourcePdf;
 
 		if (RESTIRReservoirUpdate(r, lightIndex, float2(0, 0), targetPdf, risWeight, rng))
+		{
+			winning = s;
+		}
+	}
+
+	return r;
+}
+
+/*
+################################################################################
+RIS driver (pre-sampled light tiles)
+################################################################################
+*/
+
+/**
+ * Loads one pre-sampled light reference from the tile buffer (raw storage).
+ *
+ * @param[in] tileBuffer - Bindless SRV index of the RESTIRLightRef tile buffer.
+ * @param[in] index - Flat entry index in [0, RESTIR_LIGHT_TILE_TOTAL).
+ *
+ * @return The stored light reference (index + reciprocal source pdf).
+ */
+inline RESTIRLightRef RESTIRLoadLightRef(int tileBuffer, uint index)
+{
+	// Each RESTIRLightRef is 8 bytes: uint lightIndex, float invSourcePdf.
+	const uint2 raw =
+		bindless_buffers[descriptor_index(tileBuffer)].Load2(index * 8);
+
+	RESTIRLightRef ref;
+	ref.lightIndex = raw.x;
+	ref.invSourcePdf = asfloat(raw.y);
+	return ref;
+}
+
+/**
+ * Picks which pre-sampled tile a pixel draws its candidates from.
+ *
+ * An 8x8 pixel block shares one tile so a wave's per-pixel candidate reads stay
+ * within a single cached tile (the point of pre-sampling), and the choice
+ * rotates per frame so temporal reuse still sees the whole light set over time.
+ *
+ * @param[in] pixel - Screen pixel (primary-surface pixel for GI bounce
+ *                    shading).
+ * @param[in] frameIndex - Current frame counter.
+ *
+ * @return A tile index in [0, RESTIR_LIGHT_TILE_COUNT).
+ */
+inline uint RESTIRSelectTile(uint2 pixel, uint frameIndex)
+{
+	const uint block = (pixel.x >> 3) + (pixel.y >> 3) * 71u;
+	return (block + frameIndex * 37u) % RESTIR_LIGHT_TILE_COUNT;
+}
+
+/**
+ * Resamples analytic lights into a reservoir at (P, N), drawing candidates from
+ * a pre-sampled light tile when one is available (falls back to uniform).
+ *
+ * With a valid tile the candidates are already importance-sampled by emitted
+ * power, so fewer of them land on lights that cannot brighten this surface; the
+ * tile also keeps the candidate reads cache-coherent across a wave. Each tile
+ * entry carries the reciprocal of the (power-proportional) probability with
+ * which it was pre-selected, so the estimator stays unbiased. With tileBuffer <
+ * 0 this is exactly RESTIRSampleLightsUniform.
+ *
+ * The winning sample is kept in registers (nothing is stored); use it
+ * immediately (see RESTIRSampleLightsUniform for the pattern).
+ *
+ * @param[in] P - World-space shading point.
+ * @param[in] N - World-space shading normal.
+ * @param[in] candidateCount - Number of RIS candidates (>= 1).
+ * @param[in] tileBuffer - Bindless SRV index of the tile buffer (-1 = uniform).
+ * @param[in] pixel - Screen pixel selecting the tile (ignored when uniform).
+ * @param[in] frameIndex - Current frame counter (ignored when uniform).
+ * @param[in] staticOnly - When true, only static lights carry weight (see
+ *   RESTIRSampleLightsUniform).
+ * @param[in,out] rng - Random generator.
+ * @param[out] winning - Resolved sample of the reservoir's selected light.
+ *
+ * @return The reservoir; RESTIRReservoirGetInvPdf(r) is the unbiased weight W.
+ */
+inline RESTIRReservoir RESTIRSampleLights(
+	float3 P,
+	float3 N,
+	uint candidateCount,
+	int tileBuffer,
+	uint2 pixel,
+	uint frameIndex,
+	bool staticOnly,
+	inout RNG rng,
+	out RESTIRLightSample winning)
+{
+	[branch]
+	if (tileBuffer < 0)
+	{
+		return RESTIRSampleLightsUniform(
+			P, N, candidateCount, staticOnly, rng, winning);
+	}
+
+	RESTIRReservoir r = RESTIRReservoirInit();
+
+	winning.direction = float3(0, 0, 1);
+	winning.distance = 0;
+	winning.radiance = 0;
+	winning.solidAnglePdf = 1;
+
+	const uint tileBase =
+		RESTIRSelectTile(pixel, frameIndex) * RESTIR_LIGHT_TILE_SIZE;
+
+	for (uint i = 0; i < candidateCount; ++i)
+	{
+		const uint slot = rng.next_uint(RESTIR_LIGHT_TILE_SIZE);
+		const RESTIRLightRef ref = RESTIRLoadLightRef(tileBuffer, tileBase + slot);
+
+		RESTIRLightSample s;
+		s.direction = float3(0, 0, 1);
+		s.distance = 0;
+		s.radiance = 0;
+		s.solidAnglePdf = 1;
+		float targetPdf = 0;
+		float2 uv = float2(0, 0);
+
+		// Only analytic lights are pre-sampled for now; an emissive-triangle
+		// reference (flag set) or an empty slot contributes nothing but is
+		// still counted, keeping the reservoir statistics consistent.
+		[branch]
+		if (ref.lightIndex != RESTIR_INVALID_LIGHT_INDEX &&
+			(ref.lightIndex & RESTIR_LIGHT_FLAG_EMISSIVE_TRIANGLE) == 0)
+		{
+			const ShaderEntity light = load_entity(ref.lightIndex);
+			if (!staticOnly || light.IsStaticLight())
+			{
+				uv = float2(rng.next_float(), rng.next_float());
+				s = RESTIRResolveAnalyticLight(light, P, N, uv);
+				targetPdf = RESTIRTargetFunction(s, N);
+			}
+		}
+
+		const float risWeight = targetPdf * ref.invSourcePdf;
+
+		if (RESTIRReservoirUpdate(
+				r, ref.lightIndex, uv, targetPdf, risWeight, rng))
 		{
 			winning = s;
 		}
