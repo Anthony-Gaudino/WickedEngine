@@ -16,11 +16,15 @@
  * W * visibility * NdotL, no albedo), which is what removes the shadow noise
  * and the multi-light energy bias - a per-pixel visibility scalar cannot,
  * because the error lives in which light was chosen and its weight, not in the
- * shadow bit. Specular still comes straight from this pixel's reservoir (its
- * chosen light, W and cached visibility): a directional lobe cannot be
- * reconstructed from an averaged irradiance, and its multi-light noise is far
- * less visible than the broad diffuse shadow. Replaces the analytic tiled
- * direct-light loop when ReSTIR DI is enabled.
+ * shadow bit. It is modulated by the diffuse Fresnel `(1 - F)` of this pixel's
+ * chosen light so the specularly-reflected energy is removed from the diffuse,
+ * matching BRDF_GetDiffuse in the analytic path (the DI passes cannot bake this
+ * in - they have no material G-buffer, only depth/normal/roughness). Specular
+ * still comes straight from this pixel's reservoir (its chosen light, W and
+ * cached visibility): a directional lobe cannot be reconstructed from an
+ * averaged irradiance, and its multi-light noise is far less visible than the
+ * broad diffuse shadow. Replaces the analytic tiled direct-light loop when
+ * ReSTIR DI is enabled.
  *
  * @param[in,out] surface - The shading surface.
  * @param[in,out] lighting - Accumulated lighting to add the direct term to.
@@ -30,20 +34,6 @@ inline void RESTIRDIApplyDirect(
 	inout Surface surface, inout Lighting lighting, ShaderCamera camera)
 {
 	const uint2 res = camera.internal_resolution;
-
-	// Diffuse: the denoised irradiance already carries NdotL and visibility, so
-	// forward only applies the (albedo-independent) diffuse response here;
-	// albedo is applied later by the surface composite, matching the analytic
-	// path. The irradiance is an average over the per-frame light selection, so
-	// it must not be multiplied by any single light's direction again.
-	[branch]
-	if (camera.texture_restir_di_irradiance_index >= 0)
-	{
-		const float3 irradiance =
-			bindless_textures[descriptor_index(
-				camera.texture_restir_di_irradiance_index)][surface.pixel].rgb;
-		lighting.direct.diffuse += irradiance;
-	}
 
 	const uint flatIndex = surface.pixel.y * res.x + surface.pixel.x;
 	const RESTIRDIReservoir r = RESTIRDIReservoirLoad(
@@ -55,21 +45,45 @@ inline void RESTIRDIApplyDirect(
 	// spatial/ temporal reuse then smears across the screen as an over-bright
 	// glow.
 	const float W = min(RESTIRDIReservoirGetInvPdf(r), (float)lights().item_count());
+
+	// Resolve the chosen light once: its half-vector Fresnel both splits the
+	// specular lobe and, as `(1 - F)`, removes the specularly-reflected energy
+	// from the averaged diffuse irradiance below. Falls back to no Fresnel loss
+	// (factor 1) when the reservoir holds no valid sample.
+	const bool haveLight = W > 0 && r.targetPdf > 0;
+	half3 diffuseFresnel = 1;
+	SurfaceToLight surface_to_light = (SurfaceToLight)0;
 	[branch]
-	if (W > 0 && r.targetPdf > 0 && r.visibility > 0)
+	if (haveLight)
 	{
 		const half3 L = (half3)normalize(r.samplePosition - surface.P);
-		SurfaceToLight surface_to_light;
 		surface_to_light.create(surface, L);
+		diffuseFresnel = BRDF_GetDiffuseFresnel(surface, surface_to_light);
+	}
 
-		[branch]
-		if (any(surface_to_light.NdotL_sss > 0))
-		{
-			float3 light_contribution = r.sampleRadiance * W * r.visibility;
-			// Sanitize: a stale/degenerate reservoir must never inject Inf/NaN.
-			light_contribution = (any(isnan(light_contribution)) || any(isinf(light_contribution))) ? (float3)0 : light_contribution;
-			lighting.direct.specular = mad((half3)light_contribution, BRDF_GetSpecular(surface, surface_to_light), lighting.direct.specular);
-		}
+	// Diffuse: the denoised irradiance already carries NdotL and visibility, so
+	// forward only applies the (albedo-independent) diffuse Fresnel response
+	// here; albedo is applied later by the surface composite, matching the
+	// analytic path. The irradiance is an average over the per-frame light
+	// selection, so it must not be multiplied by any single light's direction
+	// again - only the scalar-ish `(1 - F)` energy-conservation term.
+	[branch]
+	if (camera.texture_restir_di_irradiance_index >= 0)
+	{
+		const float3 irradiance =
+			bindless_textures[descriptor_index(
+				camera.texture_restir_di_irradiance_index)][surface.pixel].rgb;
+		lighting.direct.diffuse += irradiance * diffuseFresnel;
+	}
+
+	// Specular from the chosen light (needs its cached visibility).
+	[branch]
+	if (haveLight && r.visibility > 0 && any(surface_to_light.NdotL_sss > 0))
+	{
+		float3 light_contribution = r.sampleRadiance * W * r.visibility;
+		// Sanitize: a stale/degenerate reservoir must never inject Inf/NaN.
+		light_contribution = (any(isnan(light_contribution)) || any(isinf(light_contribution))) ? (float3)0 : light_contribution;
+		lighting.direct.specular = mad((half3)light_contribution, BRDF_GetSpecular(surface, surface_to_light), lighting.direct.specular);
 	}
 }
 

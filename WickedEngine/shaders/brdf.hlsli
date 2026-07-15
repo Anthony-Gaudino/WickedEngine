@@ -186,7 +186,11 @@ half3 BRDF_GetSpecular(in Surface surface, in SurfaceToLight surface_to_light)
 
 	return specular * surface_to_light.NdotL;
 }
-half3 BRDF_GetDiffuse(in Surface surface, in SurfaceToLight surface_to_light)
+// Diffuse energy-conservation factor (1 - F) for one light direction, without
+// the NdotL term. Split out of BRDF_GetDiffuse so ReSTIR DI can apply the same
+// Fresnel to its pre-integrated diffuse irradiance (which already carries
+// NdotL).
+half3 BRDF_GetDiffuseFresnel(in Surface surface, in SurfaceToLight surface_to_light)
 {
 	// Note: subsurface scattering will remove Fresnel (F), because otherwise
 	//	there would be artifact on backside where diffuse wraps
@@ -200,7 +204,11 @@ half3 BRDF_GetDiffuse(in Surface surface, in SurfaceToLight surface_to_light)
 	diffuse *= 1 - surface.clearcoat.F;
 #endif // CLEARCOAT
 
-	return diffuse * surface_to_light.NdotL_sss;
+	return diffuse;
+}
+half3 BRDF_GetDiffuse(in Surface surface, in SurfaceToLight surface_to_light)
+{
+	return BRDF_GetDiffuseFresnel(surface, surface_to_light) * surface_to_light.NdotL_sss;
 }
 
 #endif // WI_BRDF_HF
