@@ -150,6 +150,29 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			if (neighbor.M <= 0)
 				continue;
 
+			// Visibility-aware reuse: only borrow a neighbor whose chosen light
+			// is actually visible from THIS surface. A shadowed pixel's lit
+			// neighbors hold a light that is occluded here; because the merge
+			// weights by the UNSHADOWED target, borrowing it lets the merge
+			// pick it, the final re-trace then zeroes it, and the resulting
+			// black frames darken the shadow boundary - the initial pass does
+			// shadowed RIS (no occluded samples, no compensating inflation), so
+			// the reuse must reject occluded borrows to match, otherwise the
+			// boundary reads dark. This costs one visibility ray per accepted
+			// neighbor.
+			[branch]
+			if (neighbor.lightIndex != RESTIR_INVALID_LIGHT_INDEX &&
+				(neighbor.lightIndex & RESTIR_LIGHT_FLAG_EMISSIVE_TRIANGLE) == 0)
+			{
+				float3 nPos;
+				float3 nRad;
+				RESTIRDIResolveSample(
+					neighbor.lightIndex, neighbor.uv, P, N, nPos, nRad);
+				[branch]
+				if (RESTIRDITraceVisibility(P, N, nPos, rng) <= 0)
+					continue;
+			}
+
 			// Reconstruct the neighbor's own surface: the MIS denominator
 			// evaluates each sample's target there, which is what removes the
 			// biased-combiner darkening.
