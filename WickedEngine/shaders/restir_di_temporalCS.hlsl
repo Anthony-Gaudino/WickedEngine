@@ -1,5 +1,8 @@
 #include "globals.hlsli"
+#include "lightingHF.hlsli"
+#include "restir_lightsamplingHF.hlsli"
 #include "restir_diHF.hlsli"
+#include "restir_di_reuseHF.hlsli"
 
 // ReSTIR DI - temporal resampling pass.
 //
@@ -83,13 +86,48 @@ void main(uint3 DTid : SV_DispatchThreadID)
 					RNG rng;
 					rng.init(pixel, GetFrame().frame_count + 1u);
 
-					float3 dir;
-					float dist;
-					const float targetAtSelf = RESTIRDITargetFunction(
-						history.samplePosition, history.sampleRadiance, P, N, dir, dist);
+					// Canonical (current) reservoir plus the reprojected
+					// history, each tagged with its own surface so the merge is
+					// the unbiased balance heuristic (same combiner as the
+					// spatial pass). Post-gate the two surfaces match, so this
+					// reduces to a confidence-weighted average; the balance
+					// heuristic still down-weights a history whose sample no
+					// longer illuminates the surface instead of letting its
+					// stale M darken the pixel.
+					RESTIRDIMISSource sources[RESTIR_DI_MIS_MAX_SOURCES];
+					sources[0].samplePosition = reservoir.samplePosition;
+					sources[0].sampleRadiance = reservoir.sampleRadiance;
+					sources[0].P = P;
+					sources[0].N = N;
+					sources[0].M = reservoir.M;
+					sources[0].weightSum = reservoir.weightSum;
+					sources[0].visibility = reservoir.visibility;
+					sources[0].lightIndex = reservoir.lightIndex;
+					sources[0].uv = reservoir.uv;
+
+					// The history source is tagged with the CURRENT surface (P,
+					// N), not the reprojected one: the disocclusion gate above
+					// already guarantees the history lies on the same surface,
+					// while reconstruct_position with the current camera
+					// returns a wrong world point under camera motion
+					// - near a point light the position-sensitive (1/d^2)
+					//   target would then corrupt the history weight and dim
+					//   the pixel as the viewer moves. Same-surface tagging
+					//   makes the temporal merge a correct confidence-weighted
+					//   combine.
+					sources[1].samplePosition = history.samplePosition;
+					sources[1].sampleRadiance = history.sampleRadiance;
+					sources[1].P = P;
+					sources[1].N = N;
+					sources[1].M = history.M;
+					sources[1].weightSum = history.weightSum;
+					sources[1].visibility = history.visibility;
+					sources[1].lightIndex = history.lightIndex;
+					sources[1].uv = history.uv;
 
 					const float maxW = (float)lights().item_count();
-					RESTIRDIReservoirMerge(reservoir, history, targetAtSelf, maxW, rng);
+					reservoir = RESTIRDIMergeBalanceHeuristic(
+						sources, 2, P, N, maxW, rng);
 				}
 			}
 		}

@@ -4,6 +4,7 @@
 #include "lightingHF.hlsli"
 #include "restir_lightsamplingHF.hlsli"
 #include "restir_diHF.hlsli"
+#include "restir_di_reuseHF.hlsli"
 #include "restir_di_visibilityHF.hlsli"
 
 /**
@@ -102,7 +103,24 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		RNG rng;
 		rng.init(pixel, GetFrame().frame_count + 2u);
 
-		for (uint i = 0; i < push.spatialSampleCount; ++i)
+		// Source 0 is this pixel's own (canonical) reservoir; spatial neighbors
+		// are gathered after it. The balance-heuristic merge tags each source
+		// with the surface it was built on so a neighbor that cannot see the
+		// chosen light no longer dilutes the estimate.
+		RESTIRDIMISSource sources[RESTIR_DI_MIS_MAX_SOURCES];
+		sources[0].samplePosition = reservoir.samplePosition;
+		sources[0].sampleRadiance = reservoir.sampleRadiance;
+		sources[0].P = P;
+		sources[0].N = N;
+		sources[0].M = reservoir.M;
+		sources[0].weightSum = reservoir.weightSum;
+		sources[0].visibility = reservoir.visibility;
+		sources[0].lightIndex = reservoir.lightIndex;
+		sources[0].uv = reservoir.uv;
+		uint sourceCount = 1;
+
+		for (uint i = 0; i < push.spatialSampleCount &&
+			sourceCount < RESTIR_DI_MIS_MAX_SOURCES; ++i)
 		{
 			// Random neighbor within the spatial radius (uniform in a square).
 			const float2 offset = (rng.next_float2() * 2 - 1) * push.spatialRadius;
@@ -129,17 +147,30 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			const RESTIRDIReservoir neighbor = RESTIRDIReservoirLoad(reservoirInput, neighborFlat);
 
 			[branch]
-			if (neighbor.M > 0)
-			{
-				float3 dir;
-				float dist;
-				const float targetAtSelf = RESTIRDITargetFunction(
-					neighbor.samplePosition, neighbor.sampleRadiance, P, N, dir, dist);
+			if (neighbor.M <= 0)
+				continue;
 
-				const float maxW = (float)lights().item_count();
-				RESTIRDIReservoirMerge(reservoir, neighbor, targetAtSelf, maxW, rng);
-			}
+			// Reconstruct the neighbor's own surface: the MIS denominator
+			// evaluates each sample's target there, which is what removes the
+			// biased-combiner darkening.
+			const float2 neighborUV = (neighborPixel + 0.5) * push.resolutionRcp;
+			const float3 neighborP = reconstruct_position(neighborUV, neighborDepth);
+
+			sources[sourceCount].samplePosition = neighbor.samplePosition;
+			sources[sourceCount].sampleRadiance = neighbor.sampleRadiance;
+			sources[sourceCount].P = neighborP;
+			sources[sourceCount].N = neighborN;
+			sources[sourceCount].M = neighbor.M;
+			sources[sourceCount].weightSum = neighbor.weightSum;
+			sources[sourceCount].visibility = neighbor.visibility;
+			sources[sourceCount].lightIndex = neighbor.lightIndex;
+			sources[sourceCount].uv = neighbor.uv;
+			++sourceCount;
 		}
+
+		const float maxW = (float)lights().item_count();
+		reservoir = RESTIRDIMergeBalanceHeuristic(
+			sources, sourceCount, P, N, maxW, rng);
 
 		// Final visibility: re-trace a fresh shadow ray for the reused sample
 		// so the shadow reflects the current frame instead of the stale

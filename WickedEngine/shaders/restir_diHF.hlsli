@@ -6,55 +6,15 @@
  * ReSTIR DI screen-space reservoir helpers.
  *
  * Operates on the resolved-sample DI reservoir (RESTIRDIReservoir): weighted
- * reservoir streaming, spatial/temporal merge, and the diffuse target function
- * evaluated from a stored sample. Deliberately free of any light-sampling
- * dependency so the temporal/spatial passes (which never sample lights) do not
- * need lightingHF.hlsli. The initial pass, which does resample the light list,
- * includes restir_lightsamplingHF.hlsli itself.
+ * reservoir streaming, packing, and the merge-source descriptor. Deliberately
+ * free of any light-sampling dependency so the light-free consumers (the
+ * denoise passes and forward shading) can include it without pulling in
+ * lightingHF.hlsli. The spatiotemporal balance-heuristic merge, which
+ * re-resolves the analytic light per surface, lives in restir_di_reuseHF.hlsli
+ * and is included only by the temporal/spatial passes.
  *
  * Include order: "globals.hlsli" first, then this header.
  */
-
-/**
- * Diffuse target function for a stored DI sample at a surface.
- *
- * Computes the direction and distance from P to the sample point and returns
- * p_hat = luminance(sampleRadiance) * NdotL. Albedo is factored out (applied
- * later by the consumer's BRDF), matching the light-sampling core.
- *
- * @param[in] samplePosition - World-space point on the light.
- * @param[in] sampleRadiance - Unshadowed incident radiance of the sample.
- * @param[in] P - World-space shading point.
- * @param[in] N - World-space shading normal.
- * @param[out] dirToLight - Normalized direction from P toward the sample.
- * @param[out] distToLight - Distance from P to the sample.
- *
- * @return The target function value p_hat (>= 0); 0 if the sample is
- * degenerate.
- */
-inline float RESTIRDITargetFunction(
-	float3 samplePosition,
-	float3 sampleRadiance,
-	float3 P,
-	float3 N,
-	out float3 dirToLight,
-	out float distToLight)
-{
-	dirToLight = float3(0, 0, 1);
-	distToLight = 0;
-
-	const float3 d = samplePosition - P;
-	const float dist2 = dot(d, d);
-	if (dist2 <= 0)
-		return 0;
-
-	distToLight = sqrt(dist2);
-	dirToLight = d / distToLight;
-
-	const float NdotL = saturate(dot(dirToLight, N));
-	const float luma = dot(sampleRadiance, float3(0.2126, 0.7152, 0.0722));
-	return luma * NdotL;
-}
 
 /**
  * Streams one resolved candidate into a DI reservoir (weighted reservoir
@@ -97,57 +57,49 @@ inline bool RESTIRDIReservoirUpdate(
 }
 
 /**
- * Merges DI reservoir 'other' into 'self' (spatial/temporal reuse).
- *
- * The merged sample carries over its cached visibility, and is re-weighted by
- * its target function evaluated at self's surface.
- *
- * Standard (unbiased) reuse: other's full confidence M is combined, so occluded
- * candidates stay eligible for selection. This is deliberate. RIS uses the
- * unshadowed target function, so it is only unbiased in expectation: a region
- * lit by one light through another light's shadow is correct only because the
- * occluded light is sometimes selected and contributes the black frames that
- * balance the over-bright frames (whose W folds in every candidate's unshadowed
- * target). Down-weighting the occluded reused samples by their visibility
- * (which an earlier revision did, to hide the per-frame flicker) removes those
- * black frames and leaves a net over-estimate - the shadow reads brighter than
- * the fully-shadowed surface, which is wrong. The per-frame variance this
- * reintroduces is instead removed by denoising the full diffuse contribution
- * (radiance x W x visibility x NdotL), where the bright and black frames
- * average to the correct colour. See [[wickedengine-restir]].
- *
- * @param[in,out] self - Reservoir receiving the merge.
- * @param[in] other - Reservoir to merge in.
- * @param[in] targetPdfAtSelf - other's sample target function at self's
- * surface.
- * @param[in] maxW - Firefly clamp for other's unbiased weight (typically the
- *   light count: uniform RIS cannot legitimately exceed it, so this bounds a
- *   near-zero-target sample from injecting spurious energy through reuse).
- * @param[in,out] rng - Random generator.
+ * Maximum number of reservoirs the balance-heuristic merge combines at once:
+ * the pixel's own (canonical) reservoir plus its spatial neighbors.
  */
-inline void RESTIRDIReservoirMerge(
-	inout RESTIRDIReservoir self,
-	RESTIRDIReservoir other,
-	float targetPdfAtSelf,
-	float maxW,
-	inout RNG rng)
+#define RESTIR_DI_MIS_MAX_SOURCES (RESTIR_DI_SPATIAL_SAMPLES + 1)
+
+/**
+ * One input reservoir of a spatiotemporal merge, tagged with the surface it was
+ * created on.
+ *
+ * The surface (P, N) is what makes the merge unbiased: the MIS weight of each
+ * source's sample is evaluated against every source's **own** surface (see
+ * RESTIRDIMergeBalanceHeuristic), so a neighbor that cannot see the chosen
+ * light no longer deflates the estimate.
+ */
+struct RESTIRDIMISSource
 {
-	const float otherW = min(RESTIRDIReservoirGetInvPdf(other), maxW);
-	const float risWeight = targetPdfAtSelf * otherW * other.M;
+	/** World-space point on the chosen light. */
+	float3 samplePosition;
 
-	self.M += other.M;
-	self.weightSum += risWeight;
+	/** Unshadowed incident radiance of the sample. */
+	float3 sampleRadiance;
 
-	if (self.weightSum > 0 && rng.next_float() * self.weightSum < risWeight)
-	{
-		self.samplePosition = other.samplePosition;
-		self.sampleRadiance = other.sampleRadiance;
-		self.lightIndex = other.lightIndex;
-		self.uv = other.uv;
-		self.targetPdf = targetPdfAtSelf;
-		self.visibility = other.visibility;
-	}
-}
+	/** World-space shading point of the surface this reservoir was built on. */
+	float3 P;
+
+	/** World-space shading normal of that surface. */
+	float3 N;
+
+	/** Confidence (effective candidate count) of the reservoir. */
+	float M;
+
+	/** Running resampling-weight sum of the reservoir. */
+	float weightSum;
+
+	/** Cached visibility of the held sample, in [0, 1]. */
+	float visibility;
+
+	/** Index of the chosen light. */
+	uint lightIndex;
+
+	/** Sample parameterization on the light's area, in [0, 1)^2. */
+	float2 uv;
+};
 
 /**
  * Loads a DI reservoir from a raw reservoir buffer.
