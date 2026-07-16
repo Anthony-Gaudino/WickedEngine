@@ -10,27 +10,32 @@
 #include "capsuleShadowHF.hlsli"
 
 /**
- * Applies the ReSTIR DI direct lighting to a surface (opaque forward).
+ * Applies the ReSTIR DI **diffuse** direct lighting to a surface (opaque
+ * forward).
  *
  * Diffuse is taken from the **denoised** diffuse irradiance texture (radiance *
  * W * visibility * NdotL, no albedo), which is what removes the shadow noise
  * and the multi-light energy bias - a per-pixel visibility scalar cannot,
  * because the error lives in which light was chosen and its weight, not in the
- * shadow bit. It is modulated by the diffuse Fresnel `(1 - F)` of this pixel's
+ * shadow  bit. It is modulated by the diffuse Fresnel `(1 - F)` of this pixel's
  * chosen light so the specularly-reflected energy is removed from the diffuse,
  * matching BRDF_GetDiffuse in the analytic path (the DI passes cannot bake this
- * in - they have no material G-buffer, only depth/normal/roughness). Specular
- * still comes straight from this pixel's reservoir (its chosen light, W and
- * cached visibility): a directional lobe cannot be reconstructed from an
- * averaged irradiance, and its multi-light noise is far less visible than the
- * broad diffuse shadow. Replaces the analytic tiled direct-light loop when
- * ReSTIR DI is enabled.
+ * in - they have no material G-buffer, only depth/normal/roughness).
+ *
+ * **Only the diffuse** comes from ReSTIR DI. Direct **specular** is left to the
+ * analytic per-light loop (which the caller always runs): a reservoir holds one
+ * stochastically-chosen light, and a narrow specular lobe turns that per-pixel
+ * choice into fireflies on reflective surfaces - so specular is instead
+ * evaluated deterministically for every analytic light, shadow-mapped and
+ * noise-free. Analytic lights are delta sources with no geometry, so their
+ * highlight can only be produced this way; emissive-mesh reflections come from
+ * the reflection pass, not from here.
  *
  * @param[in,out] surface - The shading surface.
- * @param[in,out] lighting - Accumulated lighting to add the direct term to.
+ * @param[in,out] lighting - Accumulated lighting to add the diffuse term to.
  * @param[in] camera - Camera holding the reservoir + irradiance descriptors.
  */
-inline void RESTIRDIApplyDirect(
+inline void RESTIRDIApplyDiffuse(
 	inout Surface surface, inout Lighting lighting, ShaderCamera camera)
 {
 	const uint2 res = camera.internal_resolution;
@@ -40,33 +45,28 @@ inline void RESTIRDIApplyDirect(
 		bindless_buffers[descriptor_index(camera.buffer_restir_di_index)], flatIndex);
 
 	// Firefly clamp: uniform RIS over N lights cannot legitimately weight a
-	// sample above N, so cap W there. Without this, a reservoir whose selected
-	// sample has a near-zero target function produces a huge W that the
-	// spatial/ temporal reuse then smears across the screen as an over-bright
-	// glow.
+	// sample above N, so cap W there.
 	const float W = min(RESTIRDIReservoirGetInvPdf(r), (float)lights().item_count());
 
-	// Resolve the chosen light once: its half-vector Fresnel both splits the
-	// specular lobe and, as `(1 - F)`, removes the specularly-reflected energy
-	// from the averaged diffuse irradiance below. Falls back to no Fresnel loss
-	// (factor 1) when the reservoir holds no valid sample.
-	const bool haveLight = W > 0 && r.targetPdf > 0;
+	// Diffuse Fresnel `(1 - F)` of the chosen light removes the specularly-
+	// reflected energy from the averaged diffuse irradiance (matches
+	// BRDF_GetDiffuse); factor 1 when the reservoir holds no valid sample.
 	half3 diffuseFresnel = 1;
-	SurfaceToLight surface_to_light = (SurfaceToLight)0;
 	[branch]
-	if (haveLight)
+	if (W > 0 && r.targetPdf > 0)
 	{
 		const half3 L = (half3)normalize(r.samplePosition - surface.P);
+		SurfaceToLight surface_to_light;
 		surface_to_light.create(surface, L);
 		diffuseFresnel = BRDF_GetDiffuseFresnel(surface, surface_to_light);
 	}
 
-	// Diffuse: the denoised irradiance already carries NdotL and visibility, so
-	// forward only applies the (albedo-independent) diffuse Fresnel response
-	// here; albedo is applied later by the surface composite, matching the
-	// analytic path. The irradiance is an average over the per-frame light
-	// selection, so it must not be multiplied by any single light's direction
-	// again - only the scalar-ish `(1 - F)` energy-conservation term.
+	// The denoised irradiance already carries NdotL and visibility, so forward
+	// only applies the (albedo-independent) diffuse Fresnel response here;
+	// albedo is applied later by the surface composite. The irradiance is an
+	// average over the per-frame light selection, so it must not be multiplied
+	// by any single light's direction again - only the scalar-ish `(1 - F)`
+	// term.
 	[branch]
 	if (camera.texture_restir_di_irradiance_index >= 0)
 	{
@@ -74,16 +74,6 @@ inline void RESTIRDIApplyDirect(
 			bindless_textures[descriptor_index(
 				camera.texture_restir_di_irradiance_index)][surface.pixel].rgb;
 		lighting.direct.diffuse += irradiance * diffuseFresnel;
-	}
-
-	// Specular from the chosen light (needs its cached visibility).
-	[branch]
-	if (haveLight && r.visibility > 0 && any(surface_to_light.NdotL_sss > 0))
-	{
-		float3 light_contribution = r.sampleRadiance * W * r.visibility;
-		// Sanitize: a stale/degenerate reservoir must never inject Inf/NaN.
-		light_contribution = (any(isnan(light_contribution)) || any(isinf(light_contribution))) ? (float3)0 : light_contribution;
-		lighting.direct.specular = mad((half3)light_contribution, BRDF_GetSpecular(surface, surface_to_light), lighting.direct.specular);
 	}
 }
 
@@ -247,16 +237,13 @@ inline void TiledLighting(inout Surface surface, inout Lighting lighting, uint f
 		lighting.indirect.specular += max(0, BRDF_GetSpecular(surface, surface_to_light) * (float3)surface.dominant_lightcolor); // casting dominant_lightcolor to float3 fixes DDGI color overblown in DX12 when sky is black, I don't know why!
 	}
 	
-	// ReSTIR DI (opaque only): a single resampled light replaces the analytic
-	// per-light loops below. Transparents keep the analytic path.
-#ifndef TRANSPARENT
-	[branch]
-	if ((GetFrame().options & OPTION_BIT_RESTIR_DI) && camera.buffer_restir_di_index >= 0)
-	{
-		RESTIRDIApplyDirect(surface, lighting, camera);
-	}
-	else
-#endif // !TRANSPARENT
+	// Direct lighting. The analytic per-light loop always runs and supplies the
+	// direct SPECULAR - deterministic, shadow-mapped and zero-variance, so a
+	// reflective surface under many lights does not sparkle (an analytic delta
+	// light has no geometry, so its highlight can only be produced here). When
+	// ReSTIR DI is enabled (opaque only), its many-light denoised diffuse
+	// replaces the analytic diffuse right after this block; the analytic
+	// specular is kept. Transparents keep the full analytic path.
 	{
 
 	[branch]
@@ -410,7 +397,21 @@ inline void TiledLighting(inout Surface surface, inout Lighting lighting, uint f
 			}
 		}
 	}
-	} // end analytic direct-light path (ReSTIR-DI else)
+	} // end analytic direct-light path
+
+	// ReSTIR DI owns the diffuse (opaque only): discard the analytic
+	// shadow-mapped direct diffuse and replace it with the many-light,
+	// ray-traced, denoised diffuse. The analytic direct SPECULAR computed above
+	// is kept - deterministic and noise-free, unlike a single stochastic
+	// reservoir sample.
+#ifndef TRANSPARENT
+	[branch]
+	if ((GetFrame().options & OPTION_BIT_RESTIR_DI) && camera.buffer_restir_di_index >= 0)
+	{
+		lighting.direct.diffuse = 0;
+		RESTIRDIApplyDiffuse(surface, lighting, camera);
+	}
+#endif // !TRANSPARENT
 
 	// Capsule shadows and capsule reflection blockers:
 	[branch]
