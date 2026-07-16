@@ -15751,10 +15751,12 @@ void CreateReSTIRDIResources(ReSTIRDIResources& res, XMUINT2 resolution)
 	device->SetName(&res.irradiance_accum[1], "restir_di.irradiance_accum[1]");
 
 	// Accumulated luminance second moment (for the temporal variance).
+	// R32_FLOAT, not R16: this stores luma^2, which overflows R16_FLOAT's
+	// ~65504 ceiling once luma exceeds ~256.
 	TextureDesc md;
 	md.width = resolution.x;
 	md.height = resolution.y;
-	md.format = Format::R16_FLOAT;
+	md.format = Format::R32_FLOAT;
 	md.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
 	md.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
 	device->CreateTexture(&md, nullptr, &res.irradiance_moment2[0]);
