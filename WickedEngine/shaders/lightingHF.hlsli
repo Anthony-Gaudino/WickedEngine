@@ -55,7 +55,7 @@ inline void ApplyLighting(in Surface surface, in Lighting lighting, inout half4 
 }
 
 //#define CASCADE_DITHERING
-inline void light_directional(in ShaderEntity light, in Surface surface, inout Lighting lighting, in half shadow_mask = 1)
+inline void light_directional(in ShaderEntity light, in Surface surface, inout Lighting lighting, in half shadow_mask = 1, in bool specular_only = false)
 {
 	if (shadow_mask <= 0.001)
 		return; // shadow mask zero
@@ -137,7 +137,9 @@ inline void light_directional(in ShaderEntity light, in Surface surface, inout L
 		light_color *= GetAtmosphericLightTransmittance(GetWeather().atmosphere, surface.P, L, texture_transmittancelut);
 	}
 
-	lighting.direct.diffuse = mad(light_color, BRDF_GetDiffuse(surface, surface_to_light), lighting.direct.diffuse);
+	[branch]
+	if (!specular_only) // ReSTIR DI replaces the analytic diffuse; skip its BRDF
+		lighting.direct.diffuse = mad(light_color, BRDF_GetDiffuse(surface, surface_to_light), lighting.direct.diffuse);
 	lighting.direct.specular = mad(light_color, BRDF_GetSpecular(surface, surface_to_light), lighting.direct.specular);
 
 #ifdef LIGHTING_SCATTER
@@ -157,7 +159,7 @@ inline half attenuation_pointlight(in half dist2, in half range, in half range2_
 	dist_per_range *= dist_per_range; // pow4
 	return saturate(1 - dist_per_range) / max(0.0001, dist2);
 }
-inline void light_point(in ShaderEntity light, in Surface surface, inout Lighting lighting, in half shadow_mask = 1)
+inline void light_point(in ShaderEntity light, in Surface surface, inout Lighting lighting, in half shadow_mask = 1, in bool specular_only = false)
 {
 	if (shadow_mask <= 0.001)
 		return; // shadow mask zero
@@ -223,7 +225,9 @@ inline void light_point(in ShaderEntity light, in Surface surface, inout Lightin
 		
 	light_color *= attenuation_pointlight(dist2, range, light.GetRange2Rcp());
 
-	lighting.direct.diffuse = mad(light_color, BRDF_GetDiffuse(surface, surface_to_light), lighting.direct.diffuse);
+	[branch]
+	if (!specular_only) // ReSTIR DI replaces the analytic diffuse; skip its BRDF
+		lighting.direct.diffuse = mad(light_color, BRDF_GetDiffuse(surface, surface_to_light), lighting.direct.diffuse);
 
 #ifndef DISABLE_AREA_LIGHTS
 	if (light.GetLength() > 0)
@@ -274,7 +278,7 @@ inline half attenuation_spotlight(in half dist2, in half range, in half range2_r
 	attenuation *= angularAttenuation;
 	return attenuation;
 }
-inline void light_spot(in ShaderEntity light, in Surface surface, inout Lighting lighting, in half shadow_mask = 1)
+inline void light_spot(in ShaderEntity light, in Surface surface, inout Lighting lighting, in half shadow_mask = 1, in bool specular_only = false)
 {
 	if (shadow_mask <= 0.001)
 		return; // shadow mask zero
@@ -341,7 +345,9 @@ inline void light_spot(in ShaderEntity light, in Surface surface, inout Lighting
 	
 	light_color *= attenuation_spotlight(dist2, range, light.GetRange2Rcp(), spot_factor, light.GetAngleScale(), light.GetAngleOffset());
 		
-	lighting.direct.diffuse = mad(light_color, BRDF_GetDiffuse(surface, surface_to_light), lighting.direct.diffuse);
+	[branch]
+	if (!specular_only) // ReSTIR DI replaces the analytic diffuse; skip its BRDF
+		lighting.direct.diffuse = mad(light_color, BRDF_GetDiffuse(surface, surface_to_light), lighting.direct.diffuse);
 
 #ifndef DISABLE_AREA_LIGHTS
 	if (light.GetRadius() > 0)
@@ -365,7 +371,7 @@ inline void light_spot(in ShaderEntity light, in Surface surface, inout Lighting
 #endif // LIGHTING_SCATTER
 }
 
-inline void light_rect(in ShaderEntity light, in Surface surface, inout Lighting lighting, in half shadow_mask = 1)
+inline void light_rect(in ShaderEntity light, in Surface surface, inout Lighting lighting, in half shadow_mask = 1, in bool specular_only = false)
 {
 #ifndef DISABLE_AREA_LIGHTS
 	if (shadow_mask <= 0.001)
@@ -495,7 +501,9 @@ inline void light_rect(in ShaderEntity light, in Surface surface, inout Lighting
 		light_color_specular *= specular_mask.rgb * specular_mask.a;
 	}
 	
-	lighting.direct.diffuse = mad(light_color_diffuse, BRDF_GetDiffuse(surface, surface_to_light), lighting.direct.diffuse);
+	[branch]
+	if (!specular_only) // ReSTIR DI replaces the analytic diffuse; skip its BRDF
+		lighting.direct.diffuse = mad(light_color_diffuse, BRDF_GetDiffuse(surface, surface_to_light), lighting.direct.diffuse);
 	
 	Lunnormalized = specular_rect - surface.P;
 	L = normalize(Lunnormalized);

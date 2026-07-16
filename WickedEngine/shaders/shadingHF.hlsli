@@ -246,6 +246,16 @@ inline void TiledLighting(inout Surface surface, inout Lighting lighting, uint f
 	// specular is kept. Transparents keep the full analytic path.
 	{
 
+	// When ReSTIR DI supplies the diffuse, tell the light loop to compute only
+	// specular - the analytic diffuse would just be discarded below, so
+	// skipping its BRDF is free.
+#ifndef TRANSPARENT
+	const bool restir_di_specular_only =
+		(GetFrame().options & OPTION_BIT_RESTIR_DI) && camera.buffer_restir_di_index >= 0;
+#else
+	const bool restir_di_specular_only = false;
+#endif // !TRANSPARENT
+
 	[branch]
 	if (!directional_lights().empty())
 	{
@@ -268,7 +278,7 @@ inline void TiledLighting(inout Surface surface, inout Lighting lighting, uint f
 			}
 #endif // SHADOW_MASK_ENABLED && !TRANSPARENT
 
-			light_directional(light, surface, lighting, shadow_mask);
+			light_directional(light, surface, lighting, shadow_mask, restir_di_specular_only);
 		}
 	}
 
@@ -308,7 +318,7 @@ inline void TiledLighting(inout Surface surface, inout Lighting lighting, uint f
 				}
 #endif // SHADOW_MASK_ENABLED && !TRANSPARENT
 
-				light_spot(light, surface, lighting, shadow_mask);
+				light_spot(light, surface, lighting, shadow_mask, restir_di_specular_only);
 
 			}
 		}
@@ -350,7 +360,7 @@ inline void TiledLighting(inout Surface surface, inout Lighting lighting, uint f
 				}
 #endif // SHADOW_MASK_ENABLED && !TRANSPARENT
 
-				light_point(light, surface, lighting, shadow_mask);
+				light_point(light, surface, lighting, shadow_mask, restir_di_specular_only);
 
 			}
 		}
@@ -392,7 +402,7 @@ inline void TiledLighting(inout Surface surface, inout Lighting lighting, uint f
 				}
 #endif // SHADOW_MASK_ENABLED && !TRANSPARENT
 
-				light_rect(light, surface, lighting, shadow_mask);
+				light_rect(light, surface, lighting, shadow_mask, restir_di_specular_only);
 
 			}
 		}
