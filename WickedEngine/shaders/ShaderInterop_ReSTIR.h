@@ -309,8 +309,18 @@ Screen-space DI reservoir
 ################################################################################
 */
 
-/** ReSTIR DI RIS candidate count for the initial pass. */
-static const uint RESTIR_DI_INITIAL_CANDIDATES = 8;
+/**
+ * ReSTIR DI RIS candidate count for the initial pass.
+ *
+ * The initial pass now does **shadowed** RIS - one visibility ray per candidate
+ * - so this count is also the initial pass's shadow-ray budget per pixel, the
+ * dominant cost of ReSTIR DI. It is kept low because spatiotemporal reuse
+ * accumulates shadowed samples across frames and neighbors, so a small
+ * per-frame budget converges to the same result (with slightly more transient
+ * noise under motion, which the denoiser absorbs). Raising it trades frame time
+ * for faster convergence.
+ */
+static const uint RESTIR_DI_INITIAL_CANDIDATES = 4;
 
 /** Spatial-reuse neighbor count per pixel. */
 static const uint RESTIR_DI_SPATIAL_SAMPLES = 4;
