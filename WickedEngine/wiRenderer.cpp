@@ -15829,6 +15829,36 @@ int ReSTIR_DI(
 	const uint32_t cur = (uint32_t)(res.frame & 1);
 	const uint32_t prev = 1u - cur;
 
+	// A-SVGF gradient gate: the spatial pass only needs to trace its change-
+	// detection ray when something that can move a shadow changed this frame -
+	// a light or a dynamic occluder. Hash the light transforms (exact compare
+	// never fires on a static light, since the values are recomputed
+	// identically) and combine with the acceleration-structure-update request
+	// (set when dynamic geometry moved). Camera motion alone is handled by the
+	// geometric disocclusion test and keeps the gradient at zero, so it is
+	// deliberately not included - which is what lets the ray be skipped while
+	// freely flying the camera through a static scene.
+	size_t lightHash = scene.lights.GetCount();
+	for (size_t i = 0; i < scene.lights.GetCount(); ++i)
+	{
+		const wi::scene::LightComponent& light = scene.lights[i];
+		wi::helper::hash_combine(lightHash, light.position.x);
+		wi::helper::hash_combine(lightHash, light.position.y);
+		wi::helper::hash_combine(lightHash, light.position.z);
+		wi::helper::hash_combine(lightHash, light.direction.x);
+		wi::helper::hash_combine(lightHash, light.direction.y);
+		wi::helper::hash_combine(lightHash, light.direction.z);
+		wi::helper::hash_combine(lightHash, light.color.x);
+		wi::helper::hash_combine(lightHash, light.color.y);
+		wi::helper::hash_combine(lightHash, light.color.z);
+		wi::helper::hash_combine(lightHash, light.intensity);
+		wi::helper::hash_combine(lightHash, light.range);
+	}
+	const bool lightsMoved = (res.frame > 0) && (lightHash != res.prevLightHash);
+	res.prevLightHash = lightHash;
+	const bool dynamicLighting =
+		lightsMoved || scene.IsAccelerationStructureUpdateRequested();
+
 	RESTIRDIPushConstants push;
 	push.resolution = res.resolution;
 	push.resolutionRcp = XMFLOAT2(1.0f / res.resolution.x, 1.0f / res.resolution.y);
@@ -15840,7 +15870,8 @@ int ReSTIR_DI(
 	push.lightTileBuffer = restir_light_tiles.IsValid()
 		? device->GetDescriptorIndex(&restir_light_tiles, SubresourceType::SRV)
 		: -1;
-	push.pad1 = push.pad2 = 0;
+	push.dynamicLighting = dynamicLighting ? 1u : 0u;
+	push.pad2 = 0;
 
 	const uint32_t dispatch_x = (res.resolution.x + 7) / 8;
 	const uint32_t dispatch_y = (res.resolution.y + 7) / 8;

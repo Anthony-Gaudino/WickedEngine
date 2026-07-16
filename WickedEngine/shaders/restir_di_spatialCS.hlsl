@@ -213,9 +213,15 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			//   may not change (visibility 1 -> 1) yet its radiance / NdotL /
 			//   distance do, which a visibility-only gradient could never see
 			//   (the lit region would fade over the whole history instead).
+			//   Skip the whole gradient (and its shadow ray) when nothing that
+			//   can change a shadow moved this frame: the gradient is then
+			//   identically zero, so leaving it at its default 0 gives the same
+			//   result while saving one ray/pixel. Camera-only motion keeps
+			//   dynamicLighting at 0 and is handled by the denoiser's geometric
+			//   disocclusion instead.
 			const float2 prevUV = uv + texture_velocity[pixel];
 			[branch]
-			if (all(prevUV >= 0) && all(prevUV <= 1))
+			if (push.dynamicLighting != 0 && all(prevUV >= 0) && all(prevUV <= 1))
 			{
 				const uint2 prevPixel =
 					min(uint2(prevUV * push.resolution), push.resolution - 1);

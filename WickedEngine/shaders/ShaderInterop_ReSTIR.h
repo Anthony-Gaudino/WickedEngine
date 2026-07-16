@@ -851,7 +851,17 @@ struct RESTIRDIPushConstants
 	 */
 	int lightTileBuffer;
 
-	uint pad1;
+	/**
+	 * 1 = something that can change a shadow moved this frame (a light or a
+	 * dynamic occluder), so the spatial pass traces the A-SVGF gradient ray
+	 * that measures the change and drives the denoiser history reset. 0 = fully
+	 * static lighting, where the gradient is always zero, so the ray is skipped
+	 * (saves ~1 shadow ray/pixel). Camera motion alone does not set this - it
+	 * is handled by the geometric disocclusion test, and the gradient stays
+	 * zero under it.
+	 */
+	uint dynamicLighting;
+
 	uint pad2;
 };
 

@@ -798,6 +798,10 @@ namespace wi::renderer
 
 		XMUINT2 resolution = {};
 		mutable int frame = 0;
+		// Hash of the light transforms last frame; used with the acceleration-
+		// structure-update flag to skip the A-SVGF gradient ray when nothing that
+		// could change a shadow moved (fully static lighting).
+		mutable size_t prevLightHash = 0;
 	};
 	// Rebuilds the shared pre-sampled light tiles for this frame (RTXDI light
 	// pre-sampling), consumed by both ReSTIR_DI and ReSTIR_GI. Call once before
