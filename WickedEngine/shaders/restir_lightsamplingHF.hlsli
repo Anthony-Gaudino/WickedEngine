@@ -545,4 +545,150 @@ inline RESTIRReservoir RESTIRSampleLights(
 	return r;
 }
 
+/*
+################################################################################
+ReGIR (Reservoir-based Grid Importance Resampling)
+################################################################################
+*/
+
+/**
+ * Importance weight of a light for a whole grid cell (a sphere of the given
+ * radius about its center), used to build the ReGIR cells.
+ *
+ * Unlike the global power proxy (light color luminance, position-blind), this
+ * is the light's approximate irradiance AT the cell: a local light is weighted
+ * by power / distance^2 so a dim light near the cell dominates that cell's set,
+ * while a bright light far away contributes little - exactly the mismatch that
+ * makes global power sampling noisy for many disparate lights. Directional
+ * lights reach every cell equally, so they keep their (distance-independent)
+ * luminance. The final per-pixel target function still resolves the exact
+ * contribution; this only steers which lights are cached in the cell.
+ *
+ * @param[in] light - Analytic light entity.
+ * @param[in] cellCenter - World-space cell center.
+ * @param[in] cellRadius - Cell bounding-sphere radius (world units).
+ *
+ * @return A non-negative importance weight (0 if the light cannot reach the
+ *   cell).
+ */
+inline float RESTIRReGIRVolumeWeight(
+	ShaderEntity light, float3 cellCenter, float cellRadius)
+{
+	const float luma =
+		max(dot(light.GetColor().rgb, float3(0.2126, 0.7152, 0.0722)), 1e-3);
+
+	[branch]
+	if (light.GetType() == ENTITY_TYPE_DIRECTIONALLIGHT)
+		return luma; // reaches every cell equally
+
+	// Local light: irradiance ~ power / distance^2, range-limited.
+	const float3 toCell = cellCenter - light.position;
+	const float dist = sqrt(dot(toCell, toCell));
+
+	[branch]
+	if (dist - cellRadius > light.GetRange())
+		return 0;
+
+	// Never treat the light as closer than the cell radius, so a cell
+	// containing the light does not get an unbounded (firefly) weight.
+	const float avgDist = max(dist, cellRadius);
+	return luma / (avgDist * avgDist);
+}
+
+/**
+ * Stochastically selects a ReGIR cell for a shading point using trilinear
+ * weights over the eight cells whose centers surround it.
+ *
+ * A candidate drawn this way is, in expectation, a trilinear blend of the eight
+ * neighboring cells' light sets - the same interpolation an irradiance-probe
+ * grid uses to hide its structure - so the grid does not print through as hard
+ * cells. The grid is anchored to the scene (gridMin fixed in world space),
+ * which is what lets each cell accumulate its reservoir across frames.
+ *
+ * @param[in] worldPos - World-space shading point.
+ * @param[in] gridMin - World-space min corner of the grid.
+ * @param[in] cellSize - Cell edge length (world units).
+ * @param[in,out] rng - Random generator (draws the stochastic corner).
+ *
+ * @return Cell index in [0, RESTIR_REGIR_CELL_COUNT), or -1 if the chosen cell
+ *   is outside the grid.
+ */
+inline int RESTIRReGIRSampleCellTrilinear(
+	float3 worldPos, float3 gridMin, float cellSize, inout RNG rng)
+{
+	// Position in "cell-center space": integer coordinates land on cell
+	// centers, so floor() gives the lower-corner cell of the surrounding 2x2x2
+	// block and the fraction is the trilinear blend weight toward the upper
+	// corner.
+	const float3 centerCoord = (worldPos - gridMin) / cellSize - 0.5;
+	const int3 baseCell = int3(floor(centerCoord));
+	const float3 f = frac(centerCoord);
+
+	const int3 corner = int3(
+		rng.next_float() < f.x ? 1 : 0,
+		rng.next_float() < f.y ? 1 : 0,
+		rng.next_float() < f.z ? 1 : 0);
+	const int3 cell = baseCell + corner;
+
+	[branch]
+	if (any(cell < 0) || any(cell >= (int)RESTIR_REGIR_GRID_RES))
+		return -1;
+
+	return cell.x + cell.y * (int)RESTIR_REGIR_GRID_RES +
+		cell.z * (int)(RESTIR_REGIR_GRID_RES * RESTIR_REGIR_GRID_RES);
+}
+
+/**
+ * Returns the world-space center and bounding-sphere radius of a ReGIR cell.
+ *
+ * @param[in] cellIndex - Cell index in [0, RESTIR_REGIR_CELL_COUNT).
+ * @param[in] gridMin - World-space min corner of the grid.
+ * @param[in] cellSize - Cell edge length (world units).
+ * @param[out] center - World-space cell center.
+ * @param[out] radius - Cell bounding-sphere radius (half the cell diagonal).
+ */
+inline void RESTIRReGIRCellToWorld(
+	int cellIndex, float3 gridMin, float cellSize,
+	out float3 center, out float radius)
+{
+	const uint res = RESTIR_REGIR_GRID_RES;
+	const int3 cell = int3(
+		cellIndex % (int)res,
+		(cellIndex / (int)res) % (int)res,
+		cellIndex / (int)(res * res));
+	center = gridMin + (float3(cell) + 0.5) * cellSize;
+	radius = cellSize * 0.8660254; // sqrt(3)/2 * edge
+}
+
+/**
+ * Loads a ReGIR cell reservoir slot as a light reference for the per-pixel RIS.
+ *
+ * Unpacks the accumulated RESTIRReGIRCell and forms its reciprocal source pdf
+ * weightSum / (M * targetWeight) - the reservoir's unbiased contribution 
+ * weight- so the per-pixel RIS can weight the candidate without re-deriving its
+ * selection probability. An empty / not-yet-converged slot yields an invalid
+ * reference.
+ *
+ * @param[in] regirBuffer - Bindless SRV index of the ReGIR cell buffer (raw).
+ * @param[in] slot - Flat slot index in [0, RESTIR_REGIR_SLOT_TOTAL).
+ *
+ * @return The cached light reference (index + reciprocal source pdf).
+ */
+inline RESTIRLightRef RESTIRReGIRLoadSlot(int regirBuffer, uint slot)
+{
+	const uint4 raw =
+		bindless_buffers[descriptor_index(regirBuffer)].Load4(slot * 16);
+
+	RESTIRLightRef ref;
+	ref.lightIndex = raw.x;
+
+	const float weightSum = asfloat(raw.y);
+	const float m = asfloat(raw.z);
+	const float targetWeight = asfloat(raw.w);
+	ref.invSourcePdf =
+		(m > 0 && targetWeight > 0) ? weightSum / (m * targetWeight) : 0;
+
+	return ref;
+}
+
 #endif // WI_RESTIR_LIGHTSAMPLING_HF

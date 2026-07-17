@@ -65,6 +65,14 @@ inline RESTIRDIReservoir RESTIRDISampleInitial(
 		? RESTIRSelectTile(pixel, push.frameIndex) * RESTIR_LIGHT_TILE_SIZE
 		: 0u;
 
+	// ReGIR: when the pixel lies inside the camera-centered grid, its
+	// candidates come from the cell built for this location (lights
+	// importance-sampled by their contribution HERE, not by a global power
+	// proxy) - this is what stops a dim light near the surface from being
+	// crowded out by a brighter light far away. Outside the grid it falls back
+	// to the global tiles / uniform.
+	const int regirBuffer = push.regirBuffer;
+
 	float weightSum = 0;
 	float M = 0;
 
@@ -73,16 +81,44 @@ inline RESTIRDIReservoir RESTIRDISampleInitial(
 		// Draw one candidate light + its reciprocal source pdf.
 		uint lightIndex;
 		float invSourcePdf;
+		bool drawn = false;
+
 		[branch]
-		if (tileBuffer >= 0)
+		if (regirBuffer >= 0)
+		{
+			// Stochastic trilinear cell pick blends the eight surrounding
+			// cells' light sets so the grid does not print through as
+			// low-frequency blobs on nearby surfaces, while staying weighted
+			// toward the pixel's own cell (position-aware).
+			const int cell = RESTIRReGIRSampleCellTrilinear(
+				P, push.regirGridMin, push.regirCellSize, rng);
+
+			[branch]
+			if (cell >= 0)
+			{
+				const uint slot = (uint)cell * RESTIR_REGIR_LIGHTS_PER_CELL +
+					rng.next_uint(RESTIR_REGIR_LIGHTS_PER_CELL);
+				const RESTIRLightRef ref =
+					RESTIRReGIRLoadSlot(regirBuffer, slot);
+				lightIndex = ref.lightIndex;
+				invSourcePdf = ref.invSourcePdf;
+				drawn = true;
+			}
+		}
+
+		[branch]
+		if (!drawn && tileBuffer >= 0)
 		{
 			const uint slot = rng.next_uint(RESTIR_LIGHT_TILE_SIZE);
 			const RESTIRLightRef ref =
 				RESTIRLoadLightRef(tileBuffer, tileBase + slot);
 			lightIndex = ref.lightIndex;
 			invSourcePdf = ref.invSourcePdf;
+			drawn = true;
 		}
-		else
+
+		[branch]
+		if (!drawn)
 		{
 			lightIndex = iterator.first_item() + rng.next_uint(lightCount);
 			invSourcePdf = (float)lightCount;

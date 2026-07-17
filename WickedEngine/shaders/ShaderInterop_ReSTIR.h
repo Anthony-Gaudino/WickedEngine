@@ -47,6 +47,76 @@ static const uint RESTIR_LIGHT_TILE_TOTAL =
  */
 static const uint RESTIR_PRESAMPLE_CANDIDATES = 8;
 
+/*
+################################################################################
+ReGIR (Reservoir-based Grid Importance Resampling)
+################################################################################
+*/
+
+/**
+ * ReGIR grid resolution (cells per axis) of the world-anchored grid.
+ *
+ * Each cell caches a set of lights pre-selected by their contribution to that
+ * cell's location (power / distance^2), so a dim light near a surface is
+ * sampled adequately instead of being crowded out by a brighter light far away
+ * (which the global power-proportional tiles cannot avoid). The grid is
+ * anchored to the scene bounds (not the camera) so a cell always maps to the
+ * same world region - that both lets each cell **accumulate its reservoir over
+ * frames**.
+ */
+static const uint RESTIR_REGIR_GRID_RES = 24;
+
+/** Total ReGIR cells (RES^3). */
+static const uint RESTIR_REGIR_CELL_COUNT =
+	RESTIR_REGIR_GRID_RES * RESTIR_REGIR_GRID_RES * RESTIR_REGIR_GRID_RES;
+
+/** Light reservoir slots cached per ReGIR cell. */
+static const uint RESTIR_REGIR_LIGHTS_PER_CELL = 32;
+
+/** Total ReGIR light slots across all cells (one RESTIRReGIRCell each). */
+static const uint RESTIR_REGIR_SLOT_TOTAL =
+	RESTIR_REGIR_CELL_COUNT * RESTIR_REGIR_LIGHTS_PER_CELL;
+
+/** Light candidates streamed into each slot's reservoir per frame. */
+static const uint RESTIR_REGIR_BUILD_SAMPLES = 8;
+
+/**
+ * Confidence cap for a cell slot's temporally accumulated reservoir.
+ *
+ * The reservoir streams RESTIR_REGIR_BUILD_SAMPLES candidates per frame and its
+ * confidence M is clamped here, so it holds ~ this many samples in steady state
+ * (a few dozen frames of history): high enough to converge to a smooth, stable
+ * light set, low enough to follow a moved light within a fraction of a second.
+ * Only the sampling hint accumulates - the per-pixel estimate and the denoiser
+ * still react immediately - so a large cap costs no lag in the image.
+ */
+static const float RESTIR_REGIR_MAX_M = 512.0;
+
+/**
+ * One ReGIR cell reservoir slot (16 bytes, raw uint4).
+ *
+ * Persists across frames: each frame the build streams new candidates into it
+ * and caps M, so it converges to a stable importance-sampled light for the
+ * cell. The initial pass reads lightIndex and forms the reciprocal source pdf
+ * weightSum / (M * targetWeight).
+ */
+struct RESTIRReGIRCell
+{
+	/**
+	 * Chosen analytic light index, or RESTIR_INVALID_LIGHT_INDEX when empty.
+	 */
+	uint lightIndex;
+
+	/** Accumulated resampling weight sum (Sigma target/source over samples). */
+	float weightSum;
+
+	/** Accumulated confidence (number of streamed candidates, capped). */
+	float M;
+
+	/** Cell volume weight of the chosen light (its target for this cell). */
+	float targetWeight;
+};
+
 /**
  * Confidence cap for temporal reuse.
  *
@@ -851,8 +921,21 @@ struct RESTIRDIPushConstants
 	 */
 	int lightTileBuffer;
 
-	uint pad1;
-	uint pad2;
+	/**
+	 * Bindless SRV index of the ReGIR cell buffer (RESTIRLightRef, raw), or -1
+	 * to fall back to the global power-proportional tiles. When valid, the
+	 * initial pass draws its candidates from the grid cell containing the
+	 * pixel, which importance-samples lights by their contribution to that
+	 * location. The grid center is derived in-shader from the camera (snapped
+	 * to regirCellSize), so it matches the build pass without being passed.
+	 */
+	int regirBuffer;
+
+	/** ReGIR cell edge length in world units. */
+	float regirCellSize;
+
+	/** World-space min corner of the scene-anchored ReGIR grid. */
+	float3 regirGridMin;
 };
 
 /**
@@ -942,6 +1025,31 @@ struct RESTIRPresamplePushConstants
 	 * Bindless index of the RESTIREmissiveTriangle buffer (SRV; -1 if none).
 	 */
 	int emissiveTriangleBuffer;
+};
+
+/**
+ * Parameters for the ReGIR grid-build pass.
+ *
+ * Dispatched once per frame over RESTIR_REGIR_SLOT_TOTAL threads (one per cell
+ * light slot); each slot resamples RESTIR_REGIR_BUILD_SAMPLES lights by their
+ * contribution to the slot's cell and caches the winner + its reciprocal source
+ * pdf, exactly as the tile pre-sampling does but position-aware.
+ */
+struct RESTIRReGIRBuildPushConstants
+{
+	/** World-space min corner of the scene-anchored grid. */
+	float3 gridMin;
+
+	/** Cell edge length in world units. */
+	float cellSize;
+
+	uint frameIndex;
+
+	/** Bindless UAV index of the ReGIR cell buffer being accumulated. */
+	int regirBuffer;
+
+	uint pad0;
+	uint pad1;
 };
 
 #endif // WI_SHADERINTEROP_RESTIR_H

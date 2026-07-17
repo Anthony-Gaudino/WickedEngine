@@ -151,6 +151,9 @@ bool RESTIR_DI_VISIBILITY_REJECT = true;
 // Shared, resolution-independent pre-sampled light tiles (RESTIRLightRef, raw),
 // rebuilt once per frame and read by both the DI initial and GI trace passes.
 GPUBuffer restir_light_tiles;
+// ReGIR scene-anchored grid of per-cell light reservoirs (position-aware light
+// sampling), accumulated over frames; read by the DI initial pass.
+GPUBuffer restir_regir;
 float DDGI_BLEND_SPEED = 0.1f;
 float GI_BOOST = 1.0f;
 bool MESH_SHADER_ALLOWED = false;
@@ -1169,6 +1172,7 @@ void LoadShaders()
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_DDGI_UPDATE], "ddgi_updateCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_DDGI_UPDATE_DEPTH], "ddgi_updateCS_depth.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_PRESAMPLE_LIGHTS], "restir_presampleLightsCS.cso"); });
+	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_REGIR_BUILD], "restir_regir_buildCS.cso"); });
 	if (device->CheckCapability(GraphicsDeviceCapability::RAYTRACING))
 	{
 		wi::jobsystem::Execute(raytracing_ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_DI_INITIAL], "restir_di_initialCS_rtapi.cso", ShaderModel::SM_6_5); });
@@ -15734,6 +15738,66 @@ int ReSTIR_PresampleLights(CommandList cmd)
 	return device->GetDescriptorIndex(
 		&restir_light_tiles, SubresourceType::SRV);
 }
+
+// Computes the scene-anchored ReGIR grid's world-space min corner and cell size
+// so the cubic grid (RESTIR_REGIR_GRID_RES^3 cells) covers the scene bounds
+// with a small margin. Anchoring to the scene (not the camera) keeps a cell
+// mapped to a fixed world region, which is what lets each cell accumulate its
+// reservoir across frames.
+static void ReSTIR_ReGIRGrid(
+	const wi::scene::Scene& scene, XMFLOAT3& gridMin, float& cellSize)
+{
+	const XMFLOAT3 center = scene.bounds.getCenter();
+	const XMFLOAT3 halfWidth = scene.bounds.getHalfWidth();
+	const float maxExtent =
+		std::max(halfWidth.x, std::max(halfWidth.y, halfWidth.z)) * 2.0f;
+	// A little margin, and a floor so an empty/degenerate scene stays valid.
+	const float span = std::max(maxExtent * 1.1f, 1.0f);
+	cellSize = span / (float)RESTIR_REGIR_GRID_RES;
+	const float half = span * 0.5f;
+	gridMin = XMFLOAT3(center.x - half, center.y - half, center.z - half);
+}
+
+// Rebuilds (accumulates) the ReGIR grid for this frame: streams new candidates
+// into every cell's persistent reservoir. The buffer is created zeroed once and
+// never re-cleared, so the reservoirs converge over frames.
+static void ReSTIR_ReGIRBuild(const wi::scene::Scene& scene, CommandList cmd)
+{
+	if (!restir_regir.IsValid())
+	{
+		GPUBufferDesc bd;
+		bd.size = (uint64_t)sizeof(RESTIRReGIRCell) * RESTIR_REGIR_SLOT_TOTAL;
+		bd.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+		bd.misc_flags = ResourceMiscFlag::BUFFER_RAW;
+		device->CreateBufferZeroed(&bd, &restir_regir);
+		device->SetName(&restir_regir, "restir.regir");
+	}
+
+	device->EventBegin("ReSTIR ReGIR Build", cmd);
+	auto regir_prof = wi::profiler::BeginRangeGPU("ReSTIR ReGIR Build", cmd);
+
+	XMFLOAT3 gridMin;
+	float cellSize;
+	ReSTIR_ReGIRGrid(scene, gridMin, cellSize);
+
+	RESTIRReGIRBuildPushConstants regir_push = {};
+	regir_push.gridMin = gridMin;
+	regir_push.cellSize = cellSize;
+	regir_push.frameIndex = (uint)device->GetFrameCount();
+	regir_push.regirBuffer =
+		device->GetDescriptorIndex(&restir_regir, SubresourceType::UAV);
+
+	device->BindComputeShader(&shaders[CSTYPE_RESTIR_REGIR_BUILD], cmd);
+	device->PushConstants(&regir_push, sizeof(regir_push), cmd);
+	device->BindUAV(&restir_regir, 0, cmd);
+
+	device->Barrier(GPUBarrier::Buffer(&restir_regir, ResourceState::SHADER_RESOURCE, ResourceState::UNORDERED_ACCESS), cmd);
+	device->Dispatch((RESTIR_REGIR_SLOT_TOTAL + 63u) / 64u, 1, 1, cmd);
+	device->Barrier(GPUBarrier::Buffer(&restir_regir, ResourceState::UNORDERED_ACCESS, ResourceState::SHADER_RESOURCE), cmd);
+
+	wi::profiler::EndRange(regir_prof);
+	device->EventEnd(cmd);
+}
 void CreateReSTIRDIResources(ReSTIRDIResources& res, XMUINT2 resolution)
 {
 	res.resolution = resolution;
@@ -15842,8 +15906,15 @@ int ReSTIR_DI(
 
 	BindCommonResources(cmd);
 
+	// Accumulate the scene-anchored ReGIR grid before sampling from it.
+	ReSTIR_ReGIRBuild(scene, cmd);
+
 	const uint32_t cur = (uint32_t)(res.frame & 1);
 	const uint32_t prev = 1u - cur;
+
+	XMFLOAT3 regirGridMin;
+	float regirCellSize;
+	ReSTIR_ReGIRGrid(scene, regirGridMin, regirCellSize);
 
 	RESTIRDIPushConstants push;
 	push.resolution = res.resolution;
@@ -15856,7 +15927,11 @@ int ReSTIR_DI(
 	push.lightTileBuffer = restir_light_tiles.IsValid()
 		? device->GetDescriptorIndex(&restir_light_tiles, SubresourceType::SRV)
 		: -1;
-	push.pad1 = push.pad2 = 0;
+	push.regirBuffer = restir_regir.IsValid()
+		? device->GetDescriptorIndex(&restir_regir, SubresourceType::SRV)
+		: -1;
+	push.regirCellSize = regirCellSize;
+	push.regirGridMin = regirGridMin;
 
 	const uint32_t dispatch_x = (res.resolution.x + 7) / 8;
 	const uint32_t dispatch_y = (res.resolution.y + 7) / 8;

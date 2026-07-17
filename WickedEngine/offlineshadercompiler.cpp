@@ -212,6 +212,7 @@ wi::vector<ShaderEntry> shaders = {
 	{"ddgi_updateCS", wi::graphics::ShaderStage::CS },
 	{"ddgi_updateCS_depth", wi::graphics::ShaderStage::CS },
 	{"restir_presampleLightsCS", wi::graphics::ShaderStage::CS },
+	{"restir_regir_buildCS", wi::graphics::ShaderStage::CS },
 	{"restir_di_initialCS", wi::graphics::ShaderStage::CS },
 	{"restir_di_initialCS_rtapi", wi::graphics::ShaderStage::CS, wi::graphics::ShaderModel::SM_6_5 },
 	{"restir_di_temporalCS", wi::graphics::ShaderStage::CS },
