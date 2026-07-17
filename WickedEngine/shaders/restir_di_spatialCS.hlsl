@@ -191,9 +191,8 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			++sourceCount;
 		}
 
-		const float maxW = (float)lights().item_count();
 		reservoir = RESTIRDIMergeBalanceHeuristic(
-			sources, sourceCount, P, N, maxW, rng);
+			sources, sourceCount, P, N, rng);
 
 		// Final visibility: re-trace a fresh shadow ray for the reused sample
 		// so the shadow reflects the current frame instead of the stale
@@ -218,9 +217,16 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			// visibility - lets the stochastic per-frame light selection
 			// (bright when the visible light wins, black when the occluded one
 			// does) average to the correct colour, which the visibility channel
-			// alone cannot represent. W is firefly-clamped to the light count
-			// exactly as forward shading does.
-			const float Wclamp = min(W, (float)lights().item_count());
+			// alone cannot represent. W is firefly-clamped per light to
+			// totalLightPower / this light's power: under power-proportional
+			// sampling a dim light's unbiased weight legitimately reaches that
+			// bound, so the old light-count clamp (a uniform-sampling bound)
+			// darkened dim lights. This caps each light's contribution at
+			// ~totalLightPower while still bounding fireflies.
+			const float lightPower =
+				RESTIRLightPower(load_entity(reservoir.lightIndex));
+			const float maxW = GetFrame().totalLightPower / lightPower;
+			const float Wclamp = min(W, maxW);
 			const float3 L = normalize(reservoir.samplePosition - P);
 			const float NdotL = saturate(dot(N, L));
 			float3 irr =
@@ -284,7 +290,8 @@ void main(uint3 DTid : SV_DispatchThreadID)
 							saturate(dot(N, normalize(prevPos - P)));
 						const float Wprev = min(
 							RESTIRDIReservoirGetInvPdf(prevRes),
-							(float)lights().item_count());
+							GetFrame().totalLightPower /
+								RESTIRLightPower(load_entity(prevRes.lightIndex)));
 						const float irrNow =
 							RESTIRLuma(prevRad * Wprev * vReeval * NdotLprev);
 						const float irrThen =

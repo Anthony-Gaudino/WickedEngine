@@ -1291,6 +1291,17 @@ struct alignas(16) FrameCB
 	uint decals;
 	uint forces;
 
+	// Sum of RESTIRLightPower (max(luma(color*intensity), 1e-3)) over all
+	// analytic lights this frame. ReSTIR DI uses it for the per-light firefly
+	// clamp: under power-proportional light sampling a light's unbiased weight
+	// can legitimately reach totalLightPower / its own power, so the clamp must
+	// be totalLightPower / RESTIRLightPower(L), not the light count (which
+	// assumes uniform sampling and darkens dim lights).
+	float totalLightPower;
+	uint padding0;
+	uint padding1;
+	uint padding2;
+
 	ShaderEntity entityArray[SHADER_ENTITY_COUNT];
 	float4x4 matrixArray[SHADER_ENTITY_COUNT];
 	ShaderSphere entityCullingArray[SHADER_ENTITY_COUNT];

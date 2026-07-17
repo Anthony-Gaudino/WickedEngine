@@ -4488,6 +4488,17 @@ void UpdatePerFrameData(
 	uint lightarray_count_rect = 0;
 	uint lightarray_offset = 0;
 	uint lightarray_count = 0;
+
+	// Sum of RESTIRLightPower (max(luma(color*intensity), 1e-3)) over the
+	// analytic lights written below, mirroring the shader's RESTIRLightPower so
+	// ReSTIR DI can bound each light's firefly clamp by totalLightPower / its
+	// own power (the correct bound under power-proportional sampling).
+	float totalLightPower = 0.0f;
+	const auto accumulateLightPower = [&](const LightComponent& l) {
+		const float luma = (l.color.x * 0.2126f + l.color.y * 0.7152f +
+			l.color.z * 0.0722f) * l.intensity;
+		totalLightPower += std::max(1e-3f, luma);
+	};
 	uint decalarray_offset = 0;
 	uint decalarray_count = 0;
 	uint forcefieldarray_offset = 0;
@@ -4667,6 +4678,7 @@ void UpdatePerFrameData(
 			shaderentity.SetLength(light.length);
 			shaderentity.SetDirection(light.direction);
 			shaderentity.SetColor(float4(light.color.x * light.intensity, light.color.y * light.intensity, light.color.z * light.intensity, 1));
+			accumulateLightPower(light);
 
 			const bool shadowmap = IsShadowsEnabled() && light.IsCastingShadow() && !light.IsStatic();
 			const wi::rectpacker::Rect& shadow_rect = vis.visibleLightShadowRects[lightIndex];
@@ -4754,6 +4766,7 @@ void UpdatePerFrameData(
 			shaderentity.SetLength(light.length);
 			shaderentity.SetDirection(light.direction);
 			shaderentity.SetColor(float4(light.color.x * light.intensity, light.color.y * light.intensity, light.color.z * light.intensity, 1.0f / sqr(light.GetRange())));
+			accumulateLightPower(light);
 
 			const bool shadowmap = IsShadowsEnabled() && light.IsCastingShadow() && !light.IsStatic();
 			const wi::rectpacker::Rect& shadow_rect = vis.visibleLightShadowRects[lightIndex];
@@ -4853,6 +4866,7 @@ void UpdatePerFrameData(
 			shaderentity.SetLength(light.length);
 			shaderentity.SetDirection(light.direction);
 			shaderentity.SetColor(float4(light.color.x * light.intensity, light.color.y * light.intensity, light.color.z * light.intensity, 1.0f / sqr(light.GetRange())));
+			accumulateLightPower(light);
 
 			const bool shadowmap = IsShadowsEnabled() && light.IsCastingShadow() && !light.IsStatic();
 			const wi::rectpacker::Rect& shadow_rect = vis.visibleLightShadowRects[lightIndex];
@@ -4938,6 +4952,7 @@ void UpdatePerFrameData(
 			shaderentity.SetHeight(light.height);
 			shaderentity.SetQuaternion(light.rotation);
 			shaderentity.SetColor(float4(light.color.x * light.intensity, light.color.y * light.intensity, light.color.z * light.intensity, 1.0f / sqr(light.GetRange())));
+			accumulateLightPower(light);
 
 			const bool shadowmap = IsShadowsEnabled() && light.IsCastingShadow() && !light.IsStatic();
 			const wi::rectpacker::Rect& shadow_rect = vis.visibleLightShadowRects[lightIndex];
@@ -5118,6 +5133,7 @@ void UpdatePerFrameData(
 	frameCB.pointlights = ShaderEntityIterator(lightarray_offset_point, lightarray_count_point);
 	frameCB.rectlights = ShaderEntityIterator(lightarray_offset_rect, lightarray_count_rect);
 	frameCB.lights = ShaderEntityIterator(lightarray_offset, lightarray_count);
+	frameCB.totalLightPower = totalLightPower;
 	frameCB.decals = ShaderEntityIterator(decalarray_offset, decalarray_count);
 	frameCB.forces = ShaderEntityIterator(forcefieldarray_offset, forcefieldarray_count);
 }

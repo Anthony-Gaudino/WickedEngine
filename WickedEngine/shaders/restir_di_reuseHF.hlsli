@@ -85,8 +85,6 @@ inline float RESTIRDIReuseTarget(
  * @param[in] count - Number of valid entries (1 .. RESTIR_DI_MIS_MAX_SOURCES).
  * @param[in] centerP - Center (canonical) surface shading point.
  * @param[in] centerN - Center (canonical) surface shading normal.
- * @param[in] maxW - Firefly clamp for each source's unbiased weight (the light
- *   count: uniform RIS cannot legitimately exceed it).
  * @param[in,out] rng - Random generator.
  *
  * @return The merged reservoir (visibility of the selected sample carried
@@ -97,7 +95,6 @@ inline RESTIRDIReservoir RESTIRDIMergeBalanceHeuristic(
 	uint count,
 	float3 centerP,
 	float3 centerN,
-	float maxW,
 	inout RNG rng)
 {
 	RESTIRDIReservoir result = RESTIRDIReservoirInit();
@@ -135,6 +132,15 @@ inline RESTIRDIReservoir RESTIRDIMergeBalanceHeuristic(
 		if (pSelf <= 0)
 			continue;
 
+		// Per-light firefly clamp. Under power-proportional light sampling a
+		// light's unbiased weight legitimately reaches totalLightPower / its
+		// own power (a dim light is sampled proportionally less, so each hit
+		// carries proportionally more); clamping at the light count (a
+		// uniform-sampling bound) would lop that off and darken dim lights.
+		// This bound instead caps each light's contribution at
+		// ~totalLightPower, so dim lights stay correct while true fireflies are
+		// still bounded.
+		const float maxW = GetFrame().totalLightPower / RESTIRLightPower(light);
 		const float wS = min(sources[s].weightSum / (sources[s].M * pSelf), maxW);
 
 		// Target of this source's sample at the center (canonical) surface.

@@ -125,9 +125,8 @@ void main(uint3 DTid : SV_DispatchThreadID)
 					sources[1].lightIndex = history.lightIndex;
 					sources[1].uv = history.uv;
 
-					const float maxW = (float)lights().item_count();
 					reservoir = RESTIRDIMergeBalanceHeuristic(
-						sources, 2, P, N, maxW, rng);
+						sources, 2, P, N, rng);
 				}
 			}
 		}
