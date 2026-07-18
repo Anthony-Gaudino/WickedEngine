@@ -851,8 +851,34 @@ struct RESTIRDIPushConstants
 	 */
 	int lightTileBuffer;
 
+	/**
+	 * Bindless SRV of the packed stable light-index translation buffer (raw),
+	 * or -1 to disable translation (identity fallback = the old behavior, where
+	 * a reservoir index is a raw entity slot).
+	 *
+	 * A reservoir stores the **stable scene light index** (index into the
+	 * scene's light component array), which survives frustum culling reindexing
+	 * the per-frame entity array. The buffer holds two uint arrays back to
+	 * back, starting at `lightIndexMapOffset`:
+	 *   - `[0, sceneLightCount)`: scene light index -> current entity slot
+	 *     (RESTIR_INVALID_LIGHT_INDEX where the light is culled this frame;
+	 *     such a light reaches no visible surface, so its reservoir contributes
+	 *     nothing). Used on reuse before `load_entity`.
+	 *   - `[sceneLightCount, sceneLightCount + SHADER_ENTITY_COUNT)`: entity
+	 *     slot -> scene light index. Used by the initial pass to store the
+	 *     stable index for the slot it drew.
+	 */
+	int lightIndexMapBuffer;
+
+	/** Byte offset of the translation buffer's data within its GPU buffer. */
+	uint lightIndexMapOffset;
+
+	/**
+	 * Number of scene lights: bound + sub-array split of the translation map.
+	 */
+	uint sceneLightCount;
+
 	uint pad1;
-	uint pad2;
 };
 
 /**

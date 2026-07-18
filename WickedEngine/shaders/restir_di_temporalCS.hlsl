@@ -24,6 +24,13 @@ void main(uint3 DTid : SV_DispatchThreadID)
 	if (DTid.x >= push.resolution.x || DTid.y >= push.resolution.y)
 		return;
 
+	// Stable light-index translation state (see restir_diHF.hlsli): the merge
+	// re-resolves each reservoir's light, mapping its stable scene index to the
+	// current entity slot.
+	RESTIRDILightMapBuffer = push.lightIndexMapBuffer;
+	RESTIRDILightMapOffset = push.lightIndexMapOffset;
+	RESTIRDISceneLightCount = push.sceneLightCount;
+
 	const uint2 pixel = DTid.xy;
 	const uint flatIndex = pixel.y * push.resolution.x + pixel.x;
 

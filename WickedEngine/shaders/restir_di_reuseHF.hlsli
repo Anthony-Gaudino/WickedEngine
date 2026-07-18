@@ -115,12 +115,21 @@ inline RESTIRDIReservoir RESTIRDIMergeBalanceHeuristic(
 			(sources[s].lightIndex & RESTIR_LIGHT_FLAG_EMISSIVE_TRIANGLE) != 0)
 			continue;
 
+		// The reservoir stores the light's STABLE scene index; map it to this
+		// frame's entity slot. A light culled this frame no longer reaches any
+		// visible surface, so drop the source entirely (before it counts toward
+		// the confidence sum).
+		const uint slot = RESTIRDICurrentLightSlot(sources[s].lightIndex);
+		[branch]
+		if (slot == RESTIR_INVALID_LIGHT_INDEX)
+			continue;
+
 		mSum += sources[s].M;
 
 		// Load the chosen light once, then re-resolve its target at each
 		// surface (attenuation/cone/transmittance recomputed per surface -
 		// exact, no baked-radiance approximation).
-		const ShaderEntity light = load_entity(sources[s].lightIndex);
+		const ShaderEntity light = load_entity(slot);
 
 		// Target at the sample's own surface: the pdf that produced this
 		// reservoir's weight, so W = weightSum / (M * pSelf) is its unbiased

@@ -123,7 +123,10 @@ inline RESTIRDIReservoir RESTIRDISampleInitial(
 			r.sampleRadiance = s.radiance;
 			// Visible winner: shadowed target == unshadowed target.
 			r.targetPdf = unshadowedTarget;
-			r.lightIndex = lightIndex;
+			// Store the light's STABLE scene index (not the volatile per-frame
+			// entity slot) so reuse across frames resolves the same physical
+			// light even after frustum culling reindexes the entity array.
+			r.lightIndex = RESTIRDIStableLightIndex(lightIndex);
 			r.uv = uv;
 			r.visibility = vis;
 		}
@@ -139,6 +142,11 @@ void main(uint3 DTid : SV_DispatchThreadID)
 {
 	if (DTid.x >= push.resolution.x || DTid.y >= push.resolution.y)
 		return;
+
+	// Stable light-index translation state (see restir_diHF.hlsli).
+	RESTIRDILightMapBuffer = push.lightIndexMapBuffer;
+	RESTIRDILightMapOffset = push.lightIndexMapOffset;
+	RESTIRDISceneLightCount = push.sceneLightCount;
 
 	const uint2 pixel = DTid.xy;
 	const uint flatIndex = pixel.y * push.resolution.x + pixel.x;

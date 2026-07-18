@@ -151,6 +151,16 @@ bool RESTIR_DI_VISIBILITY_REJECT = true;
 // Shared, resolution-independent pre-sampled light tiles (RESTIRLightRef, raw),
 // rebuilt once per frame and read by both the DI initial and GI trace passes.
 GPUBuffer restir_light_tiles;
+// ReSTIR DI stable light-index translation (Option B). Built in
+// UpdatePerFrameData alongside the entity array and uploaded in ReSTIR_DI. A DI
+// reservoir stores a light's STABLE scene index (its light-component index);
+// frustum culling reindexes the per-frame entity array every frame, so without
+// this translation a stored slot would resolve a different physical light next
+// frame (the reported multi-light darkening/flicker under camera motion). scene
+// light index -> current entity slot (RESTIR_INVALID_LIGHT_INDEX culled)
+wi::vector<uint32_t> restir_light_scene_to_slot;
+//   entity slot -> scene light index (for the initial pass's store side)
+wi::vector<uint32_t> restir_light_slot_to_scene;
 float DDGI_BLEND_SPEED = 0.1f;
 float GI_BOOST = 1.0f;
 bool MESH_SHADER_ALLOWED = false;
@@ -4510,6 +4520,21 @@ void UpdatePerFrameData(
 
 		uint32_t entityCounter = 0;
 
+		// Reset the ReSTIR DI stable light-index maps for this frame. The
+		// scene->slot map spans all scene lights (a reservoir may reference any
+		// of them, including one culled this frame -> INVALID); the slot->scene
+		// map spans the entity array. The light loops below fill both.
+		restir_light_scene_to_slot.assign(
+			vis.scene->lights.GetCount(), RESTIR_INVALID_LIGHT_INDEX);
+		restir_light_slot_to_scene.assign(
+			SHADER_ENTITY_COUNT, RESTIR_INVALID_LIGHT_INDEX);
+		const auto mapLightSlot = [&](uint32_t sceneLightIndex, uint32_t slot) {
+			if (sceneLightIndex < restir_light_scene_to_slot.size())
+				restir_light_scene_to_slot[sceneLightIndex] = slot;
+			if (slot < restir_light_slot_to_scene.size())
+				restir_light_slot_to_scene[slot] = sceneLightIndex;
+		};
+
 		// Write decals into entity array:
 		decalarray_offset = entityCounter;
 		const size_t decal_iterations = std::min((size_t)MAX_SHADER_DECAL_COUNT, vis.visibleDecals.size());
@@ -4731,6 +4756,7 @@ void UpdatePerFrameData(
 
 			std::memcpy(entityArray + entityCounter, &shaderentity, sizeof(ShaderEntity));
 			std::memcpy(entityCullingArray + entityCounter, &cullsphere, sizeof(ShaderSphere));
+			mapLightSlot(lightIndex, entityCounter);
 			entityCounter++;
 			lightarray_count_directional++;
 		}
@@ -4831,6 +4857,7 @@ void UpdatePerFrameData(
 
 			std::memcpy(entityArray + entityCounter, &shaderentity, sizeof(ShaderEntity));
 			std::memcpy(entityCullingArray + entityCounter, &cullsphere, sizeof(ShaderSphere));
+			mapLightSlot(lightIndex, entityCounter);
 			entityCounter++;
 			lightarray_count_spot++;
 		}
@@ -4917,6 +4944,7 @@ void UpdatePerFrameData(
 
 			std::memcpy(entityArray + entityCounter, &shaderentity, sizeof(ShaderEntity));
 			std::memcpy(entityCullingArray + entityCounter, &cullsphere, sizeof(ShaderSphere));
+			mapLightSlot(lightIndex, entityCounter);
 			entityCounter++;
 			lightarray_count_point++;
 		}
@@ -5000,6 +5028,7 @@ void UpdatePerFrameData(
 
 			std::memcpy(entityArray + entityCounter, &shaderentity, sizeof(ShaderEntity));
 			std::memcpy(entityCullingArray + entityCounter, &cullsphere, sizeof(ShaderSphere));
+			mapLightSlot(lightIndex, entityCounter);
 			entityCounter++;
 			lightarray_count_rect++;
 		}
@@ -15856,7 +15885,41 @@ int ReSTIR_DI(
 	push.lightTileBuffer = restir_light_tiles.IsValid()
 		? device->GetDescriptorIndex(&restir_light_tiles, SubresourceType::SRV)
 		: -1;
-	push.pad1 = push.pad2 = 0;
+
+	// Upload the stable light-index translation map (Option B): scene->slot
+	// entries followed by slot->scene entries, packed into one transient GPU
+	// allocation. A reservoir stores a light's stable scene index so reuse
+	// resolves the same physical light across frames despite frustum culling
+	// reindexing the per-frame entity array (fixes the multi-light darkening /
+	// flicker under camera motion).
+	push.lightIndexMapBuffer = -1;
+	push.lightIndexMapOffset = 0;
+	push.sceneLightCount = (uint)restir_light_scene_to_slot.size();
+	{
+		const size_t sceneCount = restir_light_scene_to_slot.size();
+		const size_t slotCount = restir_light_slot_to_scene.size();
+		const size_t totalCount = sceneCount + slotCount;
+		if (totalCount > 0)
+		{
+			GraphicsDevice::GPUAllocation alloc =
+				device->AllocateGPU(totalCount * sizeof(uint32_t), cmd);
+			if (alloc.IsValid())
+			{
+				uint32_t* dst = (uint32_t*)alloc.data;
+				if (sceneCount > 0)
+					std::memcpy(dst, restir_light_scene_to_slot.data(),
+						sceneCount * sizeof(uint32_t));
+				if (slotCount > 0)
+					std::memcpy(dst + sceneCount,
+						restir_light_slot_to_scene.data(),
+						slotCount * sizeof(uint32_t));
+				push.lightIndexMapBuffer = device->GetDescriptorIndex(
+					&alloc.buffer, SubresourceType::SRV);
+				push.lightIndexMapOffset = (uint)alloc.offset;
+			}
+		}
+	}
+	push.pad1 = 0;
 
 	const uint32_t dispatch_x = (res.resolution.x + 7) / 8;
 	const uint32_t dispatch_y = (res.resolution.y + 7) / 8;
