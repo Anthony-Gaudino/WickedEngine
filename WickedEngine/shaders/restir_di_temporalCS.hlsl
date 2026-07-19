@@ -132,8 +132,13 @@ void main(uint3 DTid : SV_DispatchThreadID)
 					sources[1].lightIndex = history.lightIndex;
 					sources[1].uv = history.uv;
 
-					reservoir = RESTIRDIMergeBalanceHeuristic(
-						sources, 2, P, N, rng);
+					[branch]
+					if (push.biasCorrection == 1)
+						reservoir =
+							RESTIRDIMergePairwiseMIS(sources, 2, 1, P, N, rng);
+					else
+						reservoir =
+							RESTIRDIMergeBalanceHeuristic(sources, 2, P, N, rng);
 				}
 			}
 		}

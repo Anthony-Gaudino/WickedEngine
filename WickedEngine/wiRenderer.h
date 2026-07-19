@@ -1375,6 +1375,11 @@ namespace wi::renderer
 	bool GetReSTIRGIEnabled();
 	void SetReSTIRDIVisibilityRejectEnabled(bool value);
 	bool GetReSTIRDIVisibilityRejectEnabled();
+	// Hash-grid spatial reuse (Stochastic Pairwise MIS). Off by default: it
+	// allocates a screen-sized GPU hash grid (hundreds of MB) and only pays off
+	// on large-kernel reuse. Enabling it lazily creates the grid buffers.
+	void SetReSTIRDIHashGridReuseEnabled(bool value);
+	bool GetReSTIRDIHashGridReuseEnabled();
 	void SetDDGIDebugEnabled(bool value);
 	bool GetDDGIDebugEnabled();
 	void SetDDGIRayCount(uint32_t value);

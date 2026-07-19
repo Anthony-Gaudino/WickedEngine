@@ -243,7 +243,7 @@ inline RESTIRDIReservoir RESTIRDISampleInitial(
 	// Pre-multiply by M so the downstream unbiased weight W = weightSum / (M *
 	// targetPdf) recovers the balance-heuristic W = weightSum / targetPdf
 	// (balance-heuristic RIS does not divide by the sample count). Mirrors the
-	// same trick in RESTIRDIMergeBalanceHeuristic.
+	// same trick in RESTIRDIMergePairwiseMIS.
 	r.weightSum = M * weightSum;
 	r.M = M;
 	return r;

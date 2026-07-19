@@ -132,7 +132,7 @@ inline bool RESTIRDIReservoirUpdate(
  *
  * The surface (P, N) is what makes the merge unbiased: the MIS weight of each
  * source's sample is evaluated against every source's **own** surface (see
- * RESTIRDIMergeBalanceHeuristic), so a neighbor that cannot see the chosen
+ * RESTIRDIMergePairwiseMIS), so a neighbor that cannot see the chosen
  * light no longer deflates the estimate.
  */
 struct RESTIRDIMISSource

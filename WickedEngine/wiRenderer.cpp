@@ -148,6 +148,15 @@ uint32_t DDGI_RAYCOUNT = 256u;
 bool RESTIR_DI_ENABLED = false;
 bool RESTIR_GI_ENABLED = false;
 bool RESTIR_DI_VISIBILITY_REJECT = true;
+// ReSTIR DI spatiotemporal reuse bias-correction mode: 0 = generalized balance
+// heuristic (default, correct soft shadows), 1 = linear pairwise MIS. Runtime
+// A/B toggle while evaluating whether pairwise MIS is viable here.
+uint32_t RESTIR_DI_BIAS_CORRECTION = 1;
+// Hash-grid spatial reuse (Stochastic Pairwise MIS). Off by default because it
+// allocates a screen-sized GPU hash grid (hundreds of MB). When enabled, the
+// grid buffers are created lazily and the spatial pass reuses from the grid
+// instead of screen-space neighbors.
+bool RESTIR_DI_HASHGRID_REUSE = true;
 // Shared, resolution-independent pre-sampled light tiles (RESTIRLightRef, raw),
 // rebuilt once per frame and read by both the DI initial and GI trace passes.
 GPUBuffer restir_light_tiles;
@@ -161,6 +170,26 @@ GPUBuffer restir_light_tiles;
 wi::vector<uint32_t> restir_light_scene_to_slot;
 //   entity slot -> scene light index (for the initial pass's store side)
 wi::vector<uint32_t> restir_light_slot_to_scene;
+// ReSTIR DI hash-grid spatial-reuse buffers (Stochastic Pairwise MIS). Created
+// lazily only while RESTIR_DI_HASHGRID_REUSE is on (hundreds of MB), sized to
+// the screen. One reservoir map (reuse candidates) + one inverse map (all cell
+// pixels, for the canonical MIS term); per-cell counters/offsets are packed two
+// maps into one buffer ([cell]=reservoir, [cellCount+cell]=inverse).
+struct ReSTIRDIHashGrid
+{
+	GPUBuffer checksums;      // uint per cell (hash set)
+	GPUBuffer cellConf;       // uint per cell (atomic M sum)
+	GPUBuffer counters;       // 4 uint: res total/cursor, inv total/cursor
+	GPUBuffer cellCounters;   // 2*cellCount uint
+	GPUBuffer cellOffsets;    // 2*cellCount uint
+	GPUBuffer resData;        // RESTIRDIGridReservoir per cell (unsorted)
+	GPUBuffer resDataCell;    // uint2 per cell
+	GPUBuffer resSorted;      // RESTIRDIGridReservoir per cell (sorted)
+	GPUBuffer invData;        // uint2 per cell (flatPixel, asuint(M))
+	GPUBuffer invDataCell;    // uint2 per cell
+	GPUBuffer invSorted;      // uint2 per cell (sorted)
+	XMUINT2 resolution = {};
+} restir_di_hashgrid;
 float DDGI_BLEND_SPEED = 0.1f;
 float GI_BOOST = 1.0f;
 bool MESH_SHADER_ALLOWED = false;
@@ -1196,6 +1225,19 @@ void LoadShaders()
 	{
 		wi::jobsystem::Execute(raytracing_ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_DI_SPATIAL], "restir_di_spatialCS.cso"); });
 	}
+	// Hash-grid spatial reuse variant (RDI_HASHGRID permutation) + build
+	// passes.
+	if (device->CheckCapability(GraphicsDeviceCapability::RAYTRACING))
+	{
+		wi::jobsystem::Execute(raytracing_ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_DI_SPATIAL_HASHGRID], "restir_di_spatialCS_rtapi.cso", ShaderModel::SM_6_5, { "RDI_HASHGRID" }); });
+	}
+	else
+	{
+		wi::jobsystem::Execute(raytracing_ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_DI_SPATIAL_HASHGRID], "restir_di_spatialCS.cso", ShaderModel::SM_6_0, { "RDI_HASHGRID" }); });
+	}
+	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_DI_HASHGRID_BUILD], "restir_di_hashgrid_buildCS.cso"); });
+	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_DI_HASHGRID_OFFSETS], "restir_di_hashgrid_offsetsCS.cso"); });
+	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_DI_HASHGRID_SORT], "restir_di_hashgrid_sortCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_DI_DENOISE_TEMPORAL], "restir_di_denoise_temporalCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_RESTIR_DI_DENOISE_SPATIAL], "restir_di_denoise_spatialCS.cso"); });
 	if (device->CheckCapability(GraphicsDeviceCapability::RAYTRACING))
@@ -15882,6 +15924,7 @@ int ReSTIR_DI(
 	push.spatialSampleCount = RESTIR_DI_SPATIAL_SAMPLES;
 	push.spatialRadius = RESTIR_DI_SPATIAL_RADIUS;
 	push.visibilityReject = RESTIR_DI_VISIBILITY_REJECT ? 1u : 0u;
+	push.biasCorrection = RESTIR_DI_BIAS_CORRECTION;
 	push.lightTileBuffer = restir_light_tiles.IsValid()
 		? device->GetDescriptorIndex(&restir_light_tiles, SubresourceType::SRV)
 		: -1;
@@ -15919,7 +15962,6 @@ int ReSTIR_DI(
 			}
 		}
 	}
-	push.pad1 = 0;
 
 	const uint32_t dispatch_x = (res.resolution.x + 7) / 8;
 	const uint32_t dispatch_y = (res.resolution.y + 7) / 8;
@@ -15967,12 +16009,151 @@ int ReSTIR_DI(
 			device->EventEnd(cmd);
 		}
 
+		// Hash-grid spatial reuse (Stochastic Pairwise MIS): build a
+		// screen-space hash grid from this frame's temporal reservoirs so the
+		// spatial pass can reuse from many surface-similar reservoirs. Lazily
+		// allocated; only while enabled.
+		const bool useHashGrid = RESTIR_DI_HASHGRID_REUSE;
+		if (useHashGrid)
+		{
+			const uint32_t cellCount = res.resolution.x * res.resolution.y;
+			if (restir_di_hashgrid.resolution.x != res.resolution.x ||
+				restir_di_hashgrid.resolution.y != res.resolution.y)
+			{
+				auto createStructured = [&](GPUBuffer& buf, uint32_t stride,
+					uint32_t count, const char* name)
+				{
+					GPUBufferDesc bd;
+					bd.stride = stride;
+					bd.size = (uint64_t)stride * count;
+					bd.bind_flags =
+						BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+					bd.misc_flags = ResourceMiscFlag::BUFFER_STRUCTURED;
+					device->CreateBuffer(&bd, nullptr, &buf);
+					device->SetName(&buf, name);
+				};
+				const uint32_t rsz = (uint32_t)sizeof(RESTIRDIGridReservoir);
+				const uint32_t u2 = (uint32_t)sizeof(XMUINT2);
+				createStructured(restir_di_hashgrid.checksums, 4, cellCount, "restir_di_hashgrid.checksums");
+				createStructured(restir_di_hashgrid.cellConf, 4, cellCount, "restir_di_hashgrid.cellConf");
+				createStructured(restir_di_hashgrid.counters, 4, 4, "restir_di_hashgrid.counters");
+				createStructured(restir_di_hashgrid.cellCounters, 4, cellCount * 2, "restir_di_hashgrid.cellCounters");
+				createStructured(restir_di_hashgrid.cellOffsets, 4, cellCount * 2, "restir_di_hashgrid.cellOffsets");
+				createStructured(restir_di_hashgrid.resData, rsz, cellCount, "restir_di_hashgrid.resData");
+				createStructured(restir_di_hashgrid.resDataCell, u2, cellCount, "restir_di_hashgrid.resDataCell");
+				createStructured(restir_di_hashgrid.resSorted, rsz, cellCount, "restir_di_hashgrid.resSorted");
+				createStructured(restir_di_hashgrid.invData, u2, cellCount, "restir_di_hashgrid.invData");
+				createStructured(restir_di_hashgrid.invDataCell, u2, cellCount, "restir_di_hashgrid.invDataCell");
+				createStructured(restir_di_hashgrid.invSorted, u2, cellCount, "restir_di_hashgrid.invSorted");
+				restir_di_hashgrid.resolution = res.resolution;
+			}
+
+			RESTIRHashGridPushConstants hgpush;
+			hgpush.resolution = res.resolution;
+			hgpush.resolutionRcp =
+				XMFLOAT2(1.0f / res.resolution.x, 1.0f / res.resolution.y);
+			hgpush.cellCount = cellCount;
+			hgpush.frameIndex = (uint)res.frame;
+			hgpush.pad0 = hgpush.pad1 = 0;
+
+			device->EventBegin("HashGrid build", cmd);
+
+			GPUBuffer* hgbufs[] = {
+				&restir_di_hashgrid.checksums, &restir_di_hashgrid.cellConf,
+				&restir_di_hashgrid.counters, &restir_di_hashgrid.cellCounters,
+				&restir_di_hashgrid.cellOffsets, &restir_di_hashgrid.resData,
+				&restir_di_hashgrid.resDataCell, &restir_di_hashgrid.resSorted,
+				&restir_di_hashgrid.invData, &restir_di_hashgrid.invDataCell,
+				&restir_di_hashgrid.invSorted,
+			};
+			for (GPUBuffer* b : hgbufs)
+				device->Barrier(GPUBarrier::Buffer(b,
+					ResourceState::SHADER_RESOURCE,
+					ResourceState::UNORDERED_ACCESS), cmd);
+
+			// Reset per-cell state (checksums to the empty sentinel, the rest
+			// 0).
+			device->ClearUAV(&restir_di_hashgrid.checksums, 0xFFFFFFFFu, cmd);
+			device->ClearUAV(&restir_di_hashgrid.cellConf, 0, cmd);
+			device->ClearUAV(&restir_di_hashgrid.counters, 0, cmd);
+			device->ClearUAV(&restir_di_hashgrid.cellCounters, 0, cmd);
+			device->Barrier(GPUBarrier::Memory(), cmd);
+
+			// Create cells: each pixel inserts its reservoir + confidence.
+			device->BindComputeShader(
+				&shaders[CSTYPE_RESTIR_DI_HASHGRID_BUILD], cmd);
+			device->PushConstants(&hgpush, sizeof(hgpush), cmd);
+			device->BindResource(&res.reservoir_temporal, 0, cmd);
+			{
+				const GPUResource* uavs[] = {
+					&restir_di_hashgrid.checksums,
+					&restir_di_hashgrid.cellConf,
+					&restir_di_hashgrid.counters,
+					&restir_di_hashgrid.cellCounters,
+					&restir_di_hashgrid.resData,
+					&restir_di_hashgrid.resDataCell,
+					&restir_di_hashgrid.invData,
+					&restir_di_hashgrid.invDataCell,
+				};
+				device->BindUAVs(uavs, 0, arraysize(uavs), cmd);
+			}
+			device->Dispatch(dispatch_x, dispatch_y, 1, cmd);
+			device->Barrier(GPUBarrier::Memory(), cmd);
+
+			// Compute per-cell offsets (prefix cursor).
+			device->BindComputeShader(
+				&shaders[CSTYPE_RESTIR_DI_HASHGRID_OFFSETS], cmd);
+			{
+				const GPUResource* uavs[] = {
+					&restir_di_hashgrid.cellCounters,
+					&restir_di_hashgrid.cellOffsets,
+					&restir_di_hashgrid.counters,
+				};
+				device->BindUAVs(uavs, 0, arraysize(uavs), cmd);
+			}
+			device->Dispatch((cellCount + 63) / 64, 1, 1, cmd);
+			device->Barrier(GPUBarrier::Memory(), cmd);
+
+			// Sort into contiguous per-cell ranges.
+			device->BindComputeShader(
+				&shaders[CSTYPE_RESTIR_DI_HASHGRID_SORT], cmd);
+			{
+				const GPUResource* uavs[] = {
+					&restir_di_hashgrid.resData,
+					&restir_di_hashgrid.resDataCell,
+					&restir_di_hashgrid.resSorted,
+					&restir_di_hashgrid.invData,
+					&restir_di_hashgrid.invDataCell,
+					&restir_di_hashgrid.invSorted,
+					&restir_di_hashgrid.counters,
+					&restir_di_hashgrid.cellOffsets,
+				};
+				device->BindUAVs(uavs, 0, arraysize(uavs), cmd);
+			}
+			device->Dispatch((cellCount + 63) / 64, 1, 1, cmd);
+			device->Barrier(GPUBarrier::Memory(), cmd);
+
+			// Back to read state for the spatial pass to sample the grid.
+			for (GPUBuffer* b : hgbufs)
+				device->Barrier(GPUBarrier::Buffer(b,
+					ResourceState::UNORDERED_ACCESS,
+					ResourceState::SHADER_RESOURCE), cmd);
+			device->EventEnd(cmd);
+		}
+		else if (restir_di_hashgrid.resolution.x != 0)
+		{
+			// Feature turned off: release the (hundreds of MB) grid buffers.
+			restir_di_hashgrid = {};
+		}
+
 		// Spatial resampling: merge nearby reservoirs into the final result,
 		// re-trace the final shadow, and produce the A-SVGF temporal gradient
 		// (plus this frame's raw visibility for next frame's gradient).
 		{
 			device->EventBegin("Spatial", cmd);
-			device->BindComputeShader(&shaders[CSTYPE_RESTIR_DI_SPATIAL], cmd);
+			device->BindComputeShader(&shaders[useHashGrid
+				? CSTYPE_RESTIR_DI_SPATIAL_HASHGRID
+				: CSTYPE_RESTIR_DI_SPATIAL], cmd);
 			device->PushConstants(&push, sizeof(push), cmd);
 
 			const GPUResource* srvs[] = {
@@ -15981,6 +16162,17 @@ int ReSTIR_DI(
 				&res.raw_irradiance[prev],
 			};
 			device->BindResources(srvs, 0, arraysize(srvs), cmd);
+
+			// Hash-grid reuse reads the sorted grid (SRVs t3-t8).
+			if (useHashGrid)
+			{
+				device->BindResource(&restir_di_hashgrid.checksums, 3, cmd);
+				device->BindResource(&restir_di_hashgrid.cellConf, 4, cmd);
+				device->BindResource(&restir_di_hashgrid.cellCounters, 5, cmd);
+				device->BindResource(&restir_di_hashgrid.cellOffsets, 6, cmd);
+				device->BindResource(&restir_di_hashgrid.resSorted, 7, cmd);
+				device->BindResource(&restir_di_hashgrid.invSorted, 8, cmd);
+			}
 			device->BindUAV(&res.reservoir_final[cur], 0, cmd);
 			device->BindUAV(&res.gradient, 1, cmd);
 			device->BindUAV(&res.raw_irradiance[cur], 2, cmd);
@@ -20483,6 +20675,14 @@ void SetReSTIRDIVisibilityRejectEnabled(bool value)
 bool GetReSTIRDIVisibilityRejectEnabled()
 {
 	return RESTIR_DI_VISIBILITY_REJECT;
+}
+void SetReSTIRDIHashGridReuseEnabled(bool value)
+{
+	RESTIR_DI_HASHGRID_REUSE = value;
+}
+bool GetReSTIRDIHashGridReuseEnabled()
+{
+	return RESTIR_DI_HASHGRID_REUSE;
 }
 void SetDDGIDebugEnabled(bool value)
 {

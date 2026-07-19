@@ -328,6 +328,76 @@ static const uint RESTIR_DI_SPATIAL_SAMPLES = 4;
 /** Spatial-reuse search radius, in pixels. */
 static const float RESTIR_DI_SPATIAL_RADIUS = 16.0;
 
+/*
+################################################################################
+Hash-grid spatial reuse (Stochastic Pairwise MIS)
+################################################################################
+*/
+
+/**
+ * Screen-tile size (pixels) of a hash-grid reuse cell. Reservoirs of pixels in
+ * the same tile with a similar surface (quantized normal + depth) share a cell,
+ * so the spatial pass can reuse from many surface-similar reservoirs instead of
+ * a few random screen neighbors. Larger cells reuse more widely (better
+ * disocclusion fill) but mix less-similar surfaces.
+ */
+static const uint RESTIR_HASHGRID_CELL_SIZE = 8;
+
+/** Number of candidate reservoirs importance-sampled from a cell per pixel. */
+static const uint RESTIR_HASHGRID_CANDIDATES = 8;
+
+/** Linear-probe length of the open-addressing cell hash set. */
+static const uint RESTIR_HASHGRID_PROBE_LENGTH = 32;
+
+/** Sentinel for an empty hash-set slot / a missing cell. */
+static const uint RESTIR_HASHGRID_INVALID = 0xFFFFFFFFu;
+
+/**
+ * A compact reservoir stored in a hash-grid cell (20 bytes).
+ *
+ * Only what the pairwise-MIS merge needs from a reused candidate: the stable
+ * light reference (index + uv) to re-resolve the target at any surface, the
+ * confidence M and the raw resampling-weight sum, and the source pixel so the
+ * candidate's own surface can be reconstructed from the G-buffer. The candidate
+ * position / radiance / visibility are re-resolved on selection, so they are
+ * not stored. The cell-importance-sampling weight equals `weightSum` itself (M
+ * · targetPdf · UCW = weightSum), so no separate importance field is needed.
+ */
+struct RESTIRDIGridReservoir
+{
+	/** Stable scene light index (see RESTIRDIReservoir.lightIndex). */
+	uint lightIndex;
+
+	/** Sample parameterization on the light, pack_half2(uv). */
+	uint uvPacked;
+
+	/** Source pixel: (x & 0xFFFF) | (y << 16), for surface reconstruction. */
+	uint pixelPacked;
+
+	/** Confidence (effective candidate count). */
+	float M;
+
+	/** Running resampling-weight sum (also the cell-importance weight). */
+	float weightSum;
+};
+
+/**
+ * Push constants for the hash-grid build passes (create cells / offsets /
+ * sort).
+ */
+struct RESTIRHashGridPushConstants
+{
+	uint2 resolution;
+	float2 resolutionRcp;
+
+	/** Number of hash-grid cells (= pixel count, the worst case). */
+	uint cellCount;
+
+	uint frameIndex;
+	uint pad0;
+	uint pad1;
+};
+
 /**
  * Visibility denoiser history cap. The temporal accumulation blends the fresh
  * per-frame visibility toward a running mean with weight 1 / historyLength;
@@ -878,7 +948,12 @@ struct RESTIRDIPushConstants
 	 */
 	uint sceneLightCount;
 
-	uint pad1;
+	/**
+	 * Spatiotemporal reuse bias-correction mode: 0 = generalized balance
+	 * heuristic (default, O(N^2), correct soft shadows), 1 = linear pairwise
+	 * MIS (RESTIRDIMergePairwiseMIS). A runtime toggle for A/B comparison.
+	 */
+	uint biasCorrection;
 };
 
 /**

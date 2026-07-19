@@ -88,6 +88,291 @@ float RESTIRLuma(float3 c)
 	return dot(c, float3(0.2126, 0.7152, 0.0722));
 }
 
+#ifdef RDI_HASHGRID
+#include "restir_di_hashgridHF.hlsli"
+
+// Read-only views of the hash grid built this frame (see the build passes).
+StructuredBuffer<uint> hg_checksums : register(t3);
+StructuredBuffer<uint> hg_cellConfidences : register(t4);
+StructuredBuffer<uint> hg_cellCounters : register(t5); // [cell] res, [+N] inv
+StructuredBuffer<uint> hg_cellOffsets : register(t6);  // [cell] res, [+N] inv
+StructuredBuffer<RESTIRDIGridReservoir> hg_resSorted : register(t7);
+StructuredBuffer<uint2> hg_invSorted : register(t8);   // (flatPixel, asuint(M))
+
+/** Division guarded against a non-positive denominator. */
+float RESTIRHGSafeDiv(float a, float b)
+{
+	return abs(b) > 0 ? a / b : 0;
+}
+
+/** Confidence quantize/dequantize (must match the build pass's atomic sums). */
+float RESTIRHGRequant(float c)
+{
+	return (float)((uint)(c * 1000.0)) / 1000.0;
+}
+float RESTIRHGDequant(uint q)
+{
+	return (float)q / 1000.0;
+}
+
+/**
+ * Defensive pairwise-MIS weight of a candidate's own contribution.
+ *
+ * @param[in] ci - Candidate confidence (cell-scaled).
+ * @param[in] cc - Canonical confidence.
+ * @param[in] cSum - Cell confidence (scaled to the candidate budget).
+ * @param[in] pOwn - Candidate sample's target at its own surface.
+ * @param[in] pCenter - Candidate sample's target at the center surface.
+ *
+ * @return The MIS weight.
+ */
+float RESTIRHGNoncanonical(
+	float ci, float cc, float cSum, float pOwn, float pCenter)
+{
+	return (cSum / (cSum + cc)) *
+		RESTIRHGSafeDiv(ci * pOwn, cSum * pOwn + cc * pCenter);
+}
+
+/**
+ * One candidate's contribution to the canonical's defensive pairwise-MIS
+ * weight.
+ *
+ * @param[in] ci - Candidate confidence (cell-scaled).
+ * @param[in] cc - Canonical confidence.
+ * @param[in] cSum - Cell confidence (scaled to the candidate budget).
+ * @param[in] pOwn - Canonical sample's target at the candidate's surface.
+ * @param[in] pCenter - Canonical sample's target at the center surface.
+ *
+ * @return The additive contribution to the canonical MIS weight.
+ */
+float RESTIRHGCanonical(
+	float ci, float cc, float cSum, float pOwn, float pCenter)
+{
+	return (ci / (cSum + cc)) *
+		RESTIRHGSafeDiv(cc * pCenter, cc * pCenter + cSum * pOwn);
+}
+
+/**
+ * Importance-samples one reservoir from a cell (RIS over 8 stratified sub-taps,
+ * weighted by the stored resampling-weight sum = the cell importance).
+ *
+ * @param[in] rangeBase - First sorted index of the cell's reservoirs.
+ * @param[in] rangeN - Number of reservoirs in the cell.
+ * @param[in,out] rng - Random generator.
+ * @param[out] selectionW - Unbiasing weight of the returned candidate (0 if
+ *   none had positive importance).
+ *
+ * @return The chosen reservoir's offset within the cell.
+ */
+uint RESTIRHGSampleCell(
+	uint rangeBase, uint rangeN, inout RNG rng, out float selectionW)
+{
+	float wsum = 0;
+	uint selected = 0;
+	float selectedp = 0;
+	[loop]
+	for (uint k = 0; k < 8; ++k)
+	{
+		const float u = (k + rng.next_float()) / 8.0;
+		const uint j = min((uint)(u * rangeN), rangeN - 1);
+		const float p = hg_resSorted[rangeBase + j].weightSum;
+		const float w = p * rangeN;
+		wsum += w;
+		if (wsum * rng.next_float() < w)
+		{
+			selected = j;
+			selectedp = p;
+		}
+	}
+	selectionW = selectedp > 0 ? wsum / (8.0 * selectedp) : 0;
+	return selected;
+}
+
+/**
+ * Stochastic Pairwise MIS spatial reuse from the hash grid.
+ *
+ * Finds this pixel's surface cell, importance-samples
+ * RESTIR_HASHGRID_CANDIDATES reservoirs from it, and combines them with the
+ * canonical via defensive pairwise MIS - scaling every confidence by the cell
+ * budget and using a single inverse-map sample for the canonical term, exactly
+ * as the reference. Only the chosen light reference is written; the caller
+ * re-resolves the sample and re-traces its shadow.
+ *
+ * References:
+ * Hedstrom et al. 2026, "Stochastic Pairwise MIS for Unbiased Large-Kernel
+ * Reuse in Real Time".
+ *
+ * @param[in] pixel - Screen pixel.
+ * @param[in] P - Center world-space shading point.
+ * @param[in] N - Center world-space shading normal.
+ * @param[in] canonical - This pixel's own reservoir.
+ * @param[in,out] rng - Random generator.
+ *
+ * @return The merged reservoir.
+ */
+RESTIRDIReservoir RESTIRDIMergeHashGrid(
+	uint2 pixel, float3 P, float3 N, RESTIRDIReservoir canonical, inout RNG rng)
+{
+	RESTIRDIReservoir result = canonical;
+
+	const uint cellCount = push.resolution.x * push.resolution.y;
+	const float linearDepth = compute_lineardepth(texture_depth[pixel]);
+	const RESTIRHashKey key = RESTIRHashGridKey(pixel, N, linearDepth);
+	const uint cell = RESTIRHashSetFind(hg_checksums, cellCount, key);
+	[branch]
+	if (cell == RESTIR_HASHGRID_INVALID)
+		return result;
+
+	const uint invBase = hg_cellOffsets[cellCount + cell];
+	const uint invN = hg_cellCounters[cellCount + cell];
+	const uint resBase = hg_cellOffsets[cell];
+	const uint resN = hg_cellCounters[cell];
+	[branch]
+	if (invN == 0)
+		return result;
+
+	const float invNf = (float)invN;
+	const float candScale = (float)RESTIR_HASHGRID_CANDIDATES / invNf;
+	const float cSum =
+		RESTIRHGDequant(hg_cellConfidences[cell]) * candScale;
+
+	// Canonical (this pixel's own reservoir).
+	bool cValid = canonical.M > 0 &&
+		canonical.lightIndex != RESTIR_INVALID_LIGHT_INDEX &&
+		(canonical.lightIndex & RESTIR_LIGHT_FLAG_EMISSIVE_TRIANGLE) == 0;
+	ShaderEntity cLight = (ShaderEntity)0;
+	float cW = 0;
+	float cPCenter = 0;
+	float cc = 0;
+	[branch]
+	if (cValid)
+	{
+		const uint slot = RESTIRDICurrentLightSlot(canonical.lightIndex);
+		[branch]
+		if (slot == RESTIR_INVALID_LIGHT_INDEX)
+		{
+			cValid = false;
+		}
+		else
+		{
+			cLight = load_entity(slot);
+			cPCenter = RESTIRDIReuseTarget(cLight, canonical.uv, P, N);
+			[branch]
+			if (cPCenter <= 0)
+			{
+				cValid = false;
+			}
+			else
+			{
+				const float maxW =
+					GetFrame().totalLightPower / RESTIRLightPower(cLight);
+				cW = min(
+					canonical.weightSum / (canonical.M * cPCenter), maxW);
+				cc = RESTIRHGRequant(canonical.M);
+			}
+		}
+	}
+	const float centerConfidence = cc;
+
+	float wSum = 0;
+
+	// Canonical MIS weight, estimated from one inverse-map (all-pixels) sample.
+	[branch]
+	if (cValid)
+	{
+		const uint j = min((uint)(rng.next_float() * invNf), invN - 1);
+		const uint2 pc = hg_invSorted[invBase + j];
+		const uint2 pj =
+			uint2(pc.x % push.resolution.x, pc.x / push.resolution.x);
+		const float ci = RESTIRHGRequant(asfloat(pc.y)) * candScale;
+
+		const float pjDepth = texture_depth[pj];
+		float shiftedTargetPdf = 0;
+		[branch]
+		if (pjDepth > 0)
+		{
+			const float3 Pj =
+				reconstruct_position((pj + 0.5) * push.resolutionRcp, pjDepth);
+			const float3 Nj = decode_normal(texture_normal_roughness[pj]);
+			shiftedTargetPdf =
+				RESTIRDIReuseTarget(cLight, canonical.uv, Pj, Nj);
+		}
+
+		const float selectionW = invNf;
+		float mc = centerConfidence / (centerConfidence + cSum);
+		mc += selectionW * RESTIRHGCanonical(
+			ci, centerConfidence, cSum, shiftedTargetPdf, cPCenter);
+
+		wSum = mc * cPCenter * cW;
+		result.targetPdf = cPCenter;
+		result.lightIndex = canonical.lightIndex;
+		result.uv = canonical.uv;
+	}
+
+	// Non-canonical: importance-sampled cell reservoirs.
+	[branch]
+	if (resN > 0)
+	{
+		[loop]
+		for (uint i = 0; i < RESTIR_HASHGRID_CANDIDATES; ++i)
+		{
+			float selectionW;
+			const uint j = RESTIRHGSampleCell(resBase, resN, rng, selectionW);
+			[branch]
+			if (!(selectionW > 0))
+				continue;
+
+			const RESTIRDIGridReservoir cand = hg_resSorted[resBase + j];
+			const uint slot = RESTIRDICurrentLightSlot(cand.lightIndex);
+			[branch]
+			if (slot == RESTIR_INVALID_LIGHT_INDEX)
+				continue;
+
+			const ShaderEntity candLight = load_entity(slot);
+			const float2 candUV = unpack_half2(cand.uvPacked);
+			const uint2 candPixel =
+				uint2(cand.pixelPacked & 0xFFFF, cand.pixelPacked >> 16);
+			const float candDepth = texture_depth[candPixel];
+			[branch]
+			if (candDepth <= 0)
+				continue;
+
+			const float3 Pc = reconstruct_position(
+				(candPixel + 0.5) * push.resolutionRcp, candDepth);
+			const float3 Nc = decode_normal(texture_normal_roughness[candPixel]);
+			const float pOwn = RESTIRDIReuseTarget(candLight, candUV, Pc, Nc);
+			[branch]
+			if (pOwn <= 0)
+				continue;
+
+			const float pCenter = RESTIRDIReuseTarget(candLight, candUV, P, N);
+			const float maxW =
+				GetFrame().totalLightPower / RESTIRLightPower(candLight);
+			const float candW = min(cand.weightSum / (cand.M * pOwn), maxW);
+			const float ci = RESTIRHGRequant(cand.M) * candScale;
+
+			const float mi =
+				(selectionW / (float)RESTIR_HASHGRID_CANDIDATES) *
+				RESTIRHGNoncanonical(ci, centerConfidence, cSum, pOwn, pCenter);
+			const float wi = mi * pCenter * candW;
+			wSum += wi;
+			if (wSum > 0 && rng.next_float() * wSum < wi)
+			{
+				result.lightIndex = cand.lightIndex;
+				result.uv = candUV;
+				result.targetPdf = pCenter;
+			}
+		}
+	}
+
+	result.M = (cSum + centerConfidence) /
+		(1.0 + (float)RESTIR_HASHGRID_CANDIDATES);
+	result.weightSum = (result.targetPdf > 0) ? wSum * result.M : 0;
+	result.visibility = 0; // re-traced by the caller
+	return result;
+}
+#endif // RDI_HASHGRID
+
 [numthreads(8, 8, 1)]
 void main(uint3 DTid : SV_DispatchThreadID)
 {
@@ -121,6 +406,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		RNG rng;
 		rng.init(pixel, GetFrame().frame_count + 2u);
 
+#ifndef RDI_HASHGRID
 		// Source 0 is this pixel's own (canonical) reservoir; spatial neighbors
 		// are gathered after it. The balance-heuristic merge tags each source
 		// with the surface it was built on so a neighbor that cannot see the
@@ -209,8 +495,18 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			++sourceCount;
 		}
 
-		reservoir = RESTIRDIMergeBalanceHeuristic(
-			sources, sourceCount, P, N, rng);
+		[branch]
+		if (push.biasCorrection == 1)
+			reservoir = RESTIRDIMergePairwiseMIS(
+				sources, sourceCount, push.spatialSampleCount, P, N, rng);
+		else
+			reservoir =
+				RESTIRDIMergeBalanceHeuristic(sources, sourceCount, P, N, rng);
+#else
+		// Hash-grid Stochastic Pairwise MIS: reuse from many surface-similar
+		// reservoirs gathered into this pixel's cell (see the build passes).
+		reservoir = RESTIRDIMergeHashGrid(pixel, P, N, reservoir, rng);
+#endif // RDI_HASHGRID
 
 		// Final visibility: re-trace a fresh shadow ray for the reused sample
 		// so the shadow reflects the current frame instead of the stale
