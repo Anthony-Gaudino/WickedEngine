@@ -92,6 +92,43 @@ inline void RESTIRDIStreamInitialCandidate(
 }
 
 /**
+ * Combined sampling density of a light across the initial pass's strategies.
+ *
+ * The balance-heuristic denominator: the expected number of times the light is
+ * drawn across the power-weighted tile pool (candidateCount draws), the uniform
+ * pool (uniformCount draws), and - for a directional light - the exhaustive
+ * sweep (one draw). Every candidate of a given light uses this same density, so
+ * the mixture stays unbiased regardless of which strategy actually drew it.
+ *
+ * @param[in] light - The candidate light.
+ * @param[in] candidateCount - Number of power-weighted tile draws.
+ * @param[in] uniformCount - Number of uniform draws.
+ * @param[in] lightCount - Total analytic light count.
+ * @param[in] totalPower - Sum of RESTIRLightPower over all lights.
+ * @param[in] hasTiles - Whether the power-weighted tiles are available.
+ *
+ * @return The combined sampling density (> 0 when any strategy can draw it).
+ */
+inline float RESTIRDIInitialDenom(
+	ShaderEntity light,
+	uint candidateCount,
+	uint uniformCount,
+	uint lightCount,
+	float totalPower,
+	bool hasTiles)
+{
+	// Tile selection pmf: power-proportional when tiles exist, else uniform.
+	const float pTile = hasTiles
+		? RESTIRLightPower(light) / totalPower
+		: 1.0 / (float)lightCount;
+	float d = candidateCount * pTile + uniformCount * (1.0 / (float)lightCount);
+	[branch]
+	if (light.GetType() == ENTITY_TYPE_DIRECTIONALLIGHT)
+		d += 1.0;
+	return d;
+}
+
+/**
  * Builds an initial DI reservoir by resampling the analytic light list.
  *
  * Draws candidateCount lights (from a pre-sampled tile when available, else
@@ -152,9 +189,11 @@ inline RESTIRDIReservoir RESTIRDISampleInitial(
 	// longer spikes.
 	for (uint i = 0; i < candidateCount; ++i)
 	{
-		// Draw one candidate light + its reciprocal source pdf.
+		// Draw one candidate light from the power-weighted tile (its resampling
+		// weight is reweighted analytically by RESTIRDIInitialDenom, so only
+		// the tile's light selection is used here, not its stored
+		// invSourcePdf).
 		uint lightIndex;
-		float invSourcePdf;
 		[branch]
 		if (tileBuffer >= 0)
 		{
@@ -162,12 +201,10 @@ inline RESTIRDIReservoir RESTIRDISampleInitial(
 			const RESTIRLightRef ref =
 				RESTIRLoadLightRef(tileBuffer, tileBase + slot);
 			lightIndex = ref.lightIndex;
-			invSourcePdf = ref.invSourcePdf;
 		}
 		else
 		{
 			lightIndex = iterator.first_item() + rng.next_uint(lightCount);
-			invSourcePdf = (float)lightCount;
 		}
 
 		M += 1;
@@ -181,27 +218,36 @@ inline RESTIRDIReservoir RESTIRDISampleInitial(
 
 		const ShaderEntity light = load_entity(lightIndex);
 
-		// Combined sampling density (balance heuristic): the expected number of
-		// times this light is drawn across every strategy. A local light is
-		// only reachable by the local pool, so its density is exactly
-		// candidateCount * p_local = candidateCount / invSourcePdf - identical
-		// to the previous single-strategy weighting, so local-only scenes are
-		// unchanged. A directional light is additionally swept once below,
-		// adding a +1 term (the exhaustive sweep draws each directional light
-		// exactly once), which shrinks a rare tile draw's weight to match.
-		float denom;
-		[branch]
-		if (light.GetType() == ENTITY_TYPE_DIRECTIONALLIGHT)
-		{
-			const float pLocal = (tileBuffer >= 0)
-				? RESTIRLightPower(light) / totalPower
-				: 1.0 / (float)lightCount;
-			denom = candidateCount * pLocal + 1.0;
-		}
-		else
-		{
-			denom = candidateCount / invSourcePdf;
-		}
+		// Combined sampling density across the tile, uniform and directional
+		// strategies (balance heuristic). Analytic (power-proportional) so it
+		// is identical whether this light is drawn from the tile or the uniform
+		// pool below - the tile's stored invSourcePdf is only its sampling
+		// mechanism.
+		const float denom = RESTIRDIInitialDenom(
+			light, candidateCount, RESTIR_DI_UNIFORM_CANDIDATES,
+			lightCount, totalPower, tileBuffer >= 0);
+
+		const float2 uv = float2(rng.next_float(), rng.next_float());
+		RESTIRDIStreamInitialCandidate(
+			light, lightIndex, uv, denom, P, N, weightSum, r, rng);
+	}
+
+	// Uniform-light candidates: every light gets a power-independent chance, so
+	// a dim light is sampled even when a much brighter light floods the tiles
+	// (which importance-sample by global power). MIS-combined with the tiles
+	// via the shared density above, so it stays unbiased and the tiles still
+	// handle the many-lights case.
+	for (uint u = 0; u < RESTIR_DI_UNIFORM_CANDIDATES; ++u)
+	{
+		const uint lightIndex =
+			iterator.first_item() + rng.next_uint(lightCount);
+
+		M += 1;
+
+		const ShaderEntity light = load_entity(lightIndex);
+		const float denom = RESTIRDIInitialDenom(
+			light, candidateCount, RESTIR_DI_UNIFORM_CANDIDATES,
+			lightCount, totalPower, tileBuffer >= 0);
 
 		const float2 uv = float2(rng.next_float(), rng.next_float());
 		RESTIRDIStreamInitialCandidate(
@@ -228,12 +274,11 @@ inline RESTIRDIReservoir RESTIRDISampleInitial(
 
 		const ShaderEntity light = load_entity(lightIndex);
 
-		// Same combined-density denominator as the directional branch above, so
-		// a light both strategies can draw is weighted consistently (unbiased).
-		const float pLocal = (tileBuffer >= 0)
-			? RESTIRLightPower(light) / totalPower
-			: 1.0 / (float)lightCount;
-		const float denom = candidateCount * pLocal + 1.0;
+		// Same combined density as every other strategy, so a light that more
+		// than one strategy can draw is weighted consistently (unbiased).
+		const float denom = RESTIRDIInitialDenom(
+			light, candidateCount, RESTIR_DI_UNIFORM_CANDIDATES,
+			lightCount, totalPower, tileBuffer >= 0);
 
 		const float2 uv = float2(rng.next_float(), rng.next_float());
 		RESTIRDIStreamInitialCandidate(

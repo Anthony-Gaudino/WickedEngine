@@ -322,6 +322,22 @@ Screen-space DI reservoir
  */
 static const uint RESTIR_DI_INITIAL_CANDIDATES = 4;
 
+/**
+ * Number of **uniformly**-drawn analytic-light candidates the initial pass adds
+ * alongside the power-weighted tile candidates, MIS-combined by the balance
+ * heuristic.
+ *
+ * The tiles importance-sample by global power, so a very bright light floods
+ * them and a dim light in the same scene is almost never a candidate - its
+ * contribution then flickers (sampled rarely, with a large compensating
+ * weight), worst under camera translation where temporal reuse cannot help. A
+ * few uniform draws give every light a power-independent chance, so a dim light
+ * is sampled reliably; the MIS weighting keeps it unbiased and lets the tiles
+ * still handle the many-lights case. Local (per-region) importance sampling
+ * (ReGIR) would be the scalable long-term fix; this is the cheap general one.
+ */
+static const uint RESTIR_DI_UNIFORM_CANDIDATES = 2;
+
 /** Spatial-reuse neighbor count per pixel. */
 static const uint RESTIR_DI_SPATIAL_SAMPLES = 4;
 
