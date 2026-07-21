@@ -90,8 +90,11 @@ inline RESTIRDIReservoir RESTIRDISampleInitial(
 			// cells' light sets so the grid does not print through as
 			// low-frequency blobs on nearby surfaces, while staying weighted
 			// toward the pixel's own cell (position-aware).
-			const int cell = RESTIRReGIRSampleCellTrilinear(
-				P, push.regirGridOriginCell, push.regirCellSize, rng);
+			const int cell = RESTIRReGIRSampleCell(
+				push.regirMode, P, push.regirGridOriginCell, push.onionCenter,
+				push.regirCellSize, push.onionParamsBuffer,
+				push.onionElevationBands, push.onionShells,
+				push.onionCellsPerShell, rng);
 
 			[branch]
 			if (cell >= 0)

@@ -5,7 +5,7 @@
 /**
  * ReSTIR - light tile pre-sampling pass.
  *
- * Fills the pre-sampled light-tile buffer once per frame (RTXDI's light
+ * Fills the pre-sampled light-tile buffer once per frame (light
  * pre-sampling). Each thread owns one tile slot and resamples
  * RESTIR_PRESAMPLE_CANDIDATES uniformly-drawn analytic lights into a single
  * winner, importance-sampled by emitted power. The winner is stored together
@@ -21,7 +21,7 @@
  * leaves the final estimator unbiased for any positive power proxy.
  *
  * References: Wyman & Panteleev 2021, "Rearchitecting Spatiotemporal Resampling
- *   for Production" (RTXDI light pre-sampling).
+ *   for Production" (light pre-sampling).
  */
 
 PUSHCONSTANT(push, RESTIRPresamplePushConstants);

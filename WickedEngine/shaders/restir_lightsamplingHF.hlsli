@@ -696,6 +696,259 @@ inline void RESTIRReGIRCellToWorld(
 	radius = cellSize * 0.8660254; // sqrt(3)/2 * edge
 }
 
+/*
+--- ReGIR onion mode --------------------------------------------------------
+ *
+ * Camera-centered concentric spherical shells. Shell radii grow geometrically
+ * (r_i = cellSize * g^i, g = 1 + dTheta, dTheta = PI / elevationBands), so a
+ * shell's radial thickness is proportional to its radius. Every shell shares
+ * one spherical angular grid: `elevationBands` equal-height latitude bands,
+ * each split into a cos(latitude)-reduced number of longitude cells so cells
+ * stay roughly square. With a constant angular grid and radius-proportional
+ * radial thickness, every cell subtends about the same solid angle and
+ * therefore projects to a roughly constant screen size at any depth.
+ *
+ * The onion buffer is the prefix sum of per-band longitude counts:
+ * bandOffset[b] = sum of longitude counts of bands < b, with
+ * bandOffset[elevationBands] = cellsPerShell. A (band, longitude) pair maps to
+ * a flat angular index bandOffset[band] + longitude, and back.
+ *
+ * Independent construction (geometric shells + reduced lat-long sphere
+ * binning).
+ */
+
+/**
+ * Reads a band prefix-sum entry (cumulative longitude count of bands < band).
+ *
+ * @param[in] onionBuffer - Bindless SRV of the band prefix-sum buffer (raw).
+ * @param[in] band - Band index in [0, elevationBands].
+ *
+ * @return Cumulative longitude-cell count before this band.
+ */
+inline uint RESTIRReGIROnionBandOffset(int onionBuffer, uint band)
+{
+	return bindless_buffers[descriptor_index(onionBuffer)].Load(band * 4);
+}
+
+/**
+ * Spherical decomposition used by the onion
+ * (x = r cos(az) cos(el), y = r sin(el), z = r sin(az) cos(el)).
+ *
+ * @param[in] p - Point relative to the onion center.
+ * @param[out] r - Radius.
+ * @param[out] azimuth - Azimuth angle (radians).
+ * @param[out] elevation - Elevation angle (radians, in [-pi/2, pi/2]).
+ */
+inline void RESTIRReGIROnionCartesianToSpherical(
+	float3 p, out float r, out float azimuth, out float elevation)
+{
+	r = length(p);
+	elevation = (r > 0) ? asin(clamp(p.y / r, -1.0, 1.0)) : 0.0;
+	azimuth = atan2(p.z, p.x);
+}
+
+/**
+ * Inverse of RESTIRReGIROnionCartesianToSpherical.
+ *
+ * @param[in] r - Radius.
+ * @param[in] azimuth - Azimuth angle (radians).
+ * @param[in] elevation - Elevation angle (radians).
+ *
+ * @return The Cartesian point (onion units).
+ */
+inline float3 RESTIRReGIROnionSphericalToCartesian(
+	float r, float azimuth, float elevation)
+{
+	return float3(
+		r * cos(azimuth) * cos(elevation),
+		r * sin(elevation),
+		r * sin(azimuth) * cos(elevation));
+}
+
+/**
+ * Maps a world position to its onion cell index.
+ *
+ * Takes the position relative to the onion center, decomposes it into radius /
+ * latitude / longitude, picks the geometric shell from the radius and the
+ * latitude band + cos-reduced longitude cell from the shared angular grid, then
+ * combines them into a flat cell index.
+ *
+ * @param[in] worldPos - World-space point.
+ * @param[in] center - World-space onion center.
+ * @param[in] cellSize - Inner shell radius / world scale.
+ * @param[in] onionBuffer - Bindless SRV of the band prefix-sum buffer.
+ * @param[in] elevationBands - Latitude band count.
+ * @param[in] shells - Concentric shell count.
+ * @param[in] cellsPerShell - Angular cells per shell.
+ *
+ * @return Onion cell index, or -1 if beyond the outermost shell.
+ */
+inline int RESTIRReGIROnionWorldToCell(
+	float3 worldPos, float3 center, float cellSize,
+	int onionBuffer, uint elevationBands, uint shells, uint cellsPerShell)
+{
+	float r, azimuth, elevation;
+	RESTIRReGIROnionCartesianToSpherical(
+		worldPos - center, r, azimuth, elevation);
+	if (azimuth < 0)
+		azimuth += 2 * PI; // normalize to [0, 2*PI)
+
+	const float dTheta = PI / (float)elevationBands;
+	const float g = 1.0 + dTheta; // shell growth ratio
+
+	// Inner sphere is a single cell; beyond the outermost shell, fall back.
+	[branch]
+	if (r <= cellSize)
+		return 0;
+	const int shell = (int)floor(log(r / cellSize) / log(g));
+	[branch]
+	if (shell >= (int)shells)
+		return -1;
+
+	// Latitude band, then the cos-reduced longitude cell within it.
+	const uint band = min(
+		(uint)floor((elevation + 0.5 * PI) / dTheta), elevationBands - 1);
+	const uint bandStart = RESTIRReGIROnionBandOffset(onionBuffer, band);
+	const uint bandEnd = RESTIRReGIROnionBandOffset(onionBuffer, band + 1);
+	const uint bandCount = max(bandEnd - bandStart, 1u);
+	const uint longitude =
+		min((uint)floor(azimuth / (2 * PI) * bandCount), bandCount - 1);
+
+	return (int)(1 + (uint)shell * cellsPerShell + bandStart + longitude);
+}
+
+/**
+ * Returns the world-space center and bounding radius of an onion cell.
+ *
+ * The inverse of RESTIRReGIROnionWorldToCell, used by the build to weight
+ * lights by their contribution to the cell.
+ *
+ * @param[in] cellIndex - Onion cell index.
+ * @param[in] center - World-space onion center.
+ * @param[in] cellSize - Inner shell radius / world scale.
+ * @param[in] onionBuffer - Bindless SRV of the band prefix-sum buffer.
+ * @param[in] elevationBands - Latitude band count.
+ * @param[in] cellsPerShell - Angular cells per shell.
+ * @param[out] cellCenter - World-space cell center.
+ * @param[out] cellRadius - Cell bounding-sphere radius (world units).
+ *
+ * @return true if the cell index is valid.
+ */
+inline bool RESTIRReGIROnionCellToWorld(
+	int cellIndex, float3 center, float cellSize,
+	int onionBuffer, uint elevationBands, uint cellsPerShell,
+	out float3 cellCenter, out float cellRadius)
+{
+	cellCenter = center;
+	cellRadius = cellSize;
+
+	// Cell 0 is the inner sphere; a negative index is invalid.
+	[branch]
+	if (cellIndex <= 0)
+		return cellIndex == 0;
+
+	const float dTheta = PI / (float)elevationBands;
+	const float g = 1.0 + dTheta;
+
+	const uint c = (uint)(cellIndex - 1);
+	const uint shell = c / cellsPerShell;
+	const uint angular = c % cellsPerShell;
+
+	// Find the latitude band whose prefix range contains this angular index.
+	uint band = elevationBands - 1;
+	[loop]
+	for (uint bi = 0; bi < elevationBands; ++bi)
+	{
+		[branch]
+		if (RESTIRReGIROnionBandOffset(onionBuffer, bi + 1) > angular)
+		{
+			band = bi;
+			break;
+		}
+	}
+	const uint bandStart = RESTIRReGIROnionBandOffset(onionBuffer, band);
+	const uint bandEnd = RESTIRReGIROnionBandOffset(onionBuffer, band + 1);
+	const uint bandCount = max(bandEnd - bandStart, 1u);
+	const uint longitude = angular - bandStart;
+
+	const float elevation = -0.5 * PI + ((float)band + 0.5) * dTheta;
+	const float azimuth =
+		((float)longitude + 0.5) * (2 * PI / (float)bandCount);
+
+	const float rInner = cellSize * pow(g, (float)shell);
+	const float rOuter = rInner * g;
+	const float rMid = sqrt(rInner * rOuter);
+
+	cellCenter =
+		center + RESTIRReGIROnionSphericalToCartesian(rMid, azimuth, elevation);
+
+	// Bounding radius ~ half the larger of the radial thickness and the local
+	// tangential cell extent (radius * band angle).
+	cellRadius = 0.5 * max(rOuter - rInner, rMid * dTheta);
+	return true;
+}
+
+/**
+ * Jitter magnitude (world units) for onion cell sampling at a point.
+ *
+ * Onion cells grow with distance, so the jitter that hides cell boundaries must
+ * scale with radius; the local tangential cell extent is about radius * dTheta
+ * (floored at the inner shell so the near field still jitters).
+ *
+ * @param[in] worldPos - World-space point.
+ * @param[in] center - World-space onion center.
+ * @param[in] cellSize - Inner shell radius / world scale.
+ * @param[in] elevationBands - Latitude band count.
+ *
+ * @return A world-space jitter radius.
+ */
+inline float RESTIRReGIROnionJitterScale(
+	float3 worldPos, float3 center, float cellSize, uint elevationBands)
+{
+	const float dTheta = PI / (float)elevationBands;
+	const float r = max(length(worldPos - center), cellSize);
+	return r * dTheta;
+}
+
+/**
+ * Selects a ReGIR cell for a shading point in the active mode.
+ *
+ * Grid mode uses the stochastic trilinear pick; onion mode jitters the point by
+ * the local cell scale (which hides the shell boundaries the way trilinear
+ * hides the grid) and looks up the containing onion cell.
+ *
+ * @param[in] mode - RESTIR_REGIR_MODE_GRID or RESTIR_REGIR_MODE_ONION.
+ * @param[in] P - World-space shading point.
+ * @param[in] gridOriginCell - Grid window origin (grid mode).
+ * @param[in] onionCenter - Onion center (onion mode).
+ * @param[in] cellSize - Cell size / onion inner-cell size.
+ * @param[in] onionBuffer - Bindless SRV of the onion band table (onion mode).
+ * @param[in] elevationBands - Onion latitude bands.
+ * @param[in] shells - Onion concentric shell count.
+ * @param[in] cellsPerShell - Onion angular cells per shell.
+ * @param[in,out] rng - Random generator.
+ *
+ * @return Cell index, or -1 if the point is outside the structure.
+ */
+inline int RESTIRReGIRSampleCell(
+	uint mode, float3 P, int3 gridOriginCell, float3 onionCenter, float cellSize,
+	int onionBuffer, uint elevationBands, uint shells, uint cellsPerShell,
+	inout RNG rng)
+{
+	[branch]
+	if (mode == RESTIR_REGIR_MODE_ONION)
+	{
+		const float jitter = RESTIRReGIROnionJitterScale(
+			P, onionCenter, cellSize, elevationBands);
+		const float3 offset =
+			(float3(rng.next_float(), rng.next_float(), rng.next_float()) * 2.0
+				- 1.0) * (jitter * 0.5);
+		return RESTIRReGIROnionWorldToCell(P + offset, onionCenter, cellSize,
+			onionBuffer, elevationBands, shells, cellsPerShell);
+	}
+	return RESTIRReGIRSampleCellTrilinear(P, gridOriginCell, cellSize, rng);
+}
+
 /**
  * Loads a ReGIR cell reservoir slot as a light reference for the per-pixel RIS.
  *

@@ -799,7 +799,7 @@ namespace wi::renderer
 		XMUINT2 resolution = {};
 		mutable int frame = 0;
 	};
-	// Rebuilds the shared pre-sampled light tiles for this frame (RTXDI light
+	// Rebuilds the shared pre-sampled light tiles for this frame (light
 	// pre-sampling), consumed by both ReSTIR_DI and ReSTIR_GI. Call once before
 	// them when either is enabled. Returns the SRV descriptor index of the tile
 	// buffer, or -1.

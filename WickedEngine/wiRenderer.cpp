@@ -154,11 +154,30 @@ GPUBuffer restir_light_tiles;
 // ReGIR camera-centered grid of per-cell light reservoirs (position-aware light
 // sampling), accumulated over frames; read by the DI initial pass.
 GPUBuffer restir_regir;
+// Onion band prefix-sum table (per-latitude longitude-cell counts), built once
+// for the active band/shell counts and read by the build+sample passes; only
+// allocated while ReGIR onion mode is active.
+GPUBuffer restir_regir_onion;
+// Master toggle for ReGIR position-aware light sampling in ReSTIR DI. When off,
+// the initial pass uses only the global power-proportional light tiles and the
+// grid buffers are freed. Code toggle for now.
+bool RESTIR_DI_REGIR_ENABLE = true;
+// ReGIR spatial structure: RESTIR_REGIR_MODE_GRID (camera-centered uniform
+// grid) or RESTIR_REGIR_MODE_ONION (camera-centered concentric shells, fine
+// near the eye and coarse far away). Code toggle for now.
+uint32_t RESTIR_REGIR_MODE = RESTIR_REGIR_MODE_ONION;
 // ReGIR cell edge length in world units. The camera-centered grid spans
 // RESTIR_REGIR_GRID_RES * this around the eye (fine cells near the viewer),
-// falling back to the global light tiles beyond that window. Tunable: larger
-// covers more of the scene but coarsens the cells.
+// falling back to the global light tiles beyond that window. In onion mode it
+// is the inner-cell world size that scales the layout. Tunable: larger covers
+// more of the scene but coarsens the cells.
 float RESTIR_REGIR_CELL_SIZE = 0.5f;
+// Onion latitude bands (angular resolution: more = finer cells / smaller screen
+// footprint) and concentric shell count (radial reach: more = the onion extends
+// further from the eye). Cell count grows ~ bands^2 * shells, so these trade
+// resolution and reach against VRAM.
+uint32_t RESTIR_REGIR_ONION_ELEVATION_BANDS = 24;
+uint32_t RESTIR_REGIR_ONION_SHELLS = 32;
 float DDGI_BLEND_SPEED = 0.1f;
 float GI_BOOST = 1.0f;
 bool MESH_SHADER_ALLOWED = false;
@@ -15762,31 +15781,160 @@ static void ReSTIR_ReGIRGrid(
 		(int)std::floor(eye.z / cellSize) - half);
 }
 
-// Rebuilds (accumulates) the ReGIR grid for this frame: streams new candidates
-// into every cell's persistent reservoir. The buffer is created zeroed once and
-// never re-cleared, so the reservoirs converge over frames.
-static void ReSTIR_ReGIRBuild(const CameraComponent& camera, CommandList cmd)
+// CPU-side onion layout: the per-latitude-band longitude-cell counts stored as a
+// prefix sum (bandOffset[b] = angular cells before band b, and
+// bandOffset[bands] = cellsPerShell), plus the total cell count. The layout is
+// static for a given band/shell count (only the world center moves per frame),
+// so it is cached and rebuilt on change.
+//
+// Independent construction: geometric radial shells + a reduced lat-long angular
+// grid shared by every shell (see the onion notes in restir_lightsamplingHF).
+struct ReSTIRReGIROnionLayout
 {
-	if (!restir_regir.IsValid())
+	wi::vector<uint32_t> bandOffset; // size bands + 1; prefix sum of longitudes
+	uint32_t cellsPerShell = 0;
+	uint32_t cellCount = 0;
+	uint32_t builtBands = 0;
+	uint32_t builtShells = 0;
+};
+static ReSTIRReGIROnionLayout restir_regir_onion_layout;
+
+// Builds the onion angular grid: the per-band longitude counts (cos-reduced
+// toward the poles so cells stay roughly square) as a prefix sum, and the total
+// cell count for the given band and shell counts.
+static void ReSTIR_ReGIROnionInitLayout(
+	ReSTIRReGIROnionLayout& layout, uint32_t bands, uint32_t shells)
+{
+	const float PI = 3.1415926535f;
+	const float dTheta = PI / (float)bands;
+	// Equatorial longitude count so an equatorial cell is ~square (arc = dTheta).
+	const int equatorLongitudes =
+		std::max(1, (int)std::lround(2.0f * PI / dTheta));
+
+	layout.bandOffset.assign((size_t)bands + 1, 0u);
+	uint32_t running = 0;
+	for (uint32_t b = 0; b < bands; ++b)
+	{
+		const float latitude = -0.5f * PI + ((float)b + 0.5f) * dTheta;
+		const int longitudes = std::max(1,
+			(int)std::lround((float)equatorLongitudes * std::cos(latitude)));
+		layout.bandOffset[b] = running;
+		running += (uint32_t)longitudes;
+	}
+	layout.bandOffset[bands] = running;
+	layout.cellsPerShell = running;
+	layout.cellCount = 1u + shells * running; // +1 for the inner sphere (cell 0)
+}
+
+// Ensures the cached onion layout matches the active band/shell counts and its
+// GPU buffer is up to date; returns the layout. Rebuilt only on change.
+static const ReSTIRReGIROnionLayout& ReSTIR_ReGIROnionEnsure()
+{
+	ReSTIRReGIROnionLayout& layout = restir_regir_onion_layout;
+	const uint32_t bands = std::min(std::max(1u,
+		RESTIR_REGIR_ONION_ELEVATION_BANDS), RESTIR_ONION_MAX_BANDS);
+	const uint32_t shells = std::max(1u, RESTIR_REGIR_ONION_SHELLS);
+
+	if (restir_regir_onion.IsValid() &&
+		layout.builtBands == bands && layout.builtShells == shells)
+		return layout;
+
+	ReSTIR_ReGIROnionInitLayout(layout, bands, shells);
+	layout.builtBands = bands;
+	layout.builtShells = shells;
+
+	// Upload the band prefix-sum table (raw uint buffer).
+	GPUBufferDesc bd;
+	bd.size = layout.bandOffset.size() * sizeof(uint32_t);
+	bd.bind_flags = BindFlag::SHADER_RESOURCE;
+	bd.misc_flags = ResourceMiscFlag::BUFFER_RAW;
+	device->CreateBuffer(&bd, layout.bandOffset.data(), &restir_regir_onion);
+	device->SetName(&restir_regir_onion, "restir.regir.onion");
+	return layout;
+}
+
+// Computes the onion center (camera position snapped to whole cellSize steps so
+// the layout only shifts occasionally) and the inner-cell world size.
+static void ReSTIR_ReGIROnionCenter(
+	const CameraComponent& camera, XMFLOAT3& center, float& cellSize)
+{
+	cellSize = std::max(RESTIR_REGIR_CELL_SIZE, 1e-4f);
+	const XMFLOAT3 eye = camera.Eye;
+	center = XMFLOAT3(
+		std::floor(eye.x / cellSize) * cellSize,
+		std::floor(eye.y / cellSize) * cellSize,
+		std::floor(eye.z / cellSize) * cellSize);
+}
+
+// Fills the ReGIRBuildPushConstants for this frame from the active mode, sizing
+// the cell buffer to the mode's slot count. Shared by the build and the DI
+// initial pass so both address the grid identically. Returns the active slot
+// count.
+static uint32_t ReSTIR_ReGIRSetup(
+	const CameraComponent& camera, RESTIRReGIRBuildPushConstants& push)
+{
+	const bool onion = (RESTIR_REGIR_MODE == RESTIR_REGIR_MODE_ONION);
+
+	push = {};
+	push.regirMode = RESTIR_REGIR_MODE;
+	push.onionParamsBuffer = -1;
+
+	uint32_t slotTotal;
+	if (onion)
+	{
+		const ReSTIRReGIROnionLayout& layout = ReSTIR_ReGIROnionEnsure();
+		slotTotal = layout.cellCount * RESTIR_REGIR_LIGHTS_PER_CELL;
+
+		XMFLOAT3 center;
+		float cellSize;
+		ReSTIR_ReGIROnionCenter(camera, center, cellSize);
+		push.cellSize = cellSize;
+		push.onionCenter = center;
+		push.onionElevationBands = layout.builtBands;
+		push.onionShells = layout.builtShells;
+		push.onionCellsPerShell = layout.cellsPerShell;
+		push.onionParamsBuffer =
+			device->GetDescriptorIndex(&restir_regir_onion, SubresourceType::SRV);
+	}
+	else
+	{
+		slotTotal = RESTIR_REGIR_SLOT_TOTAL;
+		XMINT3 gridOriginCell;
+		float cellSize;
+		ReSTIR_ReGIRGrid(camera, gridOriginCell, cellSize);
+		push.gridOriginCell = gridOriginCell;
+		push.cellSize = cellSize;
+	}
+	push.slotTotal = slotTotal;
+
+	// (Re)create the cell buffer when it cannot hold the active slot count (mode
+	// or onion-detail switch grows it). A stale buffer from the other mode is
+	// harmless - the per-cell key mismatch resets every cell on the next build.
+	const uint64_t needBytes = (uint64_t)sizeof(RESTIRReGIRCell) * slotTotal;
+	if (!restir_regir.IsValid() || restir_regir.desc.size < needBytes)
 	{
 		GPUBufferDesc bd;
-		bd.size = (uint64_t)sizeof(RESTIRReGIRCell) * RESTIR_REGIR_SLOT_TOTAL;
+		bd.size = needBytes;
 		bd.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
 		bd.misc_flags = ResourceMiscFlag::BUFFER_RAW;
 		device->CreateBufferZeroed(&bd, &restir_regir);
 		device->SetName(&restir_regir, "restir.regir");
 	}
 
+	return slotTotal;
+}
+
+// Rebuilds (accumulates) the ReGIR grid for this frame: streams new candidates
+// into every cell's persistent reservoir. The buffer is created zeroed once and
+// only re-cleared per cell (via the staleness key) as the window scrolls, so the
+// reservoirs converge over frames.
+static void ReSTIR_ReGIRBuild(const CameraComponent& camera, CommandList cmd)
+{
 	device->EventBegin("ReSTIR ReGIR Build", cmd);
 	auto regir_prof = wi::profiler::BeginRangeGPU("ReSTIR ReGIR Build", cmd);
 
-	XMINT3 gridOriginCell;
-	float cellSize;
-	ReSTIR_ReGIRGrid(camera, gridOriginCell, cellSize);
-
-	RESTIRReGIRBuildPushConstants regir_push = {};
-	regir_push.gridOriginCell = gridOriginCell;
-	regir_push.cellSize = cellSize;
+	RESTIRReGIRBuildPushConstants regir_push;
+	const uint32_t slotTotal = ReSTIR_ReGIRSetup(camera, regir_push);
 	regir_push.frameIndex = (uint)device->GetFrameCount();
 	regir_push.regirBuffer =
 		device->GetDescriptorIndex(&restir_regir, SubresourceType::UAV);
@@ -15796,7 +15944,7 @@ static void ReSTIR_ReGIRBuild(const CameraComponent& camera, CommandList cmd)
 	device->BindUAV(&restir_regir, 0, cmd);
 
 	device->Barrier(GPUBarrier::Buffer(&restir_regir, ResourceState::SHADER_RESOURCE, ResourceState::UNORDERED_ACCESS), cmd);
-	device->Dispatch((RESTIR_REGIR_SLOT_TOTAL + 63u) / 64u, 1, 1, cmd);
+	device->Dispatch((slotTotal + 63u) / 64u, 1, 1, cmd);
 	device->Barrier(GPUBarrier::Buffer(&restir_regir, ResourceState::UNORDERED_ACCESS, ResourceState::SHADER_RESOURCE), cmd);
 
 	wi::profiler::EndRange(regir_prof);
@@ -15911,15 +16059,31 @@ int ReSTIR_DI(
 
 	BindCommonResources(cmd);
 
-	// Accumulate the camera-centered ReGIR grid before sampling from it.
-	ReSTIR_ReGIRBuild(camera, cmd);
+	// Accumulate the camera-centered ReGIR grid before sampling from it. When
+	// ReGIR is toggled off, free its buffers and let the initial pass fall back
+	// to the global light tiles.
+	if (RESTIR_DI_REGIR_ENABLE)
+	{
+		ReSTIR_ReGIRBuild(camera, cmd);
+	}
+	else
+	{
+		restir_regir = {};
+		restir_regir_onion = {};
+	}
 
 	const uint32_t cur = (uint32_t)(res.frame & 1);
 	const uint32_t prev = 1u - cur;
 
-	XMINT3 regirGridOriginCell;
-	float regirCellSize;
-	ReSTIR_ReGIRGrid(camera, regirGridOriginCell, regirCellSize);
+	// Recompute the same grid/onion parameters the build used so the sample
+	// addresses the cells identically (cheap: the buffer is already sized and
+	// the onion layout cached). Skipped when ReGIR is off.
+	RESTIRReGIRBuildPushConstants regirParams = {};
+	regirParams.regirMode = RESTIR_REGIR_MODE;
+	regirParams.onionParamsBuffer = -1;
+	const bool regirActive = RESTIR_DI_REGIR_ENABLE && restir_regir.IsValid();
+	if (RESTIR_DI_REGIR_ENABLE)
+		ReSTIR_ReGIRSetup(camera, regirParams);
 
 	RESTIRDIPushConstants push;
 	push.resolution = res.resolution;
@@ -15932,11 +16096,17 @@ int ReSTIR_DI(
 	push.lightTileBuffer = restir_light_tiles.IsValid()
 		? device->GetDescriptorIndex(&restir_light_tiles, SubresourceType::SRV)
 		: -1;
-	push.regirBuffer = restir_regir.IsValid()
+	push.regirBuffer = regirActive
 		? device->GetDescriptorIndex(&restir_regir, SubresourceType::SRV)
 		: -1;
-	push.regirCellSize = regirCellSize;
-	push.regirGridOriginCell = regirGridOriginCell;
+	push.regirCellSize = regirParams.cellSize;
+	push.regirGridOriginCell = regirParams.gridOriginCell;
+	push.regirMode = regirParams.regirMode;
+	push.onionParamsBuffer = regirParams.onionParamsBuffer;
+	push.onionElevationBands = regirParams.onionElevationBands;
+	push.onionShells = regirParams.onionShells;
+	push.onionCellsPerShell = regirParams.onionCellsPerShell;
+	push.onionCenter = regirParams.onionCenter;
 
 	const uint32_t dispatch_x = (res.resolution.x + 7) / 8;
 	const uint32_t dispatch_y = (res.resolution.y + 7) / 8;

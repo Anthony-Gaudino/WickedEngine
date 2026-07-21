@@ -270,7 +270,7 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 	AddWidget(&restirGICheckBox);
 
 	restirDIVisibilityRejectCheckBox.Create("ReSTIR DI vis-reject: ");
-	restirDIVisibilityRejectCheckBox.SetTooltip("Toggle the RTXDI initial-visibility test for ReSTIR DI: invalidate occluded initial samples so reuse converges to the visible light. Removes the multi-light shadow-overlap flash/shimmer; turn off to compare against the keep-occluded (full-signal) behavior.");
+	restirDIVisibilityRejectCheckBox.SetTooltip("Toggle the initial-visibility test for ReSTIR DI: invalidate occluded initial samples so reuse converges to the visible light. Removes the multi-light shadow-overlap flash/shimmer; turn off to compare against the keep-occluded (full-signal) behavior.");
 	restirDIVisibilityRejectCheckBox.SetPos(XMFLOAT2(x, y += step));
 	restirDIVisibilityRejectCheckBox.SetSize(XMFLOAT2(itemheight, itemheight));
 	restirDIVisibilityRejectCheckBox.OnClick([](wi::gui::EventArgs args) {

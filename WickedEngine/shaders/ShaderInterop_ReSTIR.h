@@ -17,7 +17,7 @@
  * References: Bitterli et al. 2020, "Spatiotemporal reservoir resampling for
  *   real-time ray tracing with dynamic direct lighting" (ReSTIR). Wyman &
  *   Panteleev 2021, "Rearchitecting Spatiotemporal Resampling for Production"
- *   (RTXDI, light presampling tiles).
+ *   (light presampling tiles).
  */
 
 /**
@@ -52,6 +52,16 @@ static const uint RESTIR_PRESAMPLE_CANDIDATES = 8;
 ReGIR (Reservoir-based Grid Importance Resampling)
 ################################################################################
 */
+
+/** ReGIR spatial-structure mode: camera-centered uniform grid. */
+static const uint RESTIR_REGIR_MODE_GRID = 0;
+
+/**
+ * ReGIR spatial-structure mode: camera-centered onion (concentric spherical
+ * shells). Cells grow with distance from the eye, so the near field stays fine
+ * while the structure still reaches far, unlike the fixed-size uniform grid.
+ */
+static const uint RESTIR_REGIR_MODE_ONION = 1;
 
 /**
  * ReGIR grid resolution (cells per axis) of the camera-centered grid.
@@ -96,12 +106,13 @@ static const uint RESTIR_REGIR_BUILD_SAMPLES = 8;
 static const float RESTIR_REGIR_MAX_M = 512.0;
 
 /**
- * One ReGIR cell reservoir slot (16 bytes, raw uint4).
+ * One ReGIR cell reservoir slot (32 bytes, 2x raw uint4).
  *
  * Persists across frames: each frame the build streams new candidates into it
  * and caps M, so it converges to a stable importance-sampled light for the
  * cell. The initial pass reads lightIndex and forms the reciprocal source pdf
- * weightSum / (M * targetWeight).
+ * weightSum / (M * targetWeight). The second uint4 holds the staleness key
+ * (see the worldCell* fields).
  */
 struct RESTIRReGIRCell
 {
@@ -120,15 +131,21 @@ struct RESTIRReGIRCell
 	float targetWeight;
 
 	/**
-	 * World-cell coordinate this slot currently caches (toroidal identity).
+	 * Staleness key identifying the world region this slot currently caches.
 	 *
-	 * The camera-centered grid addresses its persistent buffer toroidally
-	 * (world cell modulo the grid resolution), so one buffer slot is reused for
-	 * a different world cell whenever the grid scrolls with the camera. The
-	 * build pass compares these against the slot's current world cell and
-	 * resets the reservoir on a mismatch, so a scrolled-in slot starts empty
-	 * instead of inheriting the opposite edge's stale light set. A zeroed slot
-	 * reads (0,0,0) and is guarded by the `M <= 0` empty check.
+	 * The build pass compares this against the slot's current key and resets the
+	 * reservoir on a mismatch, so a slot that now maps to a different world
+	 * region starts empty instead of inheriting a stale light set. A zeroed slot
+	 * reads (0,0,0) and is otherwise guarded by the `M <= 0` empty check.
+	 *
+	 * - **Grid mode:** the slot's world-cell coordinate. The camera-centered
+	 *   grid addresses its buffer toroidally (world cell modulo the resolution),
+	 *   so a slot is reused for a different world cell whenever the grid scrolls;
+	 *   only the scrolled-in shell mismatches and resets.
+	 * - **Onion mode:** the quantized onion center. All onion cells are defined
+	 *   relative to the (camera-snapped) center, so when it moves every cell's
+	 *   world region changes at once and the whole grid resets together; while
+	 *   the center is stationary the cells keep accumulating.
 	 */
 	int worldCellX;
 	int worldCellY;
@@ -136,6 +153,32 @@ struct RESTIRReGIRCell
 
 	uint pad0;
 };
+
+/*
+--- ReGIR onion structure --------------------------------------------------- *
+ *
+ * The onion is a camera-centered set of concentric spherical shells. Shell
+ * radii grow geometrically (r_i = r0 * g^i with g = 1 + dTheta), so radial
+ * thickness is proportional to radius. Every shell shares ONE spherical angular
+ * grid: `onionElevationBands` equal-height latitude bands, each split into
+ * `round(equatorAzimuth * cos(latitude))` longitude cells (fewer toward the
+ * poles) so cells stay roughly square. With a constant angular grid and radial
+ * thickness proportional to radius, every cell subtends about the same solid
+ * angle - i.e. it projects to a roughly constant screen-space size at any
+ * depth, which is what keeps near-field cells fine without a separate near/far
+ * grid.
+ *
+ * The only per-layout data the GPU needs is the prefix sum of per-band
+ * longitude counts (RESTIRReGIROnionBands below), from which a (band,
+ * longitude) pair maps to a flat angular index and back. The scalar parameters
+ * (band count, shell count, cells-per-shell) travel in the push constants.
+ *
+ * This is an independent construction (standard geometric-shell + reduced
+ * lat-long sphere binning).
+ */
+
+/** Hard cap on onion latitude bands (bounds the prefix-sum buffer + loops). */
+static const uint RESTIR_ONION_MAX_BANDS = 128;
 
 /**
  * Confidence cap for temporal reuse.
@@ -925,7 +968,7 @@ struct RESTIRDIPushConstants
 	/**
 	 * 1 = invalidate an occluded initial sample (set its weight to 0) so
 	 * spatiotemporal reuse converges to the visible light. This is the standard
-	 * RTXDI initial-visibility test: in a region shadowed by one light but lit
+	 * initial-visibility test: in a region shadowed by one light but lit
 	 * by another it removes the per-frame black<->over-bright swing (flash on
 	 * motion, shimmer when static) of the unbiased unshadowed-target estimator,
 	 * by locking the reservoir onto the visible light with the correct weight
@@ -959,6 +1002,29 @@ struct RESTIRDIPushConstants
 	 * ReGIR grid. Must match the value passed to the build pass this frame.
 	 */
 	int3 regirGridOriginCell;
+
+	/** RESTIR_REGIR_MODE_GRID or RESTIR_REGIR_MODE_ONION. */
+	uint regirMode;
+
+	/**
+	 * Bindless SRV of the onion band prefix-sum buffer (onionElevationBands + 1
+	 * uints), or -1 in grid mode.
+	 */
+	int onionParamsBuffer;
+
+	/** Onion latitude bands (elevation quantization). */
+	uint onionElevationBands;
+
+	/** Onion concentric shell count (radial reach). */
+	uint onionShells;
+
+	/** Total angular cells in one shell. */
+	uint onionCellsPerShell;
+
+	/** World-space onion center (camera-snapped). Must match the build pass. */
+	float3 onionCenter;
+
+	uint pad0;
 };
 
 /**
@@ -1071,7 +1137,10 @@ struct RESTIRReGIRBuildPushConstants
 	 */
 	int3 gridOriginCell;
 
-	/** Cell edge length in world units. */
+	/**
+	 * Cell edge length in world units (grid), or the onion inner-cell world size
+	 * that scales the unit-radius onion layout (onion).
+	 */
 	float cellSize;
 
 	uint frameIndex;
@@ -1079,8 +1148,31 @@ struct RESTIRReGIRBuildPushConstants
 	/** Bindless UAV index of the ReGIR cell buffer being accumulated. */
 	int regirBuffer;
 
+	/** RESTIR_REGIR_MODE_GRID or RESTIR_REGIR_MODE_ONION. */
+	uint regirMode;
+
+	/** Active cell-slot count to dispatch/bound (mode-dependent). */
+	uint slotTotal;
+
+	/**
+	 * Bindless SRV of the onion band prefix-sum buffer (onionElevationBands + 1
+	 * uints, the cumulative longitude-cell counts), or -1 in grid mode.
+	 */
+	int onionParamsBuffer;
+
+	/** Onion latitude bands (elevation quantization). */
+	uint onionElevationBands;
+
+	/** Onion concentric shell count (radial reach). */
+	uint onionShells;
+
+	/** Total angular cells in one shell (sum of per-band longitude counts). */
+	uint onionCellsPerShell;
+
+	/** World-space onion center (camera-snapped). */
+	float3 onionCenter;
+
 	uint pad0;
-	uint pad1;
 };
 
 #endif // WI_SHADERINTEROP_RESTIR_H

@@ -34,19 +34,38 @@ RWByteAddressBuffer regir : register(u0);
 void main(uint3 DTid : SV_DispatchThreadID)
 {
 	const uint slot = DTid.x;
-	if (slot >= RESTIR_REGIR_SLOT_TOTAL)
+	if (slot >= push.slotTotal)
 		return;
 
 	const int cellIndex = (int)(slot / RESTIR_REGIR_LIGHTS_PER_CELL);
-	int3 worldCell;
+
+	// Resolve the cell's world geometry and its per-mode staleness key.
+	//  - Grid mode: key = the cell's toroidal world cell (distinct per cell); a
+	//    scrolled-in slot mismatches and resets.
+	//  - Onion mode: key = the quantized onion center (shared by every cell);
+	//    when the camera-snapped center moves, every cell resets together.
+	int3 keyCell;
 	float3 cellCenter;
 	float cellRadius;
-	RESTIRReGIRCellToWorld(
-		cellIndex, push.gridOriginCell, push.cellSize,
-		worldCell, cellCenter, cellRadius);
+	bool cellValid = true;
+	[branch]
+	if (push.regirMode == RESTIR_REGIR_MODE_ONION)
+	{
+		cellValid = RESTIRReGIROnionCellToWorld(
+			cellIndex, push.onionCenter, push.cellSize, push.onionParamsBuffer,
+			push.onionElevationBands, push.onionCellsPerShell,
+			cellCenter, cellRadius);
+		keyCell = int3(round(push.onionCenter / push.cellSize));
+	}
+	else
+	{
+		RESTIRReGIRCellToWorld(
+			cellIndex, push.gridOriginCell, push.cellSize,
+			keyCell, cellCenter, cellRadius);
+	}
 
 	// Load this slot's persistent reservoir (32-byte cell: reservoir in the
-	// first uint4, toroidal world-cell key in the second).
+	// first uint4, staleness key in the second).
 	const uint4 raw0 = regir.Load4(slot * 32);
 	const uint4 raw1 = regir.Load4(slot * 32 + 16);
 	uint lightIndex = raw0.x;
@@ -55,13 +74,12 @@ void main(uint3 DTid : SV_DispatchThreadID)
 	float targetWeight = asfloat(raw0.w);
 	const int3 storedCell = int3(asint(raw1.x), asint(raw1.y), asint(raw1.z));
 
-	// Toroidal invalidation: if the camera-centered window has scrolled so this
-	// buffer slot now maps to a different world cell than it last cached, the
-	// reservoir belongs to the opposite edge's world region - reset it so the
-	// slot starts empty (and the initial pass falls back to the tiles for it)
-	// instead of injecting a stale, wrong-location light set.
+	// Invalidation: if this buffer slot now maps to a different world region
+	// than it last cached (grid scrolled, or onion center moved), reset it so
+	// the slot starts empty (and the initial pass falls back to the tiles for
+	// it) instead of injecting a stale, wrong-location light set.
 	[branch]
-	if (any(storedCell != worldCell))
+	if (any(storedCell != keyCell))
 	{
 		lightIndex = RESTIR_INVALID_LIGHT_INDEX;
 		weightSum = 0;
@@ -87,7 +105,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
 	const uint lightCount = iterator.item_count();
 
 	[branch]
-	if (lightCount > 0)
+	if (lightCount > 0 && cellValid)
 	{
 		// RNG::init packs id as (id.x << 16) | id.y, so a slot index that needs
 		// more than 16 bits (RESTIR_REGIR_SLOT_TOTAL is ~2^21 here) would lose
@@ -124,9 +142,9 @@ void main(uint3 DTid : SV_DispatchThreadID)
 	regir.Store4(
 		slot * 32,
 		uint4(lightIndex, asuint(weightSum), asuint(M), asuint(targetWeight)));
-	// Stamp the slot's current toroidal identity so a later scroll can detect
-	// that it has gone stale.
+	// Stamp the slot's current staleness key so a later scroll / center move
+	// can detect that it has gone stale.
 	regir.Store4(
 		slot * 32 + 16,
-		uint4(asuint(worldCell.x), asuint(worldCell.y), asuint(worldCell.z), 0));
+		uint4(asuint(keyCell.x), asuint(keyCell.y), asuint(keyCell.z), 0));
 }
