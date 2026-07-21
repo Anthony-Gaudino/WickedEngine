@@ -100,9 +100,23 @@ inline RESTIRDIReservoir RESTIRDISampleInitial(
 					rng.next_uint(RESTIR_REGIR_LIGHTS_PER_CELL);
 				const RESTIRLightRef ref =
 					RESTIRReGIRLoadSlot(regirBuffer, slot);
-				lightIndex = ref.lightIndex;
-				invSourcePdf = ref.invSourcePdf;
-				drawn = true;
+
+				// Only consume the ReGIR draw when the cell slot actually holds
+				// a light. A cell that has not converged yet (or whose slot
+				// caches no in-range light) returns an invalid reference with a
+				// zero source pdf; treating that as a drawn candidate would
+				// suppress the tile / uniform fallback below and leave the
+				// pixel with no candidate at all - i.e. an unlit region
+				// wherever the grid is not yet populated. Falling through keeps
+				// coverage correct.
+				[branch]
+				if (ref.lightIndex != RESTIR_INVALID_LIGHT_INDEX &&
+					ref.invSourcePdf > 0)
+				{
+					lightIndex = ref.lightIndex;
+					invSourcePdf = ref.invSourcePdf;
+					drawn = true;
+				}
 			}
 		}
 

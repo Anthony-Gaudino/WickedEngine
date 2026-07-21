@@ -70,8 +70,14 @@ void main(uint3 DTid : SV_DispatchThreadID)
 	[branch]
 	if (lightCount > 0)
 	{
+		// RNG::init packs id as (id.x << 16) | id.y, so a slot index that needs
+		// more than 16 bits (RESTIR_REGIR_SLOT_TOTAL is ~2^21 here) would lose
+		// its high bits and collide. Those high bits are exactly the cell's Z
+		// column (z contributes slot >> 16), so a naive uint2(slot, 0) seed
+		// makes every cell in a Z column share the same candidate stream. Split
+		// the full slot across both id components so all bits survive.
 		RNG rng;
-		rng.init(uint2(slot, 0), push.frameIndex);
+		rng.init(uint2(slot & 0xFFFFu, slot >> 16u), push.frameIndex);
 
 		// Uniform source pmf for this frame's streamed candidates.
 		const float invUniformPdf = (float)lightCount;
