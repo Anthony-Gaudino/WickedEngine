@@ -811,6 +811,7 @@ namespace wi::renderer
 	int ReSTIR_DI(
 		const ReSTIRDIResources& res,
 		const wi::scene::Scene& scene,
+		const wi::scene::CameraComponent& camera,
 		wi::graphics::CommandList cmd
 	);
 	struct ReSTIRGIResources

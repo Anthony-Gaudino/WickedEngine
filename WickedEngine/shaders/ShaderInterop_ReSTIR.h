@@ -54,15 +54,18 @@ ReGIR (Reservoir-based Grid Importance Resampling)
 */
 
 /**
- * ReGIR grid resolution (cells per axis) of the world-anchored grid.
+ * ReGIR grid resolution (cells per axis) of the camera-centered grid.
  *
  * Each cell caches a set of lights pre-selected by their contribution to that
  * cell's location (power / distance^2), so a dim light near a surface is
  * sampled adequately instead of being crowded out by a brighter light far away
  * (which the global power-proportional tiles cannot avoid). The grid is
- * anchored to the scene bounds (not the camera) so a cell always maps to the
- * same world region - that both lets each cell **accumulate its reservoir over
- * frames**.
+ * centered on the camera with a fixed cell size, so cells stay fine wherever
+ * the viewer is regardless of scene extent; it spans RESTIR_REGIR_GRID_RES
+ * cells around the eye and falls back to the global tiles beyond that window.
+ * The buffer is addressed toroidally (world cell modulo this resolution) so
+ * each cell still **accumulates its reservoir across frames** while the window
+ * scrolls with the camera.
  */
 static const uint RESTIR_REGIR_GRID_RES = 24;
 
@@ -115,6 +118,23 @@ struct RESTIRReGIRCell
 
 	/** Cell volume weight of the chosen light (its target for this cell). */
 	float targetWeight;
+
+	/**
+	 * World-cell coordinate this slot currently caches (toroidal identity).
+	 *
+	 * The camera-centered grid addresses its persistent buffer toroidally
+	 * (world cell modulo the grid resolution), so one buffer slot is reused for
+	 * a different world cell whenever the grid scrolls with the camera. The
+	 * build pass compares these against the slot's current world cell and
+	 * resets the reservoir on a mismatch, so a scrolled-in slot starts empty
+	 * instead of inheriting the opposite edge's stale light set. A zeroed slot
+	 * reads (0,0,0) and is guarded by the `M <= 0` empty check.
+	 */
+	int worldCellX;
+	int worldCellY;
+	int worldCellZ;
+
+	uint pad0;
 };
 
 /**
@@ -926,16 +946,19 @@ struct RESTIRDIPushConstants
 	 * to fall back to the global power-proportional tiles. When valid, the
 	 * initial pass draws its candidates from the grid cell containing the
 	 * pixel, which importance-samples lights by their contribution to that
-	 * location. The grid center is derived in-shader from the camera (snapped
-	 * to regirCellSize), so it matches the build pass without being passed.
+	 * location. Cells outside the camera-centered window fall back to the
+	 * tiles.
 	 */
 	int regirBuffer;
 
 	/** ReGIR cell edge length in world units. */
 	float regirCellSize;
 
-	/** World-space min corner of the scene-anchored ReGIR grid. */
-	float3 regirGridMin;
+	/**
+	 * World-cell coordinate of local buffer cell (0,0,0) of the camera-centered
+	 * ReGIR grid. Must match the value passed to the build pass this frame.
+	 */
+	int3 regirGridOriginCell;
 };
 
 /**
@@ -1037,8 +1060,16 @@ struct RESTIRPresamplePushConstants
  */
 struct RESTIRReGIRBuildPushConstants
 {
-	/** World-space min corner of the scene-anchored grid. */
-	float3 gridMin;
+	/**
+	 * World-cell coordinate of local buffer cell (0,0,0).
+	 *
+	 * The camera-centered grid spans world cells [gridOriginCell,
+	 * gridOriginCell + RESTIR_REGIR_GRID_RES); a world position maps to cell
+	 * floor(worldPos / cellSize). The origin scrolls in whole-cell steps as the
+	 * camera moves, which keeps the toroidal buffer addressing stable for cells
+	 * that remain inside the window.
+	 */
+	int3 gridOriginCell;
 
 	/** Cell edge length in world units. */
 	float cellSize;

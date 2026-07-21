@@ -1175,7 +1175,7 @@ namespace wi
 
 			if (wi::renderer::GetReSTIRDIEnabled())
 			{
-				wi::renderer::ReSTIR_DI(restirDIResources, *scene, cmd);
+				wi::renderer::ReSTIR_DI(restirDIResources, *scene, *camera, cmd);
 			}
 
 			if (wi::renderer::GetReSTIRGIEnabled())

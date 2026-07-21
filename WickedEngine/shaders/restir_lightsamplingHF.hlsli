@@ -596,67 +596,103 @@ inline float RESTIRReGIRVolumeWeight(
 }
 
 /**
+ * Positive modulo for each component of an int3 (result in [0, n)).
+ *
+ * HLSL `%` follows the sign of the dividend, so a plain `a % n` yields negative
+ * results for negative world-cell coordinates; this wraps them into [0, n) as
+ * the toroidal buffer addressing requires.
+ *
+ * @param[in] a - Dividend (may be negative).
+ * @param[in] n - Positive modulus.
+ *
+ * @return `a` reduced modulo `n`, per component, in [0, n).
+ */
+inline int3 RESTIRReGIRPosMod(int3 a, int n)
+{
+	return ((a % n) + n) % n;
+}
+
+/**
  * Stochastically selects a ReGIR cell for a shading point using trilinear
  * weights over the eight cells whose centers surround it.
  *
  * A candidate drawn this way is, in expectation, a trilinear blend of the eight
  * neighboring cells' light sets - the same interpolation an irradiance-probe
  * grid uses to hide its structure - so the grid does not print through as hard
- * cells. The grid is anchored to the scene (gridMin fixed in world space),
- * which is what lets each cell accumulate its reservoir across frames.
+ * cells. The grid is centered on the camera: a world position maps to world
+ * cell floor(worldPos / cellSize), and only cells inside the window
+ * [gridOriginCell, gridOriginCell + RESTIR_REGIR_GRID_RES) are cached. The
+ * returned index is the **toroidal** buffer slot (world cell modulo the grid
+ * resolution), so a world cell keeps the same slot as the window scrolls and
+ * its reservoir accumulates across frames.
  *
  * @param[in] worldPos - World-space shading point.
- * @param[in] gridMin - World-space min corner of the grid.
+ * @param[in] gridOriginCell - World-cell coordinate of buffer cell (0,0,0).
  * @param[in] cellSize - Cell edge length (world units).
  * @param[in,out] rng - Random generator (draws the stochastic corner).
  *
- * @return Cell index in [0, RESTIR_REGIR_CELL_COUNT), or -1 if the chosen cell
- *   is outside the grid.
+ * @return Toroidal cell index in [0, RESTIR_REGIR_CELL_COUNT), or -1 if the
+ *   chosen cell is outside the camera-centered window.
  */
 inline int RESTIRReGIRSampleCellTrilinear(
-	float3 worldPos, float3 gridMin, float cellSize, inout RNG rng)
+	float3 worldPos, int3 gridOriginCell, float cellSize, inout RNG rng)
 {
 	// Position in "cell-center space": integer coordinates land on cell
-	// centers, so floor() gives the lower-corner cell of the surrounding 2x2x2
-	// block and the fraction is the trilinear blend weight toward the upper
-	// corner.
-	const float3 centerCoord = (worldPos - gridMin) / cellSize - 0.5;
-	const int3 baseCell = int3(floor(centerCoord));
+	// centers, so floor() gives the lower-corner world cell of the surrounding
+	// 2x2x2 block and the fraction is the trilinear blend weight toward the
+	// upper corner.
+	const float3 centerCoord = worldPos / cellSize - 0.5;
+	const int3 baseWorldCell = int3(floor(centerCoord));
 	const float3 f = frac(centerCoord);
 
 	const int3 corner = int3(
 		rng.next_float() < f.x ? 1 : 0,
 		rng.next_float() < f.y ? 1 : 0,
 		rng.next_float() < f.z ? 1 : 0);
-	const int3 cell = baseCell + corner;
+	const int3 worldCell = baseWorldCell + corner;
+
+	const int res = (int)RESTIR_REGIR_GRID_RES;
 
 	[branch]
-	if (any(cell < 0) || any(cell >= (int)RESTIR_REGIR_GRID_RES))
+	if (any(worldCell < gridOriginCell) ||
+		any(worldCell >= gridOriginCell + res))
 		return -1;
 
-	return cell.x + cell.y * (int)RESTIR_REGIR_GRID_RES +
-		cell.z * (int)(RESTIR_REGIR_GRID_RES * RESTIR_REGIR_GRID_RES);
+	const int3 cell = RESTIRReGIRPosMod(worldCell, res);
+	return cell.x + cell.y * res + cell.z * (res * res);
 }
 
 /**
- * Returns the world-space center and bounding-sphere radius of a ReGIR cell.
+ * Returns the world cell and world-space geometry of a toroidal ReGIR slot.
  *
- * @param[in] cellIndex - Cell index in [0, RESTIR_REGIR_CELL_COUNT).
- * @param[in] gridMin - World-space min corner of the grid.
+ * Given a buffer cell index and the current window origin, recovers the world
+ * cell that slot currently caches (the unique cell congruent to the buffer
+ * coordinate modulo the resolution inside
+ * [gridOriginCell, gridOriginCell + RESTIR_REGIR_GRID_RES)), and from it the
+ * cell center and bounding-sphere radius. The build pass also uses the returned
+ * world cell as the slot's toroidal identity for staleness detection.
+ *
+ * @param[in] cellIndex - Buffer cell index in [0, RESTIR_REGIR_CELL_COUNT).
+ * @param[in] gridOriginCell - World-cell coordinate of buffer cell (0,0,0).
  * @param[in] cellSize - Cell edge length (world units).
+ * @param[out] worldCell - World-cell coordinate this slot represents.
  * @param[out] center - World-space cell center.
  * @param[out] radius - Cell bounding-sphere radius (half the cell diagonal).
  */
 inline void RESTIRReGIRCellToWorld(
-	int cellIndex, float3 gridMin, float cellSize,
-	out float3 center, out float radius)
+	int cellIndex, int3 gridOriginCell, float cellSize,
+	out int3 worldCell, out float3 center, out float radius)
 {
-	const uint res = RESTIR_REGIR_GRID_RES;
-	const int3 cell = int3(
-		cellIndex % (int)res,
-		(cellIndex / (int)res) % (int)res,
-		cellIndex / (int)(res * res));
-	center = gridMin + (float3(cell) + 0.5) * cellSize;
+	const int res = (int)RESTIR_REGIR_GRID_RES;
+	const int3 bufferCoord = int3(
+		cellIndex % res,
+		(cellIndex / res) % res,
+		cellIndex / (res * res));
+	// Invert the toroidal map: the world cell is the representative of
+	// bufferCoord (mod res) that lies inside the current window.
+	worldCell =
+		gridOriginCell + RESTIRReGIRPosMod(bufferCoord - gridOriginCell, res);
+	center = (float3(worldCell) + 0.5) * cellSize;
 	radius = cellSize * 0.8660254; // sqrt(3)/2 * edge
 }
 
@@ -676,8 +712,10 @@ inline void RESTIRReGIRCellToWorld(
  */
 inline RESTIRLightRef RESTIRReGIRLoadSlot(int regirBuffer, uint slot)
 {
+	// Cells are 32 bytes (RESTIRReGIRCell); the reservoir fields the sampler
+	// needs are the first uint4 (the second holds the toroidal world-cell key).
 	const uint4 raw =
-		bindless_buffers[descriptor_index(regirBuffer)].Load4(slot * 16);
+		bindless_buffers[descriptor_index(regirBuffer)].Load4(slot * 32);
 
 	RESTIRLightRef ref;
 	ref.lightIndex = raw.x;

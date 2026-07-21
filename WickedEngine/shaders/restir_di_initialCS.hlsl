@@ -91,7 +91,7 @@ inline RESTIRDIReservoir RESTIRDISampleInitial(
 			// low-frequency blobs on nearby surfaces, while staying weighted
 			// toward the pixel's own cell (position-aware).
 			const int cell = RESTIRReGIRSampleCellTrilinear(
-				P, push.regirGridMin, push.regirCellSize, rng);
+				P, push.regirGridOriginCell, push.regirCellSize, rng);
 
 			[branch]
 			if (cell >= 0)

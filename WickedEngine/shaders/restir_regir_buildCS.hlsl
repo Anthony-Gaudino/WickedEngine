@@ -38,17 +38,36 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		return;
 
 	const int cellIndex = (int)(slot / RESTIR_REGIR_LIGHTS_PER_CELL);
+	int3 worldCell;
 	float3 cellCenter;
 	float cellRadius;
 	RESTIRReGIRCellToWorld(
-		cellIndex, push.gridMin, push.cellSize, cellCenter, cellRadius);
+		cellIndex, push.gridOriginCell, push.cellSize,
+		worldCell, cellCenter, cellRadius);
 
-	// Load this slot's persistent reservoir.
-	const uint4 raw = regir.Load4(slot * 16);
-	uint lightIndex = raw.x;
-	float weightSum = asfloat(raw.y);
-	float M = asfloat(raw.z);
-	float targetWeight = asfloat(raw.w);
+	// Load this slot's persistent reservoir (32-byte cell: reservoir in the
+	// first uint4, toroidal world-cell key in the second).
+	const uint4 raw0 = regir.Load4(slot * 32);
+	const uint4 raw1 = regir.Load4(slot * 32 + 16);
+	uint lightIndex = raw0.x;
+	float weightSum = asfloat(raw0.y);
+	float M = asfloat(raw0.z);
+	float targetWeight = asfloat(raw0.w);
+	const int3 storedCell = int3(asint(raw1.x), asint(raw1.y), asint(raw1.z));
+
+	// Toroidal invalidation: if the camera-centered window has scrolled so this
+	// buffer slot now maps to a different world cell than it last cached, the
+	// reservoir belongs to the opposite edge's world region - reset it so the
+	// slot starts empty (and the initial pass falls back to the tiles for it)
+	// instead of injecting a stale, wrong-location light set.
+	[branch]
+	if (any(storedCell != worldCell))
+	{
+		lightIndex = RESTIR_INVALID_LIGHT_INDEX;
+		weightSum = 0;
+		M = 0;
+		targetWeight = 0;
+	}
 
 	// A fresh (zero-initialized) slot holds no light yet.
 	[branch]
@@ -103,6 +122,11 @@ void main(uint3 DTid : SV_DispatchThreadID)
 	}
 
 	regir.Store4(
-		slot * 16,
+		slot * 32,
 		uint4(lightIndex, asuint(weightSum), asuint(M), asuint(targetWeight)));
+	// Stamp the slot's current toroidal identity so a later scroll can detect
+	// that it has gone stale.
+	regir.Store4(
+		slot * 32 + 16,
+		uint4(asuint(worldCell.x), asuint(worldCell.y), asuint(worldCell.z), 0));
 }

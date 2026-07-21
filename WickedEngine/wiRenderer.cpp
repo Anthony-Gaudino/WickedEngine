@@ -151,9 +151,14 @@ bool RESTIR_DI_VISIBILITY_REJECT = true;
 // Shared, resolution-independent pre-sampled light tiles (RESTIRLightRef, raw),
 // rebuilt once per frame and read by both the DI initial and GI trace passes.
 GPUBuffer restir_light_tiles;
-// ReGIR scene-anchored grid of per-cell light reservoirs (position-aware light
+// ReGIR camera-centered grid of per-cell light reservoirs (position-aware light
 // sampling), accumulated over frames; read by the DI initial pass.
 GPUBuffer restir_regir;
+// ReGIR cell edge length in world units. The camera-centered grid spans
+// RESTIR_REGIR_GRID_RES * this around the eye (fine cells near the viewer),
+// falling back to the global light tiles beyond that window. Tunable: larger
+// covers more of the scene but coarsens the cells.
+float RESTIR_REGIR_CELL_SIZE = 0.5f;
 float DDGI_BLEND_SPEED = 0.1f;
 float GI_BOOST = 1.0f;
 bool MESH_SHADER_ALLOWED = false;
@@ -15739,29 +15744,28 @@ int ReSTIR_PresampleLights(CommandList cmd)
 		&restir_light_tiles, SubresourceType::SRV);
 }
 
-// Computes the scene-anchored ReGIR grid's world-space min corner and cell size
-// so the cubic grid (RESTIR_REGIR_GRID_RES^3 cells) covers the scene bounds
-// with a small margin. Anchoring to the scene (not the camera) keeps a cell
-// mapped to a fixed world region, which is what lets each cell accumulate its
+// Computes the camera-centered ReGIR grid's window: the world-cell coordinate
+// of local buffer cell (0,0,0) and the (fixed) cell size. The grid is centered
+// on the camera and snapped to whole cells, so it scrolls in whole-cell steps
+// as the camera moves - which keeps the toroidal buffer addressing stable for
+// cells that remain inside the window and lets each cell keep accumulating its
 // reservoir across frames.
 static void ReSTIR_ReGIRGrid(
-	const wi::scene::Scene& scene, XMFLOAT3& gridMin, float& cellSize)
+	const CameraComponent& camera, XMINT3& gridOriginCell, float& cellSize)
 {
-	const XMFLOAT3 center = scene.bounds.getCenter();
-	const XMFLOAT3 halfWidth = scene.bounds.getHalfWidth();
-	const float maxExtent =
-		std::max(halfWidth.x, std::max(halfWidth.y, halfWidth.z)) * 2.0f;
-	// A little margin, and a floor so an empty/degenerate scene stays valid.
-	const float span = std::max(maxExtent * 1.1f, 1.0f);
-	cellSize = span / (float)RESTIR_REGIR_GRID_RES;
-	const float half = span * 0.5f;
-	gridMin = XMFLOAT3(center.x - half, center.y - half, center.z - half);
+	cellSize = std::max(RESTIR_REGIR_CELL_SIZE, 1e-4f);
+	const int half = (int)RESTIR_REGIR_GRID_RES / 2;
+	const XMFLOAT3 eye = camera.Eye;
+	gridOriginCell = XMINT3(
+		(int)std::floor(eye.x / cellSize) - half,
+		(int)std::floor(eye.y / cellSize) - half,
+		(int)std::floor(eye.z / cellSize) - half);
 }
 
 // Rebuilds (accumulates) the ReGIR grid for this frame: streams new candidates
 // into every cell's persistent reservoir. The buffer is created zeroed once and
 // never re-cleared, so the reservoirs converge over frames.
-static void ReSTIR_ReGIRBuild(const wi::scene::Scene& scene, CommandList cmd)
+static void ReSTIR_ReGIRBuild(const CameraComponent& camera, CommandList cmd)
 {
 	if (!restir_regir.IsValid())
 	{
@@ -15776,12 +15780,12 @@ static void ReSTIR_ReGIRBuild(const wi::scene::Scene& scene, CommandList cmd)
 	device->EventBegin("ReSTIR ReGIR Build", cmd);
 	auto regir_prof = wi::profiler::BeginRangeGPU("ReSTIR ReGIR Build", cmd);
 
-	XMFLOAT3 gridMin;
+	XMINT3 gridOriginCell;
 	float cellSize;
-	ReSTIR_ReGIRGrid(scene, gridMin, cellSize);
+	ReSTIR_ReGIRGrid(camera, gridOriginCell, cellSize);
 
 	RESTIRReGIRBuildPushConstants regir_push = {};
-	regir_push.gridMin = gridMin;
+	regir_push.gridOriginCell = gridOriginCell;
 	regir_push.cellSize = cellSize;
 	regir_push.frameIndex = (uint)device->GetFrameCount();
 	regir_push.regirBuffer =
@@ -15888,6 +15892,7 @@ void CreateReSTIRDIResources(ReSTIRDIResources& res, XMUINT2 resolution)
 int ReSTIR_DI(
 	const ReSTIRDIResources& res,
 	const wi::scene::Scene& scene,
+	const CameraComponent& camera,
 	CommandList cmd
 )
 {
@@ -15906,15 +15911,15 @@ int ReSTIR_DI(
 
 	BindCommonResources(cmd);
 
-	// Accumulate the scene-anchored ReGIR grid before sampling from it.
-	ReSTIR_ReGIRBuild(scene, cmd);
+	// Accumulate the camera-centered ReGIR grid before sampling from it.
+	ReSTIR_ReGIRBuild(camera, cmd);
 
 	const uint32_t cur = (uint32_t)(res.frame & 1);
 	const uint32_t prev = 1u - cur;
 
-	XMFLOAT3 regirGridMin;
+	XMINT3 regirGridOriginCell;
 	float regirCellSize;
-	ReSTIR_ReGIRGrid(scene, regirGridMin, regirCellSize);
+	ReSTIR_ReGIRGrid(camera, regirGridOriginCell, regirCellSize);
 
 	RESTIRDIPushConstants push;
 	push.resolution = res.resolution;
@@ -15931,7 +15936,7 @@ int ReSTIR_DI(
 		? device->GetDescriptorIndex(&restir_regir, SubresourceType::SRV)
 		: -1;
 	push.regirCellSize = regirCellSize;
-	push.regirGridMin = regirGridMin;
+	push.regirGridOriginCell = regirGridOriginCell;
 
 	const uint32_t dispatch_x = (res.resolution.x + 7) / 8;
 	const uint32_t dispatch_y = (res.resolution.y + 7) / 8;
