@@ -86,15 +86,14 @@ inline RESTIRDIReservoir RESTIRDISampleInitial(
 		[branch]
 		if (regirBuffer >= 0)
 		{
-			// Stochastic trilinear cell pick blends the eight surrounding
-			// cells' light sets so the grid does not print through as
-			// low-frequency blobs on nearby surfaces, while staying weighted
-			// toward the pixel's own cell (position-aware).
+			// Jittered cell lookup keeps the grid from printing through as
+			// low-frequency blobs while staying weighted toward the pixel's own
+			// cell (position-aware).
 			const int cell = RESTIRReGIRSampleCell(
 				push.regirMode, P, push.regirGridOriginCell, push.onionCenter,
 				push.regirCellSize, push.onionParamsBuffer,
 				push.onionElevationBands, push.onionShells,
-				push.onionCellsPerShell, rng);
+				push.onionCellsPerShell, push.regirSamplingJitter, rng);
 
 			[branch]
 			if (cell >= 0)

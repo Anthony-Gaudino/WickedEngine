@@ -613,44 +613,30 @@ inline int3 RESTIRReGIRPosMod(int3 a, int n)
 }
 
 /**
- * Stochastically selects a ReGIR cell for a shading point using trilinear
- * weights over the eight cells whose centers surround it.
+ * Maps a world position to its (nearest) camera-centered grid cell.
  *
- * A candidate drawn this way is, in expectation, a trilinear blend of the eight
- * neighboring cells' light sets - the same interpolation an irradiance-probe
- * grid uses to hide its structure - so the grid does not print through as hard
- * cells. The grid is centered on the camera: a world position maps to world
- * cell floor(worldPos / cellSize), and only cells inside the window
- * [gridOriginCell, gridOriginCell + RESTIR_REGIR_GRID_RES) are cached. The
- * returned index is the **toroidal** buffer slot (world cell modulo the grid
- * resolution), so a world cell keeps the same slot as the window scrolls and
- * its reservoir accumulates across frames.
+ * A world position maps to world cell floor(worldPos / cellSize); only cells
+ * inside the window [gridOriginCell, gridOriginCell + RESTIR_REGIR_GRID_RES)
+   are cached. The returned index is the **toroidal** buffer slot (world cell
+ * modulo the grid resolution), so a world cell keeps the same slot as the
+ * window scrolls and its reservoir accumulates across frames.
  *
- * @param[in] worldPos - World-space shading point.
+ * The caller (RESTIRReGIRSampleCell) jitters `worldPos` by ~a cell before this
+ * lookup, which is what dithers the hard cell boundaries into
+ * denoiser-removable noise instead of a low-frequency blob (the same role the
+ * old stochastic trilinear pick served, but with a tunable, unbounded spread).
+ *
+ * @param[in] worldPos - World-space shading point (already jittered).
  * @param[in] gridOriginCell - World-cell coordinate of buffer cell (0,0,0).
  * @param[in] cellSize - Cell edge length (world units).
- * @param[in,out] rng - Random generator (draws the stochastic corner).
  *
- * @return Toroidal cell index in [0, RESTIR_REGIR_CELL_COUNT), or -1 if the
- *   chosen cell is outside the camera-centered window.
+ * @return Toroidal cell index in [0, RESTIR_REGIR_CELL_COUNT), or -1 if outside
+ *   the camera-centered window.
  */
-inline int RESTIRReGIRSampleCellTrilinear(
-	float3 worldPos, int3 gridOriginCell, float cellSize, inout RNG rng)
+inline int RESTIRReGIRGridWorldToCell(
+	float3 worldPos, int3 gridOriginCell, float cellSize)
 {
-	// Position in "cell-center space": integer coordinates land on cell
-	// centers, so floor() gives the lower-corner world cell of the surrounding
-	// 2x2x2 block and the fraction is the trilinear blend weight toward the
-	// upper corner.
-	const float3 centerCoord = worldPos / cellSize - 0.5;
-	const int3 baseWorldCell = int3(floor(centerCoord));
-	const float3 f = frac(centerCoord);
-
-	const int3 corner = int3(
-		rng.next_float() < f.x ? 1 : 0,
-		rng.next_float() < f.y ? 1 : 0,
-		rng.next_float() < f.z ? 1 : 0);
-	const int3 worldCell = baseWorldCell + corner;
-
+	const int3 worldCell = int3(floor(worldPos / cellSize));
 	const int res = (int)RESTIR_REGIR_GRID_RES;
 
 	[branch]
@@ -913,9 +899,15 @@ inline float RESTIRReGIROnionJitterScale(
 /**
  * Selects a ReGIR cell for a shading point in the active mode.
  *
- * Grid mode uses the stochastic trilinear pick; onion mode jitters the point by
- * the local cell scale (which hides the shell boundaries the way trilinear
- * hides the grid) and looks up the containing onion cell.
+ * Jitters the lookup position by a random offset scaled to the local cell size
+ * (uniform for the grid, distance-growing for the onion) and then takes the
+ * nearest cell. Jittering the position, rather than reading the exact cell,
+ * dithers the hard cell/shell boundaries into per-pixel noise the denoiser can
+ * remove - otherwise each cell's slightly different estimate prints through as
+ * a low-frequency, cell-sized brightness blob (most visible when the camera is
+ * close and a cell covers many pixels). `samplingJitter` scales the spread: 0
+ * gives hard cells, 1 spreads over ~one cell, larger values reach further
+ * neighbors to break up bigger blobs (at the cost of position accuracy).
  *
  * @param[in] mode - RESTIR_REGIR_MODE_GRID or RESTIR_REGIR_MODE_ONION.
  * @param[in] P - World-space shading point.
@@ -926,6 +918,7 @@ inline float RESTIRReGIROnionJitterScale(
  * @param[in] elevationBands - Onion latitude bands.
  * @param[in] shells - Onion concentric shell count.
  * @param[in] cellsPerShell - Onion angular cells per shell.
+ * @param[in] samplingJitter - Lookup-jitter width in local cell sizes.
  * @param[in,out] rng - Random generator.
  *
  * @return Cell index, or -1 if the point is outside the structure.
@@ -933,20 +926,25 @@ inline float RESTIRReGIROnionJitterScale(
 inline int RESTIRReGIRSampleCell(
 	uint mode, float3 P, int3 gridOriginCell, float3 onionCenter, float cellSize,
 	int onionBuffer, uint elevationBands, uint shells, uint cellsPerShell,
-	inout RNG rng)
+	float samplingJitter, inout RNG rng)
 {
+	// Local cell extent at P: uniform for the grid, growing with distance for
+	// the onion (its cells are bigger far from the eye).
+	const float localCell = (mode == RESTIR_REGIR_MODE_ONION)
+		? RESTIRReGIROnionJitterScale(P, onionCenter, cellSize, elevationBands)
+		: cellSize;
+
+	// Random offset in [-0.5, 0.5]^3 cells, scaled by samplingJitter.
+	const float3 jitter =
+		(float3(rng.next_float(), rng.next_float(), rng.next_float()) - 0.5)
+		* (samplingJitter * localCell);
+	const float3 Pj = P + jitter;
+
 	[branch]
 	if (mode == RESTIR_REGIR_MODE_ONION)
-	{
-		const float jitter = RESTIRReGIROnionJitterScale(
-			P, onionCenter, cellSize, elevationBands);
-		const float3 offset =
-			(float3(rng.next_float(), rng.next_float(), rng.next_float()) * 2.0
-				- 1.0) * (jitter * 0.5);
-		return RESTIRReGIROnionWorldToCell(P + offset, onionCenter, cellSize,
+		return RESTIRReGIROnionWorldToCell(Pj, onionCenter, cellSize,
 			onionBuffer, elevationBands, shells, cellsPerShell);
-	}
-	return RESTIRReGIRSampleCellTrilinear(P, gridOriginCell, cellSize, rng);
+	return RESTIRReGIRGridWorldToCell(Pj, gridOriginCell, cellSize);
 }
 
 /**

@@ -1024,7 +1024,15 @@ struct RESTIRDIPushConstants
 	/** World-space onion center (camera-snapped). Must match the build pass. */
 	float3 onionCenter;
 
-	uint pad0;
+	/**
+	 * ReGIR cell-lookup jitter width, in local cell sizes. The initial pass
+	 * offsets the lookup position by a random vector up to this many cells
+	 * before picking the cell, which dithers the cell/shell boundaries into
+	 * denoiser- removable noise instead of a low-frequency, cell-sized
+	 * brightness blob. 0 = hard cells; 1 ~= one cell; larger reaches further
+	 * neighbors to break up bigger blobs (at the cost of position accuracy).
+	 */
+	float regirSamplingJitter;
 };
 
 /**

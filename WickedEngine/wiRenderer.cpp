@@ -178,6 +178,13 @@ float RESTIR_REGIR_CELL_SIZE = 0.5f;
 // resolution and reach against VRAM.
 uint32_t RESTIR_REGIR_ONION_ELEVATION_BANDS = 24;
 uint32_t RESTIR_REGIR_ONION_SHELLS = 32;
+// ReGIR cell-lookup jitter width, in local cell sizes. The DI initial pass
+// offsets the lookup position by up to this many cells before choosing the
+// cell, dithering the cell/shell boundaries into denoiser-removable noise
+// instead of a low-frequency, cell-sized brightness blob. 0 = hard cells; 1 ~=
+// one cell; crank higher (2-4) to break up bigger blobs near a wall, trading
+// position accuracy for smoothness.
+float RESTIR_REGIR_SAMPLING_JITTER = 5.0f;
 float DDGI_BLEND_SPEED = 0.1f;
 float GI_BOOST = 1.0f;
 bool MESH_SHADER_ALLOWED = false;
@@ -16107,6 +16114,7 @@ int ReSTIR_DI(
 	push.onionShells = regirParams.onionShells;
 	push.onionCellsPerShell = regirParams.onionCellsPerShell;
 	push.onionCenter = regirParams.onionCenter;
+	push.regirSamplingJitter = RESTIR_REGIR_SAMPLING_JITTER;
 
 	const uint32_t dispatch_x = (res.resolution.x + 7) / 8;
 	const uint32_t dispatch_y = (res.resolution.y + 7) / 8;
