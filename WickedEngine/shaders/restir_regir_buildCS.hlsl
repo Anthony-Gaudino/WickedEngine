@@ -104,6 +104,40 @@ void main(uint3 DTid : SV_DispatchThreadID)
 	const ShaderEntityIterator iterator = lights();
 	const uint lightCount = iterator.item_count();
 
+	// Re-validate the cached light against the LIVE light list every frame.
+	//
+	// A cell's reservoir persists across frames, so without this a deleted
+	// light would linger - its cached weight only slowly outvoted over ~MAX_M
+	// frames - leaving a stuck bright spot where the light used to be (worst
+	// right next to the light, where the cached weight is largest).
+	// Re-evaluating the stored light's weight from the live entity also keeps
+	// the cached W correct as the light moves or changes, and drops it at once
+	// when it can no longer reach the cell or has fallen out of the list.
+	[branch]
+	if (lightIndex != RESTIR_INVALID_LIGHT_INDEX && M > 0)
+	{
+		const uint first = iterator.first_item();
+		float currentWeight = 0;
+		[branch]
+		if (lightIndex >= first && lightIndex < first + lightCount)
+			currentWeight = RESTIRReGIRVolumeWeight(
+				load_entity(lightIndex), cellCenter, cellRadius);
+
+		[branch]
+		if (currentWeight <= 0)
+		{
+			// Deleted, fell out of the list, or can no longer reach the cell.
+			lightIndex = RESTIR_INVALID_LIGHT_INDEX;
+			weightSum = 0;
+			M = 0;
+			targetWeight = 0;
+		}
+		else
+		{
+			targetWeight = currentWeight; // keep W current as the light changes
+		}
+	}
+
 	[branch]
 	if (lightCount > 0 && cellValid)
 	{
