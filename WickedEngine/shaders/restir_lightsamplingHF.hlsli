@@ -559,27 +559,36 @@ ReGIR (Reservoir-based Grid Importance Resampling)
  * is the light's approximate irradiance AT the cell: a local light is weighted
  * by power / distance^2 so a dim light near the cell dominates that cell's set,
  * while a bright light far away contributes little - exactly the mismatch that
- * makes global power sampling noisy for many disparate lights. Directional
- * lights reach every cell equally, so they keep their (distance-independent)
- * luminance. The final per-pixel target function still resolves the exact
- * contribution; this only steers which lights are cached in the cell.
+ * makes global power sampling noisy for many disparate lights. The final
+ * per-pixel target function still resolves the exact contribution; this only
+ * steers which lights are cached in the cell.
+ *
+ * **Directional lights are excluded** (weight 0). They reach every cell
+ * equally, so a position-aware cell buys them nothing - but a bright
+ * directional (a sun) would then win a constant, high weight in *every* cell
+ * and crowd the local lights out of the far cells where their own weight is
+ * small. The compensating reservoir weight the local light then needs exceeds
+ * the power-based firefly clamp and gets chopped, so the local light reads dim
+ * away from its source. Directionals are sampled directly from the global tiles
+ * instead (see the DI initial pass), where their weight is power-bounded and
+ * never clamped.
  *
  * @param[in] light - Analytic light entity.
  * @param[in] cellCenter - World-space cell center.
  * @param[in] cellRadius - Cell bounding-sphere radius (world units).
  *
  * @return A non-negative importance weight (0 if the light cannot reach the
- *   cell).
+ *   cell, or is directional).
  */
 inline float RESTIRReGIRVolumeWeight(
 	ShaderEntity light, float3 cellCenter, float cellRadius)
 {
-	const float luma =
-		max(dot(light.GetColor().rgb, float3(0.2126, 0.7152, 0.0722)), 1e-3);
-
 	[branch]
 	if (light.GetType() == ENTITY_TYPE_DIRECTIONALLIGHT)
-		return luma; // reaches every cell equally
+		return 0; // sampled via the global tiles, not position-aware cells
+
+	const float luma =
+		max(dot(light.GetColor().rgb, float3(0.2126, 0.7152, 0.0722)), 1e-3);
 
 	// Local light: irradiance ~ power / distance^2, range-limited.
 	const float3 toCell = cellCenter - light.position;

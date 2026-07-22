@@ -83,8 +83,15 @@ inline RESTIRDIReservoir RESTIRDISampleInitial(
 		float invSourcePdf;
 		bool drawn = false;
 
+		// Reserve the first candidate for the global tiles (skip ReGIR for it).
+		// ReGIR does not cache directional lights - a bright sun would
+		// otherwise crowd the local lights out of every cell - so directionals
+		// reach the reservoir only through the power-weighted tiles. Always
+		// drawing one tile candidate guarantees the sun is sampled every frame
+		// even when the ReGIR cell is fully populated with local lights; the
+		// remaining candidates stay position-aware.
 		[branch]
-		if (regirBuffer >= 0)
+		if (regirBuffer >= 0 && i != 0)
 		{
 			// Jittered cell lookup keeps the grid from printing through as
 			// low-frequency blobs while staying weighted toward the pixel's own
