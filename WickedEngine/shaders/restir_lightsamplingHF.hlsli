@@ -989,4 +989,118 @@ inline RESTIRLightRef RESTIRReGIRLoadSlot(int regirBuffer, uint slot)
 	return ref;
 }
 
+/**
+ * The pixel's ReGIR cell: its index, world geometry, and total volume weight.
+ *
+ * Locates the (nearest, un-jittered) cell containing a shading point and reads
+ * the cell's converged total volume weight from its first slot. That total is
+ * `weightSum / M` of any slot (the build accumulates weightSum -> M * sum over
+ * lights of volumeWeight), and it is exactly the normaliser needed to turn a
+ * light's cell volume weight into ReGIR's selection pdf:
+ * `p_ReGIR(Y) = volumeWeight(Y, cell) / totalVolume`.
+ *
+ * Used by the DI initial pass to add ReGIR as a fourth MIS strategy (its
+ * candidates are position-aware, and every strategy's balance-heuristic density
+ * must include ReGIR's pdf for consistency).
+ */
+struct RESTIRReGIRCellInfo
+{
+	/** Cell index, or -1 when the point is outside the ReGIR structure. */
+	int cell;
+
+	/** World-space cell center. */
+	float3 center;
+
+	/** Cell bounding-sphere radius (world units). */
+	float radius;
+
+	/**
+	 * Converged total volume weight of the cell (sum of volumeWeight over all
+	 * lights), or 0 when the cell is invalid / not yet converged. Its reciprocal
+	 * is ReGIR's selection-pdf normaliser.
+	 */
+	float totalVolume;
+};
+
+/**
+ * Locates the ReGIR cell containing a shading point and reads its total volume.
+ *
+ * Applies one per-pixel sampling jitter to the lookup position (via
+ * RESTIRReGIRSampleCell) and returns the resulting cell's geometry and total
+ * volume. The **same** jittered cell must then drive both the ReGIR draw loop
+ * and the ReGIR term in every strategy's MIS density, so each pixel's estimator
+ * stays consistent (and therefore unbiased). Jittering here dithers the hard
+ * cell/shell boundaries into per-pixel noise the denoiser removes - otherwise
+ * the cell structure prints through the ReGIR contribution as low-frequency,
+ * cell-sized brightness blobs (the "circular shells / squares" artifact).
+ *
+ * @param[in] mode - RESTIR_REGIR_MODE_GRID or RESTIR_REGIR_MODE_ONION.
+ * @param[in] P - World-space shading point.
+ * @param[in] gridOriginCell - Grid window origin (grid mode).
+ * @param[in] onionCenter - Onion center (onion mode).
+ * @param[in] cellSize - Cell size / onion inner-cell size.
+ * @param[in] onionBuffer - Bindless SRV of the onion band table (onion mode).
+ * @param[in] elevationBands - Onion latitude bands.
+ * @param[in] shells - Onion concentric shell count.
+ * @param[in] cellsPerShell - Onion angular cells per shell.
+ * @param[in] samplingJitter - Lookup-jitter width in local cell sizes.
+ * @param[in] regirBuffer - Bindless SRV of the ReGIR cell buffer (-1 = none).
+ * @param[in,out] rng - Random generator (one jitter drawn per pixel).
+ *
+ * @return The located cell's info (cell = -1 / totalVolume = 0 when unavailable).
+ */
+inline RESTIRReGIRCellInfo RESTIRReGIRQueryCell(
+	uint mode, float3 P, int3 gridOriginCell, float3 onionCenter, float cellSize,
+	int onionBuffer, uint elevationBands, uint shells, uint cellsPerShell,
+	float samplingJitter, int regirBuffer, inout RNG rng)
+{
+	RESTIRReGIRCellInfo info;
+	info.cell = -1;
+	info.center = float3(0, 0, 0);
+	info.radius = 0;
+	info.totalVolume = 0;
+
+	[branch]
+	if (regirBuffer < 0)
+		return info;
+
+	// One jittered cell per pixel, reused by the denom and the draw loop.
+	info.cell = RESTIRReGIRSampleCell(mode, P, gridOriginCell, onionCenter,
+		cellSize, onionBuffer, elevationBands, shells, cellsPerShell,
+		samplingJitter, rng);
+
+	[branch]
+	if (mode == RESTIR_REGIR_MODE_ONION)
+	{
+		[branch]
+		if (info.cell >= 0)
+			RESTIRReGIROnionCellToWorld(info.cell, onionCenter, cellSize,
+				onionBuffer, elevationBands, cellsPerShell,
+				info.center, info.radius);
+	}
+	else
+	{
+		[branch]
+		if (info.cell >= 0)
+		{
+			int3 worldCell;
+			RESTIRReGIRCellToWorld(info.cell, gridOriginCell, cellSize,
+				worldCell, info.center, info.radius);
+		}
+	}
+
+	// Total volume from the cell's first slot (weightSum / M).
+	[branch]
+	if (info.cell >= 0)
+	{
+		const uint slot0 = (uint)info.cell * RESTIR_REGIR_LIGHTS_PER_CELL;
+		const uint4 raw =
+			bindless_buffers[descriptor_index(regirBuffer)].Load4(slot0 * 32);
+		const float weightSum = asfloat(raw.y);
+		const float m = asfloat(raw.z);
+		info.totalVolume = (m > 0) ? weightSum / m : 0;
+	}
+	return info;
+}
+
 #endif // WI_RESTIR_LIGHTSAMPLING_HF

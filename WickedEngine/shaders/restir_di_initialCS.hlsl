@@ -96,9 +96,11 @@ inline void RESTIRDIStreamInitialCandidate(
  *
  * The balance-heuristic denominator: the expected number of times the light is
  * drawn across the power-weighted tile pool (candidateCount draws), the uniform
- * pool (uniformCount draws), and - for a directional light - the exhaustive
- * sweep (one draw). Every candidate of a given light uses this same density, so
- * the mixture stays unbiased regardless of which strategy actually drew it.
+ * pool (uniformCount draws), the exhaustive directional sweep (one draw for a
+ * directional light), and - when the pixel has a valid cell - the ReGIR pool
+ * (regirCount draws, position-aware). Every candidate of a given light uses
+ * this same density, so the mixture stays unbiased regardless of which strategy
+ * actually drew it.
  *
  * @param[in] light - The candidate light.
  * @param[in] candidateCount - Number of power-weighted tile draws.
@@ -106,6 +108,11 @@ inline void RESTIRDIStreamInitialCandidate(
  * @param[in] lightCount - Total analytic light count.
  * @param[in] totalPower - Sum of RESTIRLightPower over all lights.
  * @param[in] hasTiles - Whether the power-weighted tiles are available.
+ * @param[in] regirCount - Number of ReGIR draws (0 disables the ReGIR term).
+ * @param[in] regirCellCenter - World-space center of the pixel's ReGIR cell.
+ * @param[in] regirCellRadius - Bounding radius of the pixel's ReGIR cell.
+ * @param[in] regirInvTotalVolume - Reciprocal of the cell's total volume weight
+ *   (0 when the pixel has no valid / converged cell).
  *
  * @return The combined sampling density (> 0 when any strategy can draw it).
  */
@@ -115,7 +122,11 @@ inline float RESTIRDIInitialDenom(
 	uint uniformCount,
 	uint lightCount,
 	float totalPower,
-	bool hasTiles)
+	bool hasTiles,
+	uint regirCount,
+	float3 regirCellCenter,
+	float regirCellRadius,
+	float regirInvTotalVolume)
 {
 	// Tile selection pmf: power-proportional when tiles exist, else uniform.
 	const float pTile = hasTiles
@@ -125,6 +136,14 @@ inline float RESTIRDIInitialDenom(
 	[branch]
 	if (light.GetType() == ENTITY_TYPE_DIRECTIONALLIGHT)
 		d += 1.0;
+	// ReGIR pmf: position-aware, volumeWeight(light, cell) / totalVolume. Zero
+	// when the pixel has no valid cell, or for a light the cell cannot reach
+	// (RESTIRReGIRVolumeWeight is 0 there, and for directionals).
+	[branch]
+	if (regirInvTotalVolume > 0)
+		d += (float)regirCount
+			* RESTIRReGIRVolumeWeight(light, regirCellCenter, regirCellRadius)
+			* regirInvTotalVolume;
 	return d;
 }
 
@@ -179,6 +198,21 @@ inline RESTIRDIReservoir RESTIRDISampleInitial(
 	const uint dirCount = dirIterator.item_count();
 	const float totalPower = max(GetFrame().totalLightPower, 1e-3);
 
+	// ReGIR (position-aware) strategy: locate the pixel's cell and read its
+	// converged total volume weight (the normaliser for ReGIR's selection pdf).
+	// Disabled (regirCount 0) when the pixel has no valid / converged cell, so
+	// the initial pass then reduces to exactly the tile + uniform + directional
+	// mixture.
+	const RESTIRReGIRCellInfo regir = RESTIRReGIRQueryCell(
+		push.regirMode, P, push.regirGridOriginCell, push.onionCenter,
+		push.regirCellSize, push.onionParamsBuffer, push.onionElevationBands,
+		push.onionShells, push.onionCellsPerShell, push.regirSamplingJitter,
+		push.regirBuffer, rng);
+	const uint regirCount =
+		(regir.totalVolume > 0) ? RESTIR_DI_REGIR_CANDIDATES : 0u;
+	const float regirInvTotalVolume =
+		(regir.totalVolume > 0) ? (1.0 / regir.totalVolume) : 0.0;
+
 	float weightSum = 0;
 	float M = 0;
 
@@ -225,7 +259,8 @@ inline RESTIRDIReservoir RESTIRDISampleInitial(
 		// mechanism.
 		const float denom = RESTIRDIInitialDenom(
 			light, candidateCount, RESTIR_DI_UNIFORM_CANDIDATES,
-			lightCount, totalPower, tileBuffer >= 0);
+			lightCount, totalPower, tileBuffer >= 0,
+			regirCount, regir.center, regir.radius, regirInvTotalVolume);
 
 		const float2 uv = float2(rng.next_float(), rng.next_float());
 		RESTIRDIStreamInitialCandidate(
@@ -247,7 +282,8 @@ inline RESTIRDIReservoir RESTIRDISampleInitial(
 		const ShaderEntity light = load_entity(lightIndex);
 		const float denom = RESTIRDIInitialDenom(
 			light, candidateCount, RESTIR_DI_UNIFORM_CANDIDATES,
-			lightCount, totalPower, tileBuffer >= 0);
+			lightCount, totalPower, tileBuffer >= 0,
+			regirCount, regir.center, regir.radius, regirInvTotalVolume);
 
 		const float2 uv = float2(rng.next_float(), rng.next_float());
 		RESTIRDIStreamInitialCandidate(
@@ -278,11 +314,48 @@ inline RESTIRDIReservoir RESTIRDISampleInitial(
 		// than one strategy can draw is weighted consistently (unbiased).
 		const float denom = RESTIRDIInitialDenom(
 			light, candidateCount, RESTIR_DI_UNIFORM_CANDIDATES,
-			lightCount, totalPower, tileBuffer >= 0);
+			lightCount, totalPower, tileBuffer >= 0,
+			regirCount, regir.center, regir.radius, regirInvTotalVolume);
 
 		const float2 uv = float2(rng.next_float(), rng.next_float());
 		RESTIRDIStreamInitialCandidate(
 			light, lightIndex, uv, denom, P, N, weightSum, r, rng);
+	}
+
+	// ReGIR candidates: position-aware draws from the pixel's cell. The cell
+	// caches lights by their contribution HERE (power / distance^2), so a dim
+	// light near the surface - which the power tiles and uniform draws sample
+	// rarely - is drawn often, cutting its variance. A random slot yields a
+	// light with probability volumeWeight / totalVolume (the cell's converged
+	// selection distribution), which is exactly the ReGIR pmf in every
+	// strategy's denom above, so the mixture stays unbiased.
+	[branch]
+	if (regirCount > 0)
+	{
+		for (uint g = 0; g < regirCount; ++g)
+		{
+			const uint slot = (uint)regir.cell * RESTIR_REGIR_LIGHTS_PER_CELL +
+				rng.next_uint(RESTIR_REGIR_LIGHTS_PER_CELL);
+			const RESTIRLightRef ref = RESTIRReGIRLoadSlot(push.regirBuffer, slot);
+
+			M += 1;
+
+			// Skip empty / not-yet-converged slots (and any non-analytic ref).
+			[branch]
+			if (ref.lightIndex == RESTIR_INVALID_LIGHT_INDEX ||
+				(ref.lightIndex & RESTIR_LIGHT_FLAG_EMISSIVE_TRIANGLE) != 0)
+				continue;
+
+			const ShaderEntity light = load_entity(ref.lightIndex);
+			const float denom = RESTIRDIInitialDenom(
+				light, candidateCount, RESTIR_DI_UNIFORM_CANDIDATES,
+				lightCount, totalPower, tileBuffer >= 0,
+				regirCount, regir.center, regir.radius, regirInvTotalVolume);
+
+			const float2 uv = float2(rng.next_float(), rng.next_float());
+			RESTIRDIStreamInitialCandidate(
+				light, ref.lightIndex, uv, denom, P, N, weightSum, r, rng);
+		}
 	}
 
 	// Pre-multiply by M so the downstream unbiased weight W = weightSum / (M *

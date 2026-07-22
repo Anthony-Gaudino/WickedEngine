@@ -471,6 +471,22 @@ static const uint RESTIR_DI_INITIAL_CANDIDATES = 4;
  */
 static const uint RESTIR_DI_UNIFORM_CANDIDATES = 2;
 
+/**
+ * Number of ReGIR (position-aware) candidates drawn per pixel in the initial
+ * pass, when the pixel lies inside a valid, converged ReGIR cell.
+ *
+ * ReGIR is the fourth initial-pass sampling strategy: it draws lights by their
+ * contribution to the pixel's location (power / distance^2), so a dim light near
+ * the surface is sampled far more than a bright light far away - the noise the
+ * global power tiles and uniform draws cannot avoid for position-dependent
+ * lighting. It is MIS-combined with the other three strategies via the shared
+ * density in RESTIRDIInitialDenom (its selection pdf is volumeWeight /
+ * totalVolume of the cell), so adding it only reduces variance and never changes
+ * the converged result. 0 disables the strategy (initial pass = the other three
+ * strategies exactly).
+ */
+static const uint RESTIR_DI_REGIR_CANDIDATES = 4;
+
 /** Spatial-reuse neighbor count per pixel. */
 static const uint RESTIR_DI_SPATIAL_SAMPLES = 4;
 
