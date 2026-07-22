@@ -22,6 +22,113 @@ PUSHCONSTANT(push, RESTIRDIPushConstants);
 RWByteAddressBuffer reservoirOutput : register(u0);
 
 /**
+ * Streams one resolved analytic-light candidate into an initial DI reservoir
+ * (shadowed RIS with a balance-heuristic resampling weight).
+ *
+ * Resolves the light at (P, N), evaluates the diffuse target, traces one shadow
+ * ray, and - if the sample is visible - streams it with resampling weight
+ * \[ w = \frac{\hat p \, \mathrm{vis}}{\mathrm{denom}} \], where `denom` is the
+ * candidate's **combined sampling density** across all strategies. Encoding the
+ * density here (rather than a single strategy's reciprocal pdf) is what lets
+ * the local tile pool and the exhaustive directional sweep share one reservoir
+ * without over-counting a light both can draw. Occluded or zero-target
+ * candidates contribute nothing.
+ *
+ * @param[in] light - The candidate light entity (loaded from `slot`).
+ * @param[in] slot - The light's current entity slot (stored as a stable index).
+ * @param[in] uv - Area-sample parameterization on the light.
+ * @param[in] denom - Combined sampling density of the candidate (must be > 0).
+ * @param[in] P - World-space shading point.
+ * @param[in] N - World-space shading normal.
+ * @param[in,out] weightSum - Running balance-heuristic weight sum.
+ * @param[in,out] r - Reservoir being built.
+ * @param[in,out] rng - Random generator.
+ */
+inline void RESTIRDIStreamInitialCandidate(
+	ShaderEntity light,
+	uint slot,
+	float2 uv,
+	float denom,
+	float3 P,
+	float3 N,
+	inout float weightSum,
+	inout RESTIRDIReservoir r,
+	inout RNG rng)
+{
+	[branch]
+	if (denom <= 0)
+		return;
+
+	const RESTIRLightSample s = RESTIRResolveAnalyticLight(light, P, N, uv);
+	const float unshadowedTarget = RESTIRTargetFunction(s, N);
+	[branch]
+	if (unshadowedTarget <= 0)
+		return;
+
+	// One shadow ray per candidate: occluded -> zero target -> excluded.
+	const float sampleDist =
+		(s.distance >= FLT_MAX * 0.5) ? 100000.0 : s.distance;
+	const float3 samplePos = P + s.direction * sampleDist;
+	const float vis = RESTIRDITraceVisibility(P, N, samplePos, rng);
+	[branch]
+	if (vis <= 0)
+		return;
+
+	const float risWeight = unshadowedTarget * vis / denom;
+	weightSum += risWeight;
+
+	if (weightSum > 0 && rng.next_float() * weightSum < risWeight)
+	{
+		r.samplePosition = samplePos;
+		r.sampleRadiance = s.radiance;
+		// Visible winner: shadowed target == unshadowed target.
+		r.targetPdf = unshadowedTarget;
+		// Store the light's STABLE scene index (not the volatile per-frame
+		// entity slot) so reuse resolves the same physical light across frames.
+		r.lightIndex = RESTIRDIStableLightIndex(slot);
+		r.uv = uv;
+		r.visibility = vis;
+	}
+}
+
+/**
+ * Combined sampling density of a light across the initial pass's strategies.
+ *
+ * The balance-heuristic denominator: the expected number of times the light is
+ * drawn across the power-weighted tile pool (candidateCount draws), the uniform
+ * pool (uniformCount draws), and - for a directional light - the exhaustive
+ * sweep (one draw). Every candidate of a given light uses this same density, so
+ * the mixture stays unbiased regardless of which strategy actually drew it.
+ *
+ * @param[in] light - The candidate light.
+ * @param[in] candidateCount - Number of power-weighted tile draws.
+ * @param[in] uniformCount - Number of uniform draws.
+ * @param[in] lightCount - Total analytic light count.
+ * @param[in] totalPower - Sum of RESTIRLightPower over all lights.
+ * @param[in] hasTiles - Whether the power-weighted tiles are available.
+ *
+ * @return The combined sampling density (> 0 when any strategy can draw it).
+ */
+inline float RESTIRDIInitialDenom(
+	ShaderEntity light,
+	uint candidateCount,
+	uint uniformCount,
+	uint lightCount,
+	float totalPower,
+	bool hasTiles)
+{
+	// Tile selection pmf: power-proportional when tiles exist, else uniform.
+	const float pTile = hasTiles
+		? RESTIRLightPower(light) / totalPower
+		: 1.0 / (float)lightCount;
+	float d = candidateCount * pTile + uniformCount * (1.0 / (float)lightCount);
+	[branch]
+	if (light.GetType() == ENTITY_TYPE_DIRECTIONALLIGHT)
+		d += 1.0;
+	return d;
+}
+
+/**
  * Builds an initial DI reservoir by resampling the analytic light list.
  *
  * Draws candidateCount lights (from a pre-sampled tile when available, else
@@ -65,86 +172,39 @@ inline RESTIRDIReservoir RESTIRDISampleInitial(
 		? RESTIRSelectTile(pixel, push.frameIndex) * RESTIR_LIGHT_TILE_SIZE
 		: 0u;
 
-	// ReGIR: when the pixel lies inside the camera-centered grid, its
-	// candidates come from the cell built for this location (lights
-	// importance-sampled by their contribution HERE, not by a global power
-	// proxy) - this is what stops a dim light near the surface from being
-	// crowded out by a brighter light far away. Outside the grid it falls back
-	// to the global tiles / uniform.
-	const int regirBuffer = push.regirBuffer;
+	// Directional (sun / infinite) lights are swept exhaustively below, so
+	// their combined sampling density needs the analytic local-pool selection
+	// pmf.
+	const ShaderEntityIterator dirIterator = directional_lights();
+	const uint dirCount = dirIterator.item_count();
+	const float totalPower = max(GetFrame().totalLightPower, 1e-3);
 
 	float weightSum = 0;
 	float M = 0;
 
+	// Local-light candidates from the power-weighted tile (or uniform
+	// fallback). A directional light can also surface here, but because it is
+	// additionally swept below, its resampling weight uses the density of BOTH
+	// strategies (balance heuristic), so a rare tile draw of the dim sun no
+	// longer spikes.
 	for (uint i = 0; i < candidateCount; ++i)
 	{
-		// Draw one candidate light + its reciprocal source pdf.
+		// Draw one candidate light from the power-weighted tile (its resampling
+		// weight is reweighted analytically by RESTIRDIInitialDenom, so only
+		// the tile's light selection is used here, not its stored
+		// invSourcePdf).
 		uint lightIndex;
-		float invSourcePdf;
-		bool drawn = false;
-
-		// Reserve the first candidate for the global tiles (skip ReGIR for it).
-		// ReGIR does not cache directional lights - a bright sun would
-		// otherwise crowd the local lights out of every cell - so directionals
-		// reach the reservoir only through the power-weighted tiles. Always
-		// drawing one tile candidate guarantees the sun is sampled every frame
-		// even when the ReGIR cell is fully populated with local lights; the
-		// remaining candidates stay position-aware.
 		[branch]
-		if (regirBuffer >= 0 && i != 0)
-		{
-			// Jittered cell lookup keeps the grid from printing through as
-			// low-frequency blobs while staying weighted toward the pixel's own
-			// cell (position-aware).
-			const int cell = RESTIRReGIRSampleCell(
-				push.regirMode, P, push.regirGridOriginCell, push.onionCenter,
-				push.regirCellSize, push.onionParamsBuffer,
-				push.onionElevationBands, push.onionShells,
-				push.onionCellsPerShell, push.regirSamplingJitter, rng);
-
-			[branch]
-			if (cell >= 0)
-			{
-				const uint slot = (uint)cell * RESTIR_REGIR_LIGHTS_PER_CELL +
-					rng.next_uint(RESTIR_REGIR_LIGHTS_PER_CELL);
-				const RESTIRLightRef ref =
-					RESTIRReGIRLoadSlot(regirBuffer, slot);
-
-				// Only consume the ReGIR draw when the cell slot actually holds
-				// a light. A cell that has not converged yet (or whose slot
-				// caches no in-range light) returns an invalid reference with a
-				// zero source pdf; treating that as a drawn candidate would
-				// suppress the tile / uniform fallback below and leave the
-				// pixel with no candidate at all - i.e. an unlit region
-				// wherever the grid is not yet populated. Falling through keeps
-				// coverage correct.
-				[branch]
-				if (ref.lightIndex != RESTIR_INVALID_LIGHT_INDEX &&
-					ref.invSourcePdf > 0)
-				{
-					lightIndex = ref.lightIndex;
-					invSourcePdf = ref.invSourcePdf;
-					drawn = true;
-				}
-			}
-		}
-
-		[branch]
-		if (!drawn && tileBuffer >= 0)
+		if (tileBuffer >= 0)
 		{
 			const uint slot = rng.next_uint(RESTIR_LIGHT_TILE_SIZE);
 			const RESTIRLightRef ref =
 				RESTIRLoadLightRef(tileBuffer, tileBase + slot);
 			lightIndex = ref.lightIndex;
-			invSourcePdf = ref.invSourcePdf;
-			drawn = true;
 		}
-
-		[branch]
-		if (!drawn)
+		else
 		{
 			lightIndex = iterator.first_item() + rng.next_uint(lightCount);
-			invSourcePdf = (float)lightCount;
 		}
 
 		M += 1;
@@ -157,38 +217,79 @@ inline RESTIRDIReservoir RESTIRDISampleInitial(
 			continue;
 
 		const ShaderEntity light = load_entity(lightIndex);
+
+		// Combined sampling density across the tile, uniform and directional
+		// strategies (balance heuristic). Analytic (power-proportional) so it
+		// is identical whether this light is drawn from the tile or the uniform
+		// pool below - the tile's stored invSourcePdf is only its sampling
+		// mechanism.
+		const float denom = RESTIRDIInitialDenom(
+			light, candidateCount, RESTIR_DI_UNIFORM_CANDIDATES,
+			lightCount, totalPower, tileBuffer >= 0);
+
 		const float2 uv = float2(rng.next_float(), rng.next_float());
-		const RESTIRLightSample s = RESTIRResolveAnalyticLight(light, P, N, uv);
-		const float unshadowedTarget = RESTIRTargetFunction(s, N);
-		[branch]
-		if (unshadowedTarget <= 0)
-			continue;
-
-		// One shadow ray per candidate: occluded -> zero target -> excluded.
-		const float sampleDist =
-			(s.distance >= FLT_MAX * 0.5) ? 100000.0 : s.distance;
-		const float3 samplePos = P + s.direction * sampleDist;
-		const float vis = RESTIRDITraceVisibility(P, N, samplePos, rng);
-		[branch]
-		if (vis <= 0)
-			continue;
-
-		const float risWeight = unshadowedTarget * vis * invSourcePdf;
-		weightSum += risWeight;
-
-		if (weightSum > 0 && rng.next_float() * weightSum < risWeight)
-		{
-			r.samplePosition = samplePos;
-			r.sampleRadiance = s.radiance;
-			// Visible winner: shadowed target == unshadowed target.
-			r.targetPdf = unshadowedTarget;
-			r.lightIndex = lightIndex;
-			r.uv = uv;
-			r.visibility = vis;
-		}
+		RESTIRDIStreamInitialCandidate(
+			light, lightIndex, uv, denom, P, N, weightSum, r, rng);
 	}
 
-	r.weightSum = weightSum;
+	// Uniform-light candidates: every light gets a power-independent chance, so
+	// a dim light is sampled even when a much brighter light floods the tiles
+	// (which importance-sample by global power). MIS-combined with the tiles
+	// via the shared density above, so it stays unbiased and the tiles still
+	// handle the many-lights case.
+	for (uint u = 0; u < RESTIR_DI_UNIFORM_CANDIDATES; ++u)
+	{
+		const uint lightIndex =
+			iterator.first_item() + rng.next_uint(lightCount);
+
+		M += 1;
+
+		const ShaderEntity light = load_entity(lightIndex);
+		const float denom = RESTIRDIInitialDenom(
+			light, candidateCount, RESTIR_DI_UNIFORM_CANDIDATES,
+			lightCount, totalPower, tileBuffer >= 0);
+
+		const float2 uv = float2(rng.next_float(), rng.next_float());
+		RESTIRDIStreamInitialCandidate(
+			light, lightIndex, uv, denom, P, N, weightSum, r, rng);
+	}
+
+	// Directional (sun / infinite) lights: sampled exhaustively every frame,
+	// separate from the power-weighted local pool. A directional light reaches
+	// every pixel but carries a small power proxy (irradiance, not intensity),
+	// so the local pool tiles it rarely and the estimator would only
+	// occasionally select the sun - with a large compensating weight, a
+	// per-frame brightness spike (the "whitening" shimmer) the denoiser cannot
+	// hide under motion. Sweeping the (very few) directional lights every frame
+	// makes the sun's contribution near-deterministic and low-variance. The two
+	// strategies are combined by the balance heuristic (the `denom` term).
+	//
+	// References: Veach & Guibas 1995, "Optimally Combining Sampling Techniques
+	// for Monte Carlo Rendering".
+	for (uint d = 0; d < dirCount; ++d)
+	{
+		const uint lightIndex = dirIterator.first_item() + d;
+
+		M += 1;
+
+		const ShaderEntity light = load_entity(lightIndex);
+
+		// Same combined density as every other strategy, so a light that more
+		// than one strategy can draw is weighted consistently (unbiased).
+		const float denom = RESTIRDIInitialDenom(
+			light, candidateCount, RESTIR_DI_UNIFORM_CANDIDATES,
+			lightCount, totalPower, tileBuffer >= 0);
+
+		const float2 uv = float2(rng.next_float(), rng.next_float());
+		RESTIRDIStreamInitialCandidate(
+			light, lightIndex, uv, denom, P, N, weightSum, r, rng);
+	}
+
+	// Pre-multiply by M so the downstream unbiased weight W = weightSum / (M *
+	// targetPdf) recovers the balance-heuristic W = weightSum / targetPdf
+	// (balance-heuristic RIS does not divide by the sample count). Mirrors the
+	// same trick in RESTIRDIMergeBalanceHeuristic.
+	r.weightSum = M * weightSum;
 	r.M = M;
 	return r;
 }
@@ -198,6 +299,11 @@ void main(uint3 DTid : SV_DispatchThreadID)
 {
 	if (DTid.x >= push.resolution.x || DTid.y >= push.resolution.y)
 		return;
+
+	// Stable light-index translation state (see restir_diHF.hlsli).
+	RESTIRDILightMapBuffer = push.lightIndexMapBuffer;
+	RESTIRDILightMapOffset = push.lightIndexMapOffset;
+	RESTIRDISceneLightCount = push.sceneLightCount;
 
 	const uint2 pixel = DTid.xy;
 	const uint flatIndex = pixel.y * push.resolution.x + pixel.x;

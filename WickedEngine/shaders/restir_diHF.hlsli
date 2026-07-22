@@ -16,6 +16,70 @@
  * Include order: "globals.hlsli" first, then this header.
  */
 
+/*
+################################################################################
+Stable light-index translation
+################################################################################
+*/
+
+/**
+ * Bindless SRV of the packed stable light-index translation buffer, -1 for
+ * identity.
+ *
+ * A reservoir stores a **stable scene light index**; the per-frame entity array
+ * is reindexed by frustum culling, so this maps between the stable index and
+ * the current entity slot (see RESTIRDIPushConstants::lightIndexMapBuffer for
+ * the layout). Set once per thread at the top of each pass's `main()`; the
+ * resolve helpers read it. Only touches `bindless_buffers`, never
+ * `load_entity`, so the light-free consumers (denoise passes, forward shading)
+ * can still include this header.
+ */
+static int RESTIRDILightMapBuffer = -1;
+
+/** Byte offset of the translation buffer's data within its GPU buffer. */
+static uint RESTIRDILightMapOffset = 0;
+
+/** Number of scene lights: bound + split point of the two map sub-arrays. */
+static uint RESTIRDISceneLightCount = 0;
+
+/**
+ * Maps a per-frame entity slot to its stable scene light index (store side).
+ *
+ * @param[in] slot - Entity-array slot of a currently-visible analytic light.
+ *
+ * @return The light's stable scene index, or `slot` unchanged when translation
+ *   is disabled (RESTIRDILightMapBuffer < 0).
+ */
+inline uint RESTIRDIStableLightIndex(uint slot)
+{
+	[branch]
+	if (RESTIRDILightMapBuffer < 0)
+		return slot;
+	return bindless_buffers[descriptor_index(RESTIRDILightMapBuffer)].Load(
+		RESTIRDILightMapOffset + (RESTIRDISceneLightCount + slot) * 4);
+}
+
+/**
+ * Maps a stable scene light index back to its current entity slot (reuse side).
+ *
+ * @param[in] sceneIndex - Stable scene light index stored in a reservoir.
+ *
+ * @return The current entity slot, RESTIR_INVALID_LIGHT_INDEX if the light is
+ *   culled (or out of range) this frame, or `sceneIndex` unchanged when
+ *   translation is disabled.
+ */
+inline uint RESTIRDICurrentLightSlot(uint sceneIndex)
+{
+	[branch]
+	if (RESTIRDILightMapBuffer < 0)
+		return sceneIndex;
+	[branch]
+	if (sceneIndex >= RESTIRDISceneLightCount)
+		return RESTIR_INVALID_LIGHT_INDEX;
+	return bindless_buffers[descriptor_index(RESTIRDILightMapBuffer)].Load(
+		RESTIRDILightMapOffset + sceneIndex * 4);
+}
+
 /**
  * Streams one resolved candidate into a DI reservoir (weighted reservoir
  * sampling).

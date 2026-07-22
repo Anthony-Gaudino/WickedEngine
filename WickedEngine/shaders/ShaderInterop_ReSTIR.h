@@ -455,6 +455,22 @@ Screen-space DI reservoir
  */
 static const uint RESTIR_DI_INITIAL_CANDIDATES = 4;
 
+/**
+ * Number of **uniformly**-drawn analytic-light candidates the initial pass adds
+ * alongside the power-weighted tile candidates, MIS-combined by the balance
+ * heuristic.
+ *
+ * The tiles importance-sample by global power, so a very bright light floods
+ * them and a dim light in the same scene is almost never a candidate - its
+ * contribution then flickers (sampled rarely, with a large compensating
+ * weight), worst under camera translation where temporal reuse cannot help. A
+ * few uniform draws give every light a power-independent chance, so a dim light
+ * is sampled reliably; the MIS weighting keeps it unbiased and lets the tiles
+ * still handle the many-lights case. Local (per-region) importance sampling
+ * (ReGIR) would be the scalable long-term fix; this is the cheap general one.
+ */
+static const uint RESTIR_DI_UNIFORM_CANDIDATES = 2;
+
 /** Spatial-reuse neighbor count per pixel. */
 static const uint RESTIR_DI_SPATIAL_SAMPLES = 4;
 
@@ -1033,6 +1049,35 @@ struct RESTIRDIPushConstants
 	 * neighbors to break up bigger blobs (at the cost of position accuracy).
 	 */
 	float regirSamplingJitter;
+
+	/**
+	 * Bindless SRV of the packed stable light-index translation buffer (raw),
+	 * or -1 to disable translation (identity fallback = the old behavior, where
+	 * a reservoir index is a raw entity slot).
+	 *
+	 * A reservoir stores the **stable scene light index** (index into the
+	 * scene's light component array), which survives frustum culling reindexing
+	 * the per-frame entity array. The buffer holds two uint arrays back to
+	 * back, starting at `lightIndexMapOffset`:
+	 *   - `[0, sceneLightCount)`: scene light index -> current entity slot
+	 *     (RESTIR_INVALID_LIGHT_INDEX where the light is culled this frame;
+	 *     such a light reaches no visible surface, so its reservoir contributes
+	 *     nothing). Used on reuse before `load_entity`.
+	 *   - `[sceneLightCount, sceneLightCount + SHADER_ENTITY_COUNT)`: entity
+	 *     slot -> scene light index. Used by the initial pass to store the
+	 *     stable index for the slot it drew.
+	 */
+	int lightIndexMapBuffer;
+
+	/** Byte offset of the translation buffer's data within its GPU buffer. */
+	uint lightIndexMapOffset;
+
+	/**
+	 * Number of scene lights: bound + sub-array split of the translation map.
+	 */
+	uint sceneLightCount;
+
+	uint pad1;
 };
 
 /**

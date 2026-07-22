@@ -30,7 +30,20 @@ void RESTIRDIResolveSample(
 	out float3 samplePosition,
 	out float3 sampleRadiance)
 {
-	const ShaderEntity light = load_entity(lightIndex);
+	// lightIndex is a STABLE scene index; map it to this frame's entity slot. A
+	// light culled this frame reaches no visible surface, so yield a zero-
+	// radiance sample (the callers weight by radiance, so it contributes
+	// nothing).
+	const uint slot = RESTIRDICurrentLightSlot(lightIndex);
+	[branch]
+	if (slot == RESTIR_INVALID_LIGHT_INDEX)
+	{
+		samplePosition = P;
+		sampleRadiance = 0;
+		return;
+	}
+
+	const ShaderEntity light = load_entity(slot);
 	const RESTIRLightSample s = RESTIRResolveAnalyticLight(light, P, N, uv);
 	// Directional samples have no finite position; anchor them far along the
 	// sample direction (matches the initial pass).
@@ -80,6 +93,11 @@ void main(uint3 DTid : SV_DispatchThreadID)
 {
 	if (DTid.x >= push.resolution.x || DTid.y >= push.resolution.y)
 		return;
+
+	// Stable light-index translation state (see restir_diHF.hlsli).
+	RESTIRDILightMapBuffer = push.lightIndexMapBuffer;
+	RESTIRDILightMapOffset = push.lightIndexMapOffset;
+	RESTIRDISceneLightCount = push.sceneLightCount;
 
 	const uint2 pixel = DTid.xy;
 	const uint flatIndex = pixel.y * push.resolution.x + pixel.x;
@@ -223,8 +241,12 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			// bound, so the old light-count clamp (a uniform-sampling bound)
 			// darkened dim lights. This caps each light's contribution at
 			// ~totalLightPower while still bounding fireflies.
+			const uint lightSlot =
+				RESTIRDICurrentLightSlot(reservoir.lightIndex);
 			const float lightPower =
-				RESTIRLightPower(load_entity(reservoir.lightIndex));
+				(lightSlot != RESTIR_INVALID_LIGHT_INDEX)
+					? RESTIRLightPower(load_entity(lightSlot))
+					: 1.0;
 			const float maxW = GetFrame().totalLightPower / lightPower;
 			const float Wclamp = min(W, maxW);
 			const float3 L = normalize(reservoir.samplePosition - P);
@@ -288,10 +310,15 @@ void main(uint3 DTid : SV_DispatchThreadID)
 							RESTIRDITraceVisibility(P, N, prevPos, rng);
 						const float NdotLprev =
 							saturate(dot(N, normalize(prevPos - P)));
+						const uint prevSlot =
+							RESTIRDICurrentLightSlot(prevRes.lightIndex);
+						const float prevPower =
+							(prevSlot != RESTIR_INVALID_LIGHT_INDEX)
+								? RESTIRLightPower(load_entity(prevSlot))
+								: 1.0;
 						const float Wprev = min(
 							RESTIRDIReservoirGetInvPdf(prevRes),
-							GetFrame().totalLightPower /
-								RESTIRLightPower(load_entity(prevRes.lightIndex)));
+							GetFrame().totalLightPower / prevPower);
 						const float irrNow =
 							RESTIRLuma(prevRad * Wprev * vReeval * NdotLprev);
 						const float irrThen =
