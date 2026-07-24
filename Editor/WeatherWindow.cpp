@@ -901,6 +901,44 @@ void WeatherWindow::Create(EditorComponent* _editor)
 	AddWidget(&ocean_toleranceSlider);
 
 
+	ocean_windDrivenCheckBox.Create("Ocean follows wind: ");
+	ocean_windDrivenCheckBox.SetSize(XMFLOAT2(hei, hei));
+	ocean_windDrivenCheckBox.SetPos(XMFLOAT2(x, y += step));
+	ocean_windDrivenCheckBox.SetTooltip("When enabled, the ocean waves follow the scene wind direction and strength instead of the authored ocean wind.");
+	ocean_windDrivenCheckBox.OnClick([this](wi::gui::EventArgs args) {
+		GetWeather().SetOceanWindDriven(args.bValue);
+		});
+	AddWidget(&ocean_windDrivenCheckBox);
+
+	ocean_windInfluenceSlider.Create(0, 1, 0.1f, 100000, "Wind influence: ");
+	ocean_windInfluenceSlider.SetSize(XMFLOAT2(wid, hei));
+	ocean_windInfluenceSlider.SetPos(XMFLOAT2(x, y += step));
+	ocean_windInfluenceSlider.SetValue(editor->GetCurrentScene().weather.oceanWindInfluence);
+	ocean_windInfluenceSlider.SetTooltip("How strongly the scene wind speed scales the wave energy when 'Ocean follows wind' is enabled.");
+	ocean_windInfluenceSlider.OnSlide([this](wi::gui::EventArgs args) {
+		GetWeather().oceanWindInfluence = args.fValue;
+		});
+	AddWidget(&ocean_windInfluenceSlider);
+
+	ocean_windDriftCheckBox.Create("Wind drift floaters: ");
+	ocean_windDriftCheckBox.SetSize(XMFLOAT2(hei, hei));
+	ocean_windDriftCheckBox.SetPos(XMFLOAT2(x, y += step));
+	ocean_windDriftCheckBox.SetTooltip("When enabled, floating objects are carried horizontally by a wind-driven surface current.");
+	ocean_windDriftCheckBox.OnClick([this](wi::gui::EventArgs args) {
+		GetWeather().SetOceanWindDrift(args.bValue);
+		});
+	AddWidget(&ocean_windDriftCheckBox);
+
+	ocean_windDriftStrengthSlider.Create(0, 1, 0.2f, 100000, "Drift strength: ");
+	ocean_windDriftStrengthSlider.SetSize(XMFLOAT2(wid, hei));
+	ocean_windDriftStrengthSlider.SetPos(XMFLOAT2(x, y += step));
+	ocean_windDriftStrengthSlider.SetValue(editor->GetCurrentScene().weather.oceanWindDriftStrength);
+	ocean_windDriftStrengthSlider.SetTooltip("Strength of the wind-driven surface current that carries floating objects.");
+	ocean_windDriftStrengthSlider.OnSlide([this](wi::gui::EventArgs args) {
+		GetWeather().oceanWindDriftStrength = args.fValue;
+		});
+	AddWidget(&ocean_windDriftStrengthSlider);
+
 	ocean_resetButton.Create("Reset Ocean");
 	ocean_resetButton.SetTooltip("Reset ocean to default values.");
 	ocean_resetButton.SetSize(XMFLOAT2(mod_wid, hei));
@@ -1132,6 +1170,10 @@ void WeatherWindow::UpdateData()
 		ocean_heightSlider.SetValue(weather.oceanParameters.waterHeight);
 		ocean_detailSlider.SetValue((float)weather.oceanParameters.surfaceDetail);
 		ocean_toleranceSlider.SetValue(weather.oceanParameters.surfaceDisplacementTolerance);
+		ocean_windDrivenCheckBox.SetCheck(weather.IsOceanWindDriven());
+		ocean_windInfluenceSlider.SetValue(weather.oceanWindInfluence);
+		ocean_windDriftCheckBox.SetCheck(weather.IsOceanWindDrift());
+		ocean_windDriftStrengthSlider.SetValue(weather.oceanWindDriftStrength);
 
 		volumetricCloudsCheckBox.SetCheck(weather.IsVolumetricClouds());
 		volumetricCloudsReceiveShadowCheckBox.SetCheck(weather.IsVolumetricCloudsReceiveShadow());
@@ -1357,6 +1399,10 @@ void WeatherWindow::ResizeLayout()
 	layout.add(ocean_heightSlider);
 	layout.add(ocean_detailSlider);
 	layout.add(ocean_toleranceSlider);
+	layout.add_right(ocean_windDrivenCheckBox);
+	layout.add(ocean_windInfluenceSlider);
+	layout.add_right(ocean_windDriftCheckBox);
+	layout.add(ocean_windDriftStrengthSlider);
 	layout.add_fullwidth(ocean_resetButton);
 
 	layout.jump();

@@ -1899,6 +1899,11 @@ namespace wi::scene
 			{
 				archive >> oceanParameters.extinctionColor;
 			}
+			if (seri.GetVersion() >= 7)
+			{
+				archive >> oceanWindInfluence;
+				archive >> oceanWindDriftStrength;
+			}
 		}
 		else
 		{
@@ -2122,6 +2127,11 @@ namespace wi::scene
 			if (seri.GetVersion() >= 6)
 			{
 				archive << oceanParameters.extinctionColor;
+			}
+			if (seri.GetVersion() >= 7)
+			{
+				archive << oceanWindInfluence;
+				archive << oceanWindDriftStrength;
 			}
 		}
 	}

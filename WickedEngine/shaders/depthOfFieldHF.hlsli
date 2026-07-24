@@ -1,11 +1,56 @@
 #ifndef WI_DEPTHOFFIELD_HF
 #define WI_DEPTHOFFIELD_HF
 
+#include "underwaterHF.hlsli"
+
 PUSHCONSTANT(postprocess, PostProcess);
 
 inline float get_coc(in float linear_depth)
 {
     return min(dof_maxcoc, dof_cocscale * GetCamera().aperture_size * pow(abs(1 - GetCamera().focal_length / (linear_depth * GetCamera().z_far)), 2.0f));
+}
+
+/**
+ * Circle of confusion for the underwater eye-defocus model.
+ *
+ * The human eye cannot accommodate underwater, so everything past a near
+ * focus plane is blurred like depth of field. The blur grows with distance
+ * and is masked to the submerged part of the screen only.
+ *
+ * @param[in] uv - Screen space UV coordinates for waterline masking.
+ * @param[in] linear_depth - Normalized linear depth (0-1).
+ *
+ * @return Circle of confusion radius, masked to underwater region.
+ */
+inline float get_coc_underwater(in float2 uv, in float linear_depth)
+{
+    const float dist = linear_depth * GetCamera().z_far;
+    const float defocus = saturate((dist - dof_focus) / dof_focus_range);
+
+    return min(dof_maxcoc, dof_cocscale * defocus * ocean_underwater_factor(uv));
+}
+
+/**
+ * Selects circle of confusion mode based on underwater flag.
+ *
+ * Branches between the camera-lens depth-of-field model and the underwater
+ * eye-defocus model. The `uv` parameter is only used in the underwater path
+ * to apply the waterline mask.
+ *
+ * @param[in] linear_depth - Normalized linear depth (0-1).
+ * @param[in] uv - Screen space UV coordinates (only used if underwater).
+ *
+ * @return Circle of confusion radius.
+ */
+inline float get_coc(in float linear_depth, in float2 uv)
+{
+    [branch]
+    if (dof_underwater > 0)
+    {
+        return get_coc_underwater(uv, linear_depth);
+    }
+
+    return get_coc(linear_depth);
 }
 
 #define DOF_DEPTH_SCALE_FOREGROUND (GetCamera().z_far * 1.5)

@@ -5309,13 +5309,62 @@ namespace wi::scene
 			weather = weathers[0];
 			weather.most_important_light_index = ~0;
 
+			// Wind-driven ocean: override the authored ocean wind with the scene
+			// wind so the FFT spectrum follows the weather. Only wind_dir and
+			// wave_amplitude feed the spectrum (H0), so those are all we couple.
+			if (weather.IsOceanWindDriven())
+			{
+				const XMFLOAT3& wd = weather.windDirection;
+				const float horizLen = std::sqrt(wd.x * wd.x + wd.z * wd.z);
+
+				if (horizLen > 1e-4f)
+				{
+					weather.oceanParameters.wind_dir = XMFLOAT2(wd.x / horizLen, wd.z / horizLen);
+				}
+
+				const float energy = wi::math::Clamp(weather.windSpeed * weather.oceanWindInfluence, 0.1f, 4.0f);
+				weather.oceanParameters.wave_amplitude *= energy;
+			}
+
+			const XMFLOAT2 ocean_wind_target_dir = weather.oceanParameters.wind_dir;
+			const float ocean_wind_target_amplitude = weather.oceanParameters.wave_amplitude;
+
+			// Minimum seconds between wind-driven spectrum regenerations. Each
+			// regeneration re-creates GPU buffers, so it is rate limited.
+			constexpr float OCEAN_WIND_REGEN_INTERVAL = 0.25f;
+
 			if (weather.IsOceanEnabled() && !ocean.IsValid())
 			{
 				OceanRegenerate();
+				ocean_wind_generated_dir = ocean_wind_target_dir;
+				ocean_wind_generated_amplitude = ocean_wind_target_amplitude;
+				ocean_wind_regen_cooldown = OCEAN_WIND_REGEN_INTERVAL;
 			}
 			if (!weather.IsOceanEnabled())
 			{
 				ocean = {};
+			}
+
+			// Regenerate the spectrum when the wind has drifted materially, but
+			// no more often than OCEAN_WIND_REGEN_INTERVAL to avoid GPU churn.
+			if (weather.IsOceanWindDriven() && ocean.IsValid())
+			{
+				ocean_wind_regen_cooldown -= dt;
+				const float dirCos =
+					ocean_wind_generated_dir.x * ocean_wind_target_dir.x +
+					ocean_wind_generated_dir.y * ocean_wind_target_dir.y;
+				const bool dirChanged = dirCos < 0.996f; // ~5 degrees
+				const float ampRatio = ocean_wind_target_amplitude /
+					std::max(ocean_wind_generated_amplitude, 1e-4f);
+				const bool ampChanged = ampRatio < 0.9f || ampRatio > 1.1f;
+
+				if (ocean_wind_regen_cooldown <= 0 && (dirChanged || ampChanged))
+				{
+					OceanRegenerate();
+					ocean_wind_generated_dir = ocean_wind_target_dir;
+					ocean_wind_generated_amplitude = ocean_wind_target_amplitude;
+					ocean_wind_regen_cooldown = OCEAN_WIND_REGEN_INTERVAL;
+				}
 			}
 
 			// Ocean occlusion status:

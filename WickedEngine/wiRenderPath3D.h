@@ -45,6 +45,8 @@ namespace wi
 		uint32_t aoSampleCount = 16;
 		float aoPower = 1.0f;
 		float chromaticAberrationAmount = 2.0f;
+		float underwaterBlurStrength = 2.0f;
+		float underwaterChromaticAberrationAmount = 2.0f;
 		uint32_t screenSpaceShadowSampleCount = 16;
 		float screenSpaceShadowRange = 1;
 		float eyeadaptionKey = 0.115f;
@@ -80,10 +82,12 @@ namespace wi
 		bool lensFlareEnabled = true;
 		bool motionBlurEnabled = false;
 		bool depthOfFieldEnabled = true;
+		bool underwaterBlurEnabled = true;
 		bool eyeAdaptionEnabled = false;
 		bool sharpenFilterEnabled = false;
 		bool outlineEnabled = false;
 		bool chromaticAberrationEnabled = false;
+		bool underwaterChromaticAberrationEnabled = true;
 		bool ditherEnabled = true;
 		bool occlusionCullingEnabled = true;
 		bool sceneUpdateEnabled = true;
@@ -249,6 +253,8 @@ namespace wi
 		constexpr uint32_t getAOSampleCount() const { return aoSampleCount; }
 		constexpr float getAOPower() const { return aoPower; }
 		constexpr float getChromaticAberrationAmount() const { return chromaticAberrationAmount; }
+		[[nodiscard]] constexpr float getUnderwaterBlurStrength() const { return underwaterBlurStrength; }
+		[[nodiscard]] constexpr float getUnderwaterChromaticAberrationAmount() const { return underwaterChromaticAberrationAmount; }
 		constexpr uint32_t getScreenSpaceShadowSampleCount() const { return screenSpaceShadowSampleCount; }
 		constexpr float getScreenSpaceShadowRange() const { return screenSpaceShadowRange; }
 		constexpr float getEyeAdaptionKey() const { return eyeadaptionKey; }
@@ -284,11 +290,13 @@ namespace wi
 		constexpr bool getLensFlareEnabled() const { return lensFlareEnabled; }
 		constexpr bool getMotionBlurEnabled() const { return motionBlurEnabled; }
 		constexpr bool getDepthOfFieldEnabled() const { return depthOfFieldEnabled; }
+		constexpr bool getUnderwaterBlurEnabled() const { return underwaterBlurEnabled; }
 		constexpr bool getEyeAdaptionEnabled() const { return eyeAdaptionEnabled; }
 		constexpr bool getSharpenFilterEnabled() const { return sharpenFilterEnabled && getSharpenFilterAmount() > 0; }
 		constexpr bool getCRTFilterEnabled() const { return crtFilterEnabled && getSharpenFilterAmount() > 0; }
 		constexpr bool getOutlineEnabled() const { return outlineEnabled; }
 		constexpr bool getChromaticAberrationEnabled() const { return chromaticAberrationEnabled; }
+		constexpr bool getUnderwaterChromaticAberrationEnabled() const { return underwaterChromaticAberrationEnabled; }
 		constexpr bool getDitherEnabled() const { return ditherEnabled; }
 		constexpr bool getOcclusionCullingEnabled() const { return occlusionCullingEnabled; }
 		constexpr bool getSceneUpdateEnabled() const { return sceneUpdateEnabled; }
@@ -313,6 +321,8 @@ namespace wi
 		constexpr void setAOSampleCount(uint32_t value) { aoSampleCount = value; }
 		constexpr void setAOPower(float value) { aoPower = value; }
 		constexpr void setChromaticAberrationAmount(float value) { chromaticAberrationAmount = value; }
+		constexpr void setUnderwaterBlurStrength(float value) { underwaterBlurStrength = value; }
+		constexpr void setUnderwaterChromaticAberrationAmount(float value) { underwaterChromaticAberrationAmount = value; }
 		constexpr void setScreenSpaceShadowSampleCount(uint32_t value) { screenSpaceShadowSampleCount = value; }
 		constexpr void setScreenSpaceShadowRange(float value) { screenSpaceShadowRange = value; }
 		constexpr void setEyeAdaptionKey(float value) { eyeadaptionKey = value; }
@@ -352,6 +362,8 @@ namespace wi
 		constexpr void setSharpenFilterEnabled(bool value) { sharpenFilterEnabled = value; }
 		constexpr void setCRTFilterEnabled(bool value) { crtFilterEnabled = value; }
 		constexpr void setChromaticAberrationEnabled(bool value) { chromaticAberrationEnabled = value; }
+		constexpr void setUnderwaterBlurEnabled(bool value) { underwaterBlurEnabled = value; }
+		constexpr void setUnderwaterChromaticAberrationEnabled(bool value) { underwaterChromaticAberrationEnabled = value; }
 		constexpr void setDitherEnabled(bool value) { ditherEnabled = value; }
 		constexpr void setOcclusionCullingEnabled(bool value) { occlusionCullingEnabled = value; }
 		constexpr void setSceneUpdateEnabled(bool value) { sceneUpdateEnabled = value; }

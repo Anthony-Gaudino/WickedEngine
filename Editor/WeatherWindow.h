@@ -57,6 +57,10 @@ public:
 	wi::gui::Slider ocean_heightSlider;
 	wi::gui::Slider ocean_detailSlider;
 	wi::gui::Slider ocean_toleranceSlider;
+	wi::gui::CheckBox ocean_windDrivenCheckBox;
+	wi::gui::Slider ocean_windInfluenceSlider;
+	wi::gui::CheckBox ocean_windDriftCheckBox;
+	wi::gui::Slider ocean_windDriftStrengthSlider;
 	wi::gui::Button ocean_resetButton;
 
 	wi::gui::ComboBox colorComboBox;

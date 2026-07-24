@@ -16,6 +16,7 @@ Texture2D<float4> input : register(t0);
 
 RWTexture2D<float4> output : register(u0);
 
+
 // https://www.shadertoy.com/view/MlSXR3
 float2 brownConradyDistortion(float2 uv)
 {
@@ -111,8 +112,6 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		uv += sin(-uv.y * 5 + GetFrame().time * 2) * 0.005;
 #endif // ANIMATED_DISTORT
 
-		color = input.SampleLevel(sampler_linear_mirror, uv, 0);
-
 		const float depth = texture_depth.SampleLevel(sampler_linear_clamp, uv, 0);
 		float3 surface_position = reconstruct_position(uv, depth);
 
@@ -140,6 +139,9 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		const float fog_distance = max(ray_dist, water_depth);
 
 		float fogAmount = 1 - saturate(exp(-fog_distance * ocean.water_color.a));
+
+		color = input.SampleLevel(sampler_linear_mirror, uv, 0);
+
 		float3 transmittance = saturate(exp(-fog_distance * ocean.extinction_color.rgb * ocean.water_color.a));
 		half3 fogColor = ocean.water_color.rgb;
 

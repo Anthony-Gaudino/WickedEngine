@@ -22,7 +22,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
 	const float3 halfres = texture_postfilter.SampleLevel(sampler_linear_clamp, uv, 0);
 	const float alpha = texture_alpha.SampleLevel(sampler_linear_clamp, uv, 0);
 
-	const float coc = get_coc(center_depth);
+	const float coc = get_coc(center_depth, uv);
 
 	float depthDelta = saturate(1.0 - GetCamera().z_far * (center_depth - mindepth));
 

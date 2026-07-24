@@ -21,7 +21,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		{
 			const float2 uv = (pixel + 0.5) * postprocess.resolution_rcp;
 			const float depth = texture_lineardepth.SampleLevel(sampler_point_clamp, uv, 0);
-			const float coc = get_coc(depth);
+			const float coc = get_coc(depth, uv);
 			min_depth = min(min_depth, depth);
 			max_coc = max(max_coc, coc);
 			min_coc = min(min_coc, coc);

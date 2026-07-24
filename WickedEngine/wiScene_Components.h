@@ -1833,6 +1833,8 @@ namespace wi::scene
 			REALISTIC_SKY_HIGH_QUALITY = 1 << 8,
 			REALISTIC_SKY_RECEIVE_SHADOW = 1 << 9,
 			VOLUMETRIC_CLOUDS_RECEIVE_SHADOW = 1 << 10,
+			OCEAN_WIND_DRIVEN = 1 << 11,
+			OCEAN_WIND_DRIFT = 1 << 12,
 		};
 		uint32_t _flags = EMPTY;
 
@@ -1846,6 +1848,12 @@ namespace wi::scene
 		constexpr bool IsRealisticSkyHighQuality() const { return _flags & REALISTIC_SKY_HIGH_QUALITY; }
 		constexpr bool IsRealisticSkyReceiveShadow() const { return _flags & REALISTIC_SKY_RECEIVE_SHADOW; }
 		constexpr bool IsVolumetricCloudsReceiveShadow() const { return _flags & VOLUMETRIC_CLOUDS_RECEIVE_SHADOW; }
+		// When enabled, the FFT ocean spectrum follows the scene wind
+		// (windDirection/windSpeed) instead of the authored ocean wind.
+		constexpr bool IsOceanWindDriven() const { return _flags & OCEAN_WIND_DRIVEN; }
+		// When enabled, objects floating in water are carried horizontally by a
+		// wind-driven surface current, not just bobbed vertically.
+		constexpr bool IsOceanWindDrift() const { return _flags & OCEAN_WIND_DRIFT; }
 
 		constexpr void SetOceanEnabled(bool value = true) { set_flag(_flags, OCEAN_ENABLED, value); }
 		constexpr void SetRealisticSky(bool value = true) { set_flag(_flags, REALISTIC_SKY, value); }
@@ -1857,6 +1865,8 @@ namespace wi::scene
 		constexpr void SetRealisticSkyHighQuality(bool value = true) { set_flag(_flags, REALISTIC_SKY_HIGH_QUALITY, value); }
 		constexpr void SetRealisticSkyReceiveShadow(bool value = true) { set_flag(_flags, REALISTIC_SKY_RECEIVE_SHADOW, value); }
 		constexpr void SetVolumetricCloudsReceiveShadow(bool value = true) { set_flag(_flags, VOLUMETRIC_CLOUDS_RECEIVE_SHADOW, value); }
+		constexpr void SetOceanWindDriven(bool value = true) { set_flag(_flags, OCEAN_WIND_DRIVEN, value); }
+		constexpr void SetOceanWindDrift(bool value = true) { set_flag(_flags, OCEAN_WIND_DRIFT, value); }
 
 		XMFLOAT3 sunColor = XMFLOAT3(0, 0, 0);
 		XMFLOAT3 sunDirection = XMFLOAT3(0, 1, 0);
@@ -1872,6 +1882,12 @@ namespace wi::scene
 		float windRandomness = 5;
 		float windWaveSize = 1;
 		float windSpeed = 1;
+		// Scales how strongly the scene wind drives the ocean when
+		// OCEAN_WIND_DRIVEN is set (wave energy multiplier, 0..1).
+		float oceanWindInfluence = 0.1f;
+		// Strength of the wind-driven surface current that carries floating
+		// objects when OCEAN_WIND_DRIFT is set (0 disables horizontal drift).
+		float oceanWindDriftStrength = 0.2f;
 		float stars = 0.5f;
 		XMFLOAT3 gravity = XMFLOAT3(0, -10, 0);
 		float sky_rotation = 0; // horizontal rotation for skyMap texture (in radians)

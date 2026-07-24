@@ -90,6 +90,8 @@ public:
 	wi::gui::Slider motionBlurStrengthSlider;
 	wi::gui::CheckBox depthOfFieldCheckBox;
 	wi::gui::Slider depthOfFieldScaleSlider;
+	wi::gui::CheckBox underwaterBlurCheckBox;
+	wi::gui::Slider underwaterBlurStrengthSlider;
 	wi::gui::CheckBox bloomCheckBox;
 	wi::gui::Slider bloomStrengthSlider;
 	wi::gui::CheckBox fxaaCheckBox;
@@ -103,6 +105,8 @@ public:
 	wi::gui::Slider outlineThicknessSlider;
 	wi::gui::CheckBox chromaticaberrationCheckBox;
 	wi::gui::Slider chromaticaberrationSlider;
+	wi::gui::CheckBox underwaterChromaticaberrationCheckBox;
+	wi::gui::Slider underwaterChromaticaberrationSlider;
 	wi::gui::CheckBox fsrCheckBox;
 	wi::gui::Slider fsrSlider;
 	wi::gui::CheckBox fsr2CheckBox;

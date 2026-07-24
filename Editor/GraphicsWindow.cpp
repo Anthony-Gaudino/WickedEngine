@@ -1373,6 +1373,40 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 		});
 	AddWidget(&depthOfFieldScaleSlider);
 
+	underwaterBlurCheckBox.Create("Underwater Blur: ");
+	underwaterBlurCheckBox.SetTooltip("Blur the view while under water, using the depth of field pipeline, to mimic the human eye's inability to focus under water. Only affects the submerged part of the screen.");
+	underwaterBlurCheckBox.SetSize(XMFLOAT2(hei, hei));
+	underwaterBlurCheckBox.SetPos(XMFLOAT2(x, y += step));
+
+	if (editor->main->config.GetSection("graphics").Has("underwater_blur"))
+	{
+		editor->renderPath->setUnderwaterBlurEnabled(editor->main->config.GetSection("graphics").GetBool("underwater_blur"));
+	}
+
+	underwaterBlurCheckBox.OnClick([=](wi::gui::EventArgs args) {
+		editor->renderPath->setUnderwaterBlurEnabled(args.bValue);
+		editor->main->config.GetSection("graphics").Set("underwater_blur", args.bValue);
+		editor->main->config.Commit();
+		});
+	AddWidget(&underwaterBlurCheckBox);
+
+	underwaterBlurStrengthSlider.Create(0, 3, 2, 1000, "Strength: ");
+	underwaterBlurStrengthSlider.SetTooltip("Set the underwater blur strength (maximum circle of confusion).");
+	underwaterBlurStrengthSlider.SetSize(XMFLOAT2(mod_wid, hei));
+	underwaterBlurStrengthSlider.SetPos(XMFLOAT2(x + 100, y));
+
+	if (editor->main->config.GetSection("graphics").Has("underwater_blur_strength"))
+	{
+		editor->renderPath->setUnderwaterBlurStrength(editor->main->config.GetSection("graphics").GetFloat("underwater_blur_strength"));
+	}
+
+	underwaterBlurStrengthSlider.OnSlide([=](wi::gui::EventArgs args) {
+		editor->renderPath->setUnderwaterBlurStrength(args.fValue);
+		editor->main->config.GetSection("graphics").Set("underwater_blur_strength", args.fValue);
+		editor->main->config.Commit();
+		});
+	AddWidget(&underwaterBlurStrengthSlider);
+
 	bloomCheckBox.Create("Bloom: ");
 	bloomCheckBox.SetTooltip("Enable bloom. The effect adds color bleeding to the brightest parts of the scene.");
 	bloomCheckBox.SetScriptTip("RenderPath3D::SetBloomEnabled(bool value)");
@@ -1575,6 +1609,40 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 		editor->main->config.Commit();
 		});
 	AddWidget(&chromaticaberrationSlider);
+
+	underwaterChromaticaberrationCheckBox.Create("Underwater Chromatic Aberration: ");
+	underwaterChromaticaberrationCheckBox.SetTooltip("Toggle a chromatic aberration applied only to the underwater part of the screen, to read as light refracting through water.");
+	underwaterChromaticaberrationCheckBox.SetSize(XMFLOAT2(hei, hei));
+	underwaterChromaticaberrationCheckBox.SetPos(XMFLOAT2(x, y += step));
+
+	if (editor->main->config.GetSection("graphics").Has("underwater_chromatic_aberration"))
+	{
+		editor->renderPath->setUnderwaterChromaticAberrationEnabled(editor->main->config.GetSection("graphics").GetBool("underwater_chromatic_aberration"));
+	}
+
+	underwaterChromaticaberrationCheckBox.OnClick([=](wi::gui::EventArgs args) {
+		editor->renderPath->setUnderwaterChromaticAberrationEnabled(args.bValue);
+		editor->main->config.GetSection("graphics").Set("underwater_chromatic_aberration", args.bValue);
+		editor->main->config.Commit();
+		});
+	AddWidget(&underwaterChromaticaberrationCheckBox);
+
+	underwaterChromaticaberrationSlider.Create(0, 40, 2.0f, 1000, "Strength: ");
+	underwaterChromaticaberrationSlider.SetTooltip("The underwater lens distortion amount.");
+	underwaterChromaticaberrationSlider.SetSize(XMFLOAT2(mod_wid, hei));
+	underwaterChromaticaberrationSlider.SetPos(XMFLOAT2(x + 100, y));
+
+	if (editor->main->config.GetSection("graphics").Has("underwater_chromatic_aberration_strength"))
+	{
+		editor->renderPath->setUnderwaterChromaticAberrationAmount(editor->main->config.GetSection("graphics").GetFloat("underwater_chromatic_aberration_strength"));
+	}
+
+	underwaterChromaticaberrationSlider.OnSlide([=](wi::gui::EventArgs args) {
+		editor->renderPath->setUnderwaterChromaticAberrationAmount(args.fValue);
+		editor->main->config.GetSection("graphics").Set("underwater_chromatic_aberration_strength", args.fValue);
+		editor->main->config.Commit();
+		});
+	AddWidget(&underwaterChromaticaberrationSlider);
 
 	fsrCheckBox.Create("FSR 1.0: ");
 	fsrCheckBox.SetTooltip("FidelityFX FSR Upscaling version 1.0. Use this alongside Temporal AA or MSAA when the resolution scaling is lowered.");
@@ -1832,6 +1900,8 @@ void GraphicsWindow::UpdateData()
 	motionBlurStrengthSlider.SetValue(editor->renderPath->getMotionBlurStrength());
 	depthOfFieldCheckBox.SetCheck(editor->renderPath->getDepthOfFieldEnabled());
 	depthOfFieldScaleSlider.SetValue(editor->renderPath->getDepthOfFieldStrength());
+	underwaterBlurCheckBox.SetCheck(editor->renderPath->getUnderwaterBlurEnabled());
+	underwaterBlurStrengthSlider.SetValue(editor->renderPath->getUnderwaterBlurStrength());
 	bloomCheckBox.SetCheck(editor->renderPath->getBloomEnabled());
 	bloomStrengthSlider.SetValue(editor->renderPath->getBloomThreshold());
 	fxaaCheckBox.SetCheck(editor->renderPath->getFXAAEnabled());
@@ -1845,6 +1915,8 @@ void GraphicsWindow::UpdateData()
 	outlineThicknessSlider.SetValue(editor->renderPath->getOutlineThickness());
 	chromaticaberrationCheckBox.SetCheck(editor->renderPath->getChromaticAberrationEnabled());
 	chromaticaberrationSlider.SetValue(editor->renderPath->getChromaticAberrationAmount());
+	underwaterChromaticaberrationCheckBox.SetCheck(editor->renderPath->getUnderwaterChromaticAberrationEnabled());
+	underwaterChromaticaberrationSlider.SetValue(editor->renderPath->getUnderwaterChromaticAberrationAmount());
 	fsrCheckBox.SetCheck(editor->renderPath->getFSREnabled());
 	fsr2CheckBox.SetCheck(editor->renderPath->getFSR2Enabled());
 	fsrSlider.SetValue(editor->renderPath->getFSRSharpness());
@@ -2093,6 +2165,8 @@ void GraphicsWindow::ResizeLayout()
 	motionBlurCheckBox.SetPos(XMFLOAT2(motionBlurStrengthSlider.GetPos().x - motionBlurCheckBox.GetSize().x - 80, motionBlurStrengthSlider.GetPos().y));
 	layout.add_right(depthOfFieldScaleSlider);
 	depthOfFieldCheckBox.SetPos(XMFLOAT2(depthOfFieldScaleSlider.GetPos().x - depthOfFieldCheckBox.GetSize().x - 80, depthOfFieldScaleSlider.GetPos().y));
+	layout.add_right(underwaterBlurStrengthSlider);
+	underwaterBlurCheckBox.SetPos(XMFLOAT2(underwaterBlurStrengthSlider.GetPos().x - underwaterBlurCheckBox.GetSize().x - 80, underwaterBlurStrengthSlider.GetPos().y));
 	layout.add_right(bloomStrengthSlider);
 	bloomCheckBox.SetPos(XMFLOAT2(bloomStrengthSlider.GetPos().x - bloomCheckBox.GetSize().x - 80, bloomStrengthSlider.GetPos().y));
 	layout.add_right(fxaaCheckBox);
@@ -2106,6 +2180,8 @@ void GraphicsWindow::ResizeLayout()
 	layout.add_right(outlineThicknessSlider);
 	layout.add_right(chromaticaberrationSlider);
 	chromaticaberrationCheckBox.SetPos(XMFLOAT2(chromaticaberrationSlider.GetPos().x - chromaticaberrationCheckBox.GetSize().x - 80, chromaticaberrationSlider.GetPos().y));
+	layout.add_right(underwaterChromaticaberrationSlider);
+	underwaterChromaticaberrationCheckBox.SetPos(XMFLOAT2(underwaterChromaticaberrationSlider.GetPos().x - underwaterChromaticaberrationCheckBox.GetSize().x - 80, underwaterChromaticaberrationSlider.GetPos().y));
 	layout.add_right(fsrSlider);
 	fsrCheckBox.SetPos(XMFLOAT2(fsrSlider.GetPos().x - fsrCheckBox.GetSize().x - 80, fsrSlider.GetPos().y));
 	layout.add_right(fsr2Slider);

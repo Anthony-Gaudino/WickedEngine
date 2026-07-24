@@ -16322,7 +16322,10 @@ void Postprocess_DepthOfField(
 	const Texture& output,
 	CommandList cmd,
 	float coc_scale,
-	float max_coc
+	float max_coc,
+	bool underwater,
+	float underwater_focus,
+	float underwater_focus_range
 )
 {
 	device->EventBegin("Postprocess_DepthOfField", cmd);
@@ -16388,6 +16391,9 @@ void Postprocess_DepthOfField(
 	postprocess.resolution_rcp.y = 1.0f / postprocess.resolution.y;
 	dof_cocscale = coc_scale;
 	dof_maxcoc = max_coc;
+	dof_underwater = underwater ? 1.0f : 0.0f;
+	dof_focus = underwater_focus;
+	dof_focus_range = underwater_focus_range;
 
 	// Compute tile max COC (horizontal):
 	{
@@ -18426,7 +18432,8 @@ void Postprocess_Chromatic_Aberration(
 	const Texture& input,
 	const Texture& output,
 	CommandList cmd,
-	float amount
+	float amount,
+	bool underwater
 )
 {
 	device->EventBegin("Postprocess_Chromatic_Aberration", cmd);
@@ -18443,6 +18450,7 @@ void Postprocess_Chromatic_Aberration(
 	postprocess.resolution_rcp.x = 1.0f / postprocess.resolution.x;
 	postprocess.resolution_rcp.y = 1.0f / postprocess.resolution.y;
 	postprocess.params0.x = amount;
+	postprocess.params0.y = underwater ? 1.0f : 0.0f;
 	device->PushConstants(&postprocess, sizeof(postprocess), cmd);
 
 	const GPUResource* uavs[] = {

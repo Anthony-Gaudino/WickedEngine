@@ -1,5 +1,6 @@
 #include "globals.hlsli"
 #include "ShaderInterop_Postprocess.h"
+#include "underwaterHF.hlsli"
 
 PUSHCONSTANT(postprocess, PostProcess);
 
@@ -11,7 +12,16 @@ RWTexture2D<float4> output : register(u0);
 void main(uint3 DTid : SV_DispatchThreadID)
 {
 	const float2 uv = (DTid.xy + 0.5f) * postprocess.resolution_rcp;
-	const float amount = postprocess.params0.x;
+	float amount = postprocess.params0.x;
+
+	// Underwater mode: limit the aberration to the submerged part of the
+	// screen so a partially submerged camera stays clean above the waterline.
+	const bool underwater = postprocess.params0.y > 0;
+
+	if (underwater)
+	{
+		amount *= ocean_underwater_factor(uv);
+	}
 
 	float2 border = 0.5f * amount * postprocess.resolution_rcp;
 	border = min(border, float2(0.49f, 0.49f));

@@ -125,6 +125,12 @@ static const uint MOTIONBLUR_TILESIZE = 32;
 static const uint DEPTHOFFIELD_TILESIZE = 32;
 #define dof_cocscale postprocess.params0.x
 #define dof_maxcoc postprocess.params0.y
+// Underwater mode: when > 0 the circle of confusion is driven by the underwater
+// defocus model (near focus plane + below-waterline mask) instead of the camera
+// lens, so the same DoF pipeline blurs only the submerged part of the screen.
+#define dof_underwater postprocess.params0.z
+#define dof_focus postprocess.params0.w
+#define dof_focus_range postprocess.params1.x
 
 enum TONEMAP_FLAGS
 {

@@ -2458,6 +2458,28 @@ namespace wi::physics
 				const Vec3 com = body_interface.GetCenterOfMassPosition(physicsobject.bodyID);
 				bool is_underwater = false;
 
+				// Wind-driven surface current: while submerged, nudge the body's
+				// horizontal velocity toward the wind direction so floating
+				// objects drift with the wind instead of only bobbing in place.
+				const auto apply_wind_drift = [&](const BodyID bodyID) {
+					if (!scene.weather.IsOceanWindDrift())
+						return;
+
+					const XMFLOAT3& wd = scene.weather.windDirection;
+					const float horizLen = std::sqrt(wd.x * wd.x + wd.z * wd.z);
+
+					if (horizLen < 1e-4f)
+						return;
+
+					const float speed = scene.weather.windSpeed * scene.weather.oceanWindDriftStrength;
+					const Vec3 target(wd.x / horizLen * speed, 0, wd.z / horizLen * speed);
+					const Vec3 vel = body_interface.GetLinearVelocity(bodyID);
+					// Responsiveness: how quickly the body matches the current.
+					const float k = std::min(1.0f, scene.dt * 2.0f);
+					const Vec3 dv((target.GetX() - vel.GetX()) * k, 0, (target.GetZ() - vel.GetZ()) * k);
+					body_interface.AddLinearVelocity(bodyID, dv);
+				};
+
 				// Apply effects on dynamics if needed:
 				if (scene.weather.IsOceanEnabled())
 				{
@@ -2480,6 +2502,8 @@ namespace wi::physics
 							physics_scene.physics_system.GetGravity(),
 							scene.dt
 						);
+
+						apply_wind_drift(physicsobject.bodyID);
 
 						if (!physicsobject.was_underwater)
 						{
@@ -2513,6 +2537,8 @@ namespace wi::physics
 							physics_scene.physics_system.GetGravity(),
 							scene.dt
 						);
+
+						apply_wind_drift(physicsobject.bodyID);
 
 						if (!physicsobject.was_underwater)
 						{

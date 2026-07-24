@@ -643,9 +643,14 @@ namespace wi
 		}
 
 		// Check for depth of field allocation:
-		if (getDepthOfFieldEnabled() &&
+		//	The underwater vision blur reuses the same DoF pipeline, so allocate
+		//	the resources when the ocean underwater blur is enabled too.
+		const bool underwaterBlurNeedsDof =
+			scene->weather.IsOceanEnabled() && getUnderwaterBlurEnabled();
+		if ((getDepthOfFieldEnabled() &&
 			getDepthOfFieldStrength() > 0 &&
-			camera->aperture_size > 0
+			camera->aperture_size > 0) ||
+			underwaterBlurNeedsDof
 			)
 		{
 			if (!depthoffieldResources.IsValid())
@@ -2361,6 +2366,45 @@ namespace wi
 
 				rt_first = nullptr;
 				std::swap(rt_read, rt_write);
+
+				// Underwater vision blur: the human eye cannot focus under
+				// water, so reuse the depth-of-field pipeline in underwater
+				// mode. Its circle of confusion is masked to the submerged part
+				// of the screen, so a partially submerged camera stays sharp
+				// above the waterline. The DoF tile early-exit keeps this cheap
+				// when the camera is above water.
+				if (getUnderwaterBlurEnabled() && depthoffieldResources.IsValid())
+				{
+					const float underwater_coc = getUnderwaterBlurStrength() * 6.0f;
+					wi::renderer::Postprocess_DepthOfField(
+						depthoffieldResources,
+						rt_first == nullptr ? *rt_read : *rt_first,
+						*rt_write,
+						cmd,
+						underwater_coc, // coc scale
+						underwater_coc, // max coc
+						true // underwater mode
+					);
+
+					rt_first = nullptr;
+					std::swap(rt_read, rt_write);
+				}
+
+				// A little chromatic dispersion reads as light refracting
+				// through water. Masked to the submerged part of the screen.
+				if (getUnderwaterChromaticAberrationEnabled() && getUnderwaterChromaticAberrationAmount() > 0)
+				{
+					wi::renderer::Postprocess_Chromatic_Aberration(
+						rt_first == nullptr ? *rt_read : *rt_first,
+						*rt_write,
+						cmd,
+						getUnderwaterChromaticAberrationAmount(),
+						true // underwater mode (mask to submerged region)
+					);
+
+					rt_first = nullptr;
+					std::swap(rt_read, rt_write);
+				}
 			}
 
 			for (auto& x : custom_post_processes)

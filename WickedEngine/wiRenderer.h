@@ -793,13 +793,35 @@ namespace wi::renderer
 		bool IsValid() const { return texture_tilemax_horizontal.IsValid(); }
 	};
 	void CreateDepthOfFieldResources(DepthOfFieldResources& res, XMUINT2 resolution);
+	/**
+	 * Applies depth-of-field blur with optional underwater mode.
+	 *
+	 * In standard mode, simulates camera lens defocus based on focal length. In
+	 * underwater mode, simulates eye-defocus near a focus plane with masking to
+	 * screen-space submerged region.
+	 *
+	 * @param[in] res - Pre-allocated DoF resources.
+	 * @param[in] input - Input scene texture.
+	 * @param[in,out] output - Output blurred texture.
+	 * @param[in] cmd - Command list.
+	 * @param[in] coc_scale - Depth-of-field scale factor (default 10).
+	 * @param[in] max_coc - Maximum circle of confusion radius (default 18).
+	 * @param[in] underwater - Enable underwater eye-defocus mode (default false).
+	 * @param[in] underwater_focus - Focus distance for underwater mode in meters
+	 *                               (default 0.4).
+	 * @param[in] underwater_focus_range - Blur ramp distance in meters (default
+	 *                                     2.5).
+	 */
 	void Postprocess_DepthOfField(
 		const DepthOfFieldResources& res,
 		const wi::graphics::Texture& input,
 		const wi::graphics::Texture& output,
 		wi::graphics::CommandList cmd,
 		float coc_scale = 10,
-		float max_coc = 18
+		float max_coc = 18,
+		bool underwater = false,
+		float underwater_focus = 0.4f,
+		float underwater_focus_range = 2.5f
 	);
 	void Postprocess_Outline(
 		const wi::graphics::Texture& input,
@@ -1000,11 +1022,26 @@ namespace wi::renderer
 		float dt, // delta time in seconds
 		float sharpness = 0.5f
 	);
+	/**
+	 * Applies chromatic aberration distortion with optional underwater masking.
+	 *
+	 * Simulates RGB channel separation from lens imperfections. When underwater
+	 * mode is enabled, the effect is masked to only the submerged part of the
+	 * screen.
+	 *
+	 * @param[in] input - Input scene texture.
+	 * @param[in,out] output - Output with chromatic aberration applied.
+	 * @param[in] cmd - Command list.
+	 * @param[in] amount - Aberration strength multiplier (default 1.0).
+	 * @param[in] underwater - Mask effect to underwater region only (default
+	 *                        false).
+	 */
 	void Postprocess_Chromatic_Aberration(
 		const wi::graphics::Texture& input,
 		const wi::graphics::Texture& output,
 		wi::graphics::CommandList cmd,
-		float amount = 1.0f
+		float amount = 1.0f,
+		bool underwater = false
 	);
 	void Postprocess_Upsample_Bilateral(
 		const wi::graphics::Texture& input,
