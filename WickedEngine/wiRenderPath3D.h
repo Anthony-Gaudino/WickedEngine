@@ -48,6 +48,7 @@ namespace wi
 		float underwaterBlurStrength = 2.0f;
 		float underwaterChromaticAberrationAmount = 2.0f;
 		float underwaterMagnification = 1.33f;
+		float underwaterAbsorptionStrength = 1.0f;
 		uint32_t screenSpaceShadowSampleCount = 16;
 		float screenSpaceShadowRange = 1;
 		float eyeadaptionKey = 0.115f;
@@ -90,6 +91,7 @@ namespace wi
 		bool chromaticAberrationEnabled = false;
 		bool underwaterChromaticAberrationEnabled = true;
 		bool underwaterMagnificationEnabled = true;
+		bool underwaterAbsorptionEnabled = true;
 		bool ditherEnabled = true;
 		bool occlusionCullingEnabled = true;
 		bool sceneUpdateEnabled = true;
@@ -258,6 +260,7 @@ namespace wi
 		[[nodiscard]] constexpr float getUnderwaterBlurStrength() const { return underwaterBlurStrength; }
 		[[nodiscard]] constexpr float getUnderwaterChromaticAberrationAmount() const { return underwaterChromaticAberrationAmount; }
 		[[nodiscard]] constexpr float getUnderwaterMagnification() const { return underwaterMagnification; }
+		[[nodiscard]] constexpr float getUnderwaterAbsorptionStrength() const { return underwaterAbsorptionStrength; }
 		constexpr uint32_t getScreenSpaceShadowSampleCount() const { return screenSpaceShadowSampleCount; }
 		constexpr float getScreenSpaceShadowRange() const { return screenSpaceShadowRange; }
 		constexpr float getEyeAdaptionKey() const { return eyeadaptionKey; }
@@ -301,6 +304,7 @@ namespace wi
 		constexpr bool getChromaticAberrationEnabled() const { return chromaticAberrationEnabled; }
 		constexpr bool getUnderwaterChromaticAberrationEnabled() const { return underwaterChromaticAberrationEnabled; }
 		[[nodiscard]] constexpr bool getUnderwaterMagnificationEnabled() const { return underwaterMagnificationEnabled; }
+		[[nodiscard]] constexpr bool getUnderwaterAbsorptionEnabled() const { return underwaterAbsorptionEnabled; }
 		constexpr bool getDitherEnabled() const { return ditherEnabled; }
 		constexpr bool getOcclusionCullingEnabled() const { return occlusionCullingEnabled; }
 		constexpr bool getSceneUpdateEnabled() const { return sceneUpdateEnabled; }
@@ -328,6 +332,7 @@ namespace wi
 		constexpr void setUnderwaterBlurStrength(float value) { underwaterBlurStrength = value; }
 		constexpr void setUnderwaterChromaticAberrationAmount(float value) { underwaterChromaticAberrationAmount = value; }
 		constexpr void setUnderwaterMagnification(float value) { underwaterMagnification = value; }
+		constexpr void setUnderwaterAbsorptionStrength(float value) { underwaterAbsorptionStrength = value; }
 		constexpr void setScreenSpaceShadowSampleCount(uint32_t value) { screenSpaceShadowSampleCount = value; }
 		constexpr void setScreenSpaceShadowRange(float value) { screenSpaceShadowRange = value; }
 		constexpr void setEyeAdaptionKey(float value) { eyeadaptionKey = value; }
@@ -370,6 +375,7 @@ namespace wi
 		constexpr void setUnderwaterBlurEnabled(bool value) { underwaterBlurEnabled = value; }
 		constexpr void setUnderwaterChromaticAberrationEnabled(bool value) { underwaterChromaticAberrationEnabled = value; }
 		constexpr void setUnderwaterMagnificationEnabled(bool value) { underwaterMagnificationEnabled = value; }
+		constexpr void setUnderwaterAbsorptionEnabled(bool value) { underwaterAbsorptionEnabled = value; }
 		constexpr void setDitherEnabled(bool value) { ditherEnabled = value; }
 		constexpr void setOcclusionCullingEnabled(bool value) { occlusionCullingEnabled = value; }
 		constexpr void setSceneUpdateEnabled(bool value) { sceneUpdateEnabled = value; }

@@ -193,6 +193,21 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		color.rgb *= transmittance;
 		color.rgb = lerp(color.rgb, fogColor, fogAmount);
 
+		// Depth-based color absorption: sunlight is filtered on its way down
+		// through the water column, so warm wavelengths are gone at depth and
+		// the whole view shifts blue-green as the camera descends. Beer-Lambert
+		// with physically based per-channel coefficients for clear ocean water
+		// (in 1/m; red absorbed fastest, blue penetrates deepest). The strength
+		// param scales the coefficients uniformly (water clarity): 1 = clear
+		// ocean reference, higher = murkier, 0 disables the effect. References:
+		// Pope & Fry 1997; Smith & Baker 1981 (pure water).
+		if (underwater_absorption > 0)
+		{
+			const float3 waterAbsorption = float3(0.45, 0.08, 0.03);
+			color.rgb *=
+				exp(-waterAbsorption * underwater_absorption * camera_depth);
+		}
+
 		//color = fogAmount;
 		//color = float4(1, 0, 0, 1);
 	}

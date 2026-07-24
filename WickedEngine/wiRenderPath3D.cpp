@@ -2367,11 +2367,16 @@ namespace wi
 					getUnderwaterMagnificationEnabled()
 					? getUnderwaterMagnification()
 					: 1.0f;
+				const float underwater_absorption =
+					getUnderwaterAbsorptionEnabled()
+					? getUnderwaterAbsorptionStrength()
+					: 0.0f;
 				wi::renderer::Postprocess_Underwater(
 					rt_first == nullptr ? *rt_read : *rt_first,
 					*rt_write,
 					cmd,
-					underwater_magnification
+					underwater_magnification,
+					underwater_absorption
 				);
 
 				rt_first = nullptr;

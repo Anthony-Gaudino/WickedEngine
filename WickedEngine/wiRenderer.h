@@ -1079,12 +1079,16 @@ namespace wi::renderer
 	 * @param[in] cmd - Command list.
 	 * @param[in] magnification - Radial zoom factor for the submerged view
 	 *                            (1.0 = no magnification, ~1.33 = eye-accurate).
+	 * @param[in] absorption - Strength multiplier over the physically based
+	 *                         depth-based color absorption coefficients (0
+	 *                         disables it, 1 = clear ocean reference values).
 	 */
 	void Postprocess_Underwater(
 		const wi::graphics::Texture& input,
 		const wi::graphics::Texture& output,
 		wi::graphics::CommandList cmd,
-		float magnification = 1.0f
+		float magnification = 1.0f,
+		float absorption = 0.0f
 	);
 	struct MeshBlendResources
 	{

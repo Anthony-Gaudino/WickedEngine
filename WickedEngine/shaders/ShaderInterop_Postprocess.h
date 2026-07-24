@@ -136,6 +136,10 @@ static const uint DEPTHOFFIELD_TILESIZE = 32;
 // the eye/mask interface makes submerged objects appear larger. Applied as a
 // radial zoom toward the screen center. A value of 1 leaves the view unscaled.
 #define underwater_magnification postprocess.params0.x
+// Depth-based color absorption toggle for the underwater post pass: when > 0
+// the view is tinted by wavelength-dependent absorption of the downwelling
+// light scaled by camera depth (red absorbed fastest, blue penetrates deepest).
+#define underwater_absorption postprocess.params0.y
 
 enum TONEMAP_FLAGS
 {
