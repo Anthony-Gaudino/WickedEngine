@@ -132,6 +132,11 @@ static const uint DEPTHOFFIELD_TILESIZE = 32;
 #define dof_focus postprocess.params0.w
 #define dof_focus_range postprocess.params1.x
 
+// Underwater magnification factor for the underwater post pass: refraction at
+// the eye/mask interface makes submerged objects appear larger. Applied as a
+// radial zoom toward the screen center. A value of 1 leaves the view unscaled.
+#define underwater_magnification postprocess.params0.x
+
 enum TONEMAP_FLAGS
 {
 	TONEMAP_FLAG_DITHER = 1 << 0,

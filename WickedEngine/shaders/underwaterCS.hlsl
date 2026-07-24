@@ -112,6 +112,13 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		uv += sin(-uv.y * 5 + GetFrame().time * 2) * 0.005;
 #endif // ANIMATED_DISTORT
 
+		// Underwater magnification: refraction at the eye/mask interface makes
+		// submerged objects appear larger (and nearer). Model it as a radial
+		// zoom toward the optical axis (screen center). A magnification of 1 is
+		// a no-op. The final waterline blend below keeps the above-water part
+		// of a partially submerged view at its true scale.
+		uv = 0.5 + (uv - 0.5) / underwater_magnification;
+
 		const float depth = texture_depth.SampleLevel(sampler_linear_clamp, uv, 0);
 		float3 surface_position = reconstruct_position(uv, depth);
 

@@ -1067,10 +1067,24 @@ namespace wi::renderer
 		const wi::graphics::Texture& output,
 		wi::graphics::CommandList cmd
 	);
+	/**
+	 * Composites the underwater view (fog, inscattering, distortion).
+	 *
+	 * Applies the below-waterline fogging and lens distortion for a submerged
+	 * camera, and optionally magnifies the submerged part of the view to mimic
+	 * refraction at the eye/mask interface (objects appear larger underwater).
+	 *
+	 * @param[in] input - Input scene texture.
+	 * @param[in,out] output - Output with the underwater view composited.
+	 * @param[in] cmd - Command list.
+	 * @param[in] magnification - Radial zoom factor for the submerged view
+	 *                            (1.0 = no magnification, ~1.33 = eye-accurate).
+	 */
 	void Postprocess_Underwater(
 		const wi::graphics::Texture& input,
 		const wi::graphics::Texture& output,
-		wi::graphics::CommandList cmd
+		wi::graphics::CommandList cmd,
+		float magnification = 1.0f
 	);
 	struct MeshBlendResources
 	{

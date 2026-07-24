@@ -2358,10 +2358,20 @@ namespace wi
 			}
 			if (scene->weather.IsOceanEnabled())
 			{
+				// Underwater magnification: refraction at the eye makes
+				// submerged objects appear ~33% larger. The zoom is applied
+				// inside the underwater pass and is naturally masked to below
+				// the waterline by its final blend, so a partially submerged
+				// view stays true scale above the surface.
+				const float underwater_magnification =
+					getUnderwaterMagnificationEnabled()
+					? getUnderwaterMagnification()
+					: 1.0f;
 				wi::renderer::Postprocess_Underwater(
 					rt_first == nullptr ? *rt_read : *rt_first,
 					*rt_write,
-					cmd
+					cmd,
+					underwater_magnification
 				);
 
 				rt_first = nullptr;

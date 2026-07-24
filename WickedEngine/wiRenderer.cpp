@@ -18705,7 +18705,8 @@ void Postprocess_NormalsFromDepth(
 void Postprocess_Underwater(
 	const Texture& input,
 	const Texture& output,
-	CommandList cmd
+	CommandList cmd,
+	float magnification
 )
 {
 	device->EventBegin("Postprocess_Underwater", cmd);
@@ -18722,6 +18723,7 @@ void Postprocess_Underwater(
 	postprocess.resolution.y = desc.height;
 	postprocess.resolution_rcp.x = 1.0f / postprocess.resolution.x;
 	postprocess.resolution_rcp.y = 1.0f / postprocess.resolution.y;
+	postprocess.params0.x = std::max(1.0f, magnification); // underwater_magnification
 	device->PushConstants(&postprocess, sizeof(postprocess), cmd);
 
 	device->BindResource(&input, 0, cmd);

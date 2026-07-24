@@ -92,6 +92,8 @@ public:
 	wi::gui::Slider depthOfFieldScaleSlider;
 	wi::gui::CheckBox underwaterBlurCheckBox;
 	wi::gui::Slider underwaterBlurStrengthSlider;
+	wi::gui::CheckBox underwaterMagnificationCheckBox;
+	wi::gui::Slider underwaterMagnificationSlider;
 	wi::gui::CheckBox bloomCheckBox;
 	wi::gui::Slider bloomStrengthSlider;
 	wi::gui::CheckBox fxaaCheckBox;

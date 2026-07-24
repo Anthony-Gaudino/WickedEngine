@@ -1407,6 +1407,40 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 		});
 	AddWidget(&underwaterBlurStrengthSlider);
 
+	underwaterMagnificationCheckBox.Create("Underwater Magnification: ");
+	underwaterMagnificationCheckBox.SetTooltip("Magnify the view while under water, to mimic how refraction at the eye makes submerged objects appear larger (and nearer). Only affects the submerged part of the screen.");
+	underwaterMagnificationCheckBox.SetSize(XMFLOAT2(hei, hei));
+	underwaterMagnificationCheckBox.SetPos(XMFLOAT2(x, y += step));
+
+	if (editor->main->config.GetSection("graphics").Has("underwater_magnification"))
+	{
+		editor->renderPath->setUnderwaterMagnificationEnabled(editor->main->config.GetSection("graphics").GetBool("underwater_magnification"));
+	}
+
+	underwaterMagnificationCheckBox.OnClick([=](wi::gui::EventArgs args) {
+		editor->renderPath->setUnderwaterMagnificationEnabled(args.bValue);
+		editor->main->config.GetSection("graphics").Set("underwater_magnification", args.bValue);
+		editor->main->config.Commit();
+		});
+	AddWidget(&underwaterMagnificationCheckBox);
+
+	underwaterMagnificationSlider.Create(1, 1.5f, 1.33f, 1000, "Amount: ");
+	underwaterMagnificationSlider.SetTooltip("Set the underwater magnification factor (1 = no magnification, ~1.33 mimics the human eye).");
+	underwaterMagnificationSlider.SetSize(XMFLOAT2(mod_wid, hei));
+	underwaterMagnificationSlider.SetPos(XMFLOAT2(x + 100, y));
+
+	if (editor->main->config.GetSection("graphics").Has("underwater_magnification_amount"))
+	{
+		editor->renderPath->setUnderwaterMagnification(editor->main->config.GetSection("graphics").GetFloat("underwater_magnification_amount"));
+	}
+
+	underwaterMagnificationSlider.OnSlide([=](wi::gui::EventArgs args) {
+		editor->renderPath->setUnderwaterMagnification(args.fValue);
+		editor->main->config.GetSection("graphics").Set("underwater_magnification_amount", args.fValue);
+		editor->main->config.Commit();
+		});
+	AddWidget(&underwaterMagnificationSlider);
+
 	bloomCheckBox.Create("Bloom: ");
 	bloomCheckBox.SetTooltip("Enable bloom. The effect adds color bleeding to the brightest parts of the scene.");
 	bloomCheckBox.SetScriptTip("RenderPath3D::SetBloomEnabled(bool value)");
@@ -1902,6 +1936,8 @@ void GraphicsWindow::UpdateData()
 	depthOfFieldScaleSlider.SetValue(editor->renderPath->getDepthOfFieldStrength());
 	underwaterBlurCheckBox.SetCheck(editor->renderPath->getUnderwaterBlurEnabled());
 	underwaterBlurStrengthSlider.SetValue(editor->renderPath->getUnderwaterBlurStrength());
+	underwaterMagnificationCheckBox.SetCheck(editor->renderPath->getUnderwaterMagnificationEnabled());
+	underwaterMagnificationSlider.SetValue(editor->renderPath->getUnderwaterMagnification());
 	bloomCheckBox.SetCheck(editor->renderPath->getBloomEnabled());
 	bloomStrengthSlider.SetValue(editor->renderPath->getBloomThreshold());
 	fxaaCheckBox.SetCheck(editor->renderPath->getFXAAEnabled());
@@ -2167,6 +2203,8 @@ void GraphicsWindow::ResizeLayout()
 	depthOfFieldCheckBox.SetPos(XMFLOAT2(depthOfFieldScaleSlider.GetPos().x - depthOfFieldCheckBox.GetSize().x - 80, depthOfFieldScaleSlider.GetPos().y));
 	layout.add_right(underwaterBlurStrengthSlider);
 	underwaterBlurCheckBox.SetPos(XMFLOAT2(underwaterBlurStrengthSlider.GetPos().x - underwaterBlurCheckBox.GetSize().x - 80, underwaterBlurStrengthSlider.GetPos().y));
+	layout.add_right(underwaterMagnificationSlider);
+	underwaterMagnificationCheckBox.SetPos(XMFLOAT2(underwaterMagnificationSlider.GetPos().x - underwaterMagnificationCheckBox.GetSize().x - 80, underwaterMagnificationSlider.GetPos().y));
 	layout.add_right(bloomStrengthSlider);
 	bloomCheckBox.SetPos(XMFLOAT2(bloomStrengthSlider.GetPos().x - bloomCheckBox.GetSize().x - 80, bloomStrengthSlider.GetPos().y));
 	layout.add_right(fxaaCheckBox);
