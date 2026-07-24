@@ -1390,7 +1390,8 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 		});
 	AddWidget(&underwaterBlurCheckBox);
 
-	underwaterBlurStrengthSlider.Create(0, 3, 2, 1000, "Strength: ");
+	underwaterBlurStrengthSlider.Create(0, 3, 2, 1000, "UnderwaterBlur.Strength: ");
+	underwaterBlurStrengthSlider.SetText("Strength: ");
 	underwaterBlurStrengthSlider.SetTooltip("Set the underwater blur strength (maximum circle of confusion).");
 	underwaterBlurStrengthSlider.SetSize(XMFLOAT2(mod_wid, hei));
 	underwaterBlurStrengthSlider.SetPos(XMFLOAT2(x + 100, y));
@@ -1458,7 +1459,8 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 		});
 	AddWidget(&underwaterAbsorptionCheckBox);
 
-	underwaterAbsorptionStrengthSlider.Create(0, 3, 1, 1000, "Strength: ");
+	underwaterAbsorptionStrengthSlider.Create(0, 3, 1, 1000, "UnderwaterAbsorption.Strength: ");
+	underwaterAbsorptionStrengthSlider.SetText("Strength: ");
 	underwaterAbsorptionStrengthSlider.SetTooltip("Scale the color absorption coefficients (water clarity). 1 = physically based clear ocean values, lower keeps warm colors deeper (clearer water), higher fades them faster (murkier water).");
 	underwaterAbsorptionStrengthSlider.SetSize(XMFLOAT2(mod_wid, hei));
 	underwaterAbsorptionStrengthSlider.SetPos(XMFLOAT2(x + 100, y));
@@ -1663,7 +1665,8 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 		});
 	AddWidget(&chromaticaberrationCheckBox);
 
-	chromaticaberrationSlider.Create(0, 40, 1.0f, 1000, "Strength: ");
+	chromaticaberrationSlider.Create(0, 40, 1.0f, 1000, "ChromaticAberration.Strength: ");
+	chromaticaberrationSlider.SetText("Strength: ");
 	chromaticaberrationSlider.SetTooltip("The lens distortion amount.");
 	chromaticaberrationSlider.SetSize(XMFLOAT2(mod_wid, hei));
 	chromaticaberrationSlider.SetPos(XMFLOAT2(x + 100, y));
@@ -1695,7 +1698,8 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 		});
 	AddWidget(&underwaterChromaticaberrationCheckBox);
 
-	underwaterChromaticaberrationSlider.Create(0, 40, 2.0f, 1000, "Strength: ");
+	underwaterChromaticaberrationSlider.Create(0, 40, 2.0f, 1000, "UnderwaterChromaticAberration.Strength: ");
+	underwaterChromaticaberrationSlider.SetText("Strength: ");
 	underwaterChromaticaberrationSlider.SetTooltip("Set the strength of the chromatic aberration (RGB channel separation) applied only to the underwater view, simulating light wavelength dispersion.");
 	underwaterChromaticaberrationSlider.SetSize(XMFLOAT2(mod_wid, hei));
 	underwaterChromaticaberrationSlider.SetPos(XMFLOAT2(x + 100, y));
