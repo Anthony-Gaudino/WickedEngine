@@ -1530,6 +1530,23 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 		});
 	AddWidget(&underwaterSnellDepthSlider);
 
+	underwaterSnellRTCheckBox.Create("Snell Window Ray Tracing: ");
+	underwaterSnellRTCheckBox.SetTooltip("Ray trace the Snell's window surrounding objects. Requires a ray tracing capable GPU.");
+	underwaterSnellRTCheckBox.SetSize(XMFLOAT2(hei, hei));
+	underwaterSnellRTCheckBox.SetPos(XMFLOAT2(x, y += step));
+
+	if (editor->main->config.GetSection("graphics").Has("underwater_snell_rt"))
+	{
+		editor->renderPath->setUnderwaterSnellRTEnabled(editor->main->config.GetSection("graphics").GetBool("underwater_snell_rt"));
+	}
+
+	underwaterSnellRTCheckBox.OnClick([=](wi::gui::EventArgs args) {
+		editor->renderPath->setUnderwaterSnellRTEnabled(args.bValue);
+		editor->main->config.GetSection("graphics").Set("underwater_snell_rt", args.bValue);
+		editor->main->config.Commit();
+		});
+	AddWidget(&underwaterSnellRTCheckBox);
+
 	bloomCheckBox.Create("Bloom: ");
 	bloomCheckBox.SetTooltip("Enable bloom. The effect adds color bleeding to the brightest parts of the scene.");
 	bloomCheckBox.SetScriptTip("RenderPath3D::SetBloomEnabled(bool value)");
@@ -2034,6 +2051,7 @@ void GraphicsWindow::UpdateData()
 	underwaterSnellCheckBox.SetCheck(editor->renderPath->getUnderwaterSnellEnabled());
 	underwaterSnellStrengthSlider.SetValue(editor->renderPath->getUnderwaterSnellStrength());
 	underwaterSnellDepthSlider.SetValue(editor->renderPath->getUnderwaterSnellDepth());
+	underwaterSnellRTCheckBox.SetCheck(editor->renderPath->getUnderwaterSnellRTEnabled());
 	bloomCheckBox.SetCheck(editor->renderPath->getBloomEnabled());
 	bloomStrengthSlider.SetValue(editor->renderPath->getBloomThreshold());
 	fxaaCheckBox.SetCheck(editor->renderPath->getFXAAEnabled());
@@ -2306,6 +2324,7 @@ void GraphicsWindow::ResizeLayout()
 	layout.add_right(underwaterSnellStrengthSlider);
 	underwaterSnellCheckBox.SetPos(XMFLOAT2(underwaterSnellStrengthSlider.GetPos().x - underwaterSnellCheckBox.GetSize().x - 80, underwaterSnellStrengthSlider.GetPos().y));
 	layout.add_right(underwaterSnellDepthSlider);
+	layout.add_right(underwaterSnellRTCheckBox);
 	layout.add_right(bloomStrengthSlider);
 	bloomCheckBox.SetPos(XMFLOAT2(bloomStrengthSlider.GetPos().x - bloomCheckBox.GetSize().x - 80, bloomStrengthSlider.GetPos().y));
 	layout.add_right(fxaaCheckBox);

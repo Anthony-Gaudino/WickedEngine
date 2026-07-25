@@ -150,6 +150,11 @@ static const uint DEPTHOFFIELD_TILESIZE = 32;
 // the depth by which the window has essentially faded out, since sunlight only
 // penetrates so far. Smaller values close the window at shallower depth.
 #define underwater_snell_depth postprocess.params0.w
+// Ray-traced Snell's window flag (nonzero enables it). When set and the device
+// supports ray tracing (the underwaterCS_rtapi permutation), the refracted ray
+// is traced into the real scene so above-water objects and their occlusion of
+// the window are exact. Otherwise the window shows the analytic sky.
+#define underwater_snell_rt ((uint)postprocess.params1.x)
 
 enum TONEMAP_FLAGS
 {

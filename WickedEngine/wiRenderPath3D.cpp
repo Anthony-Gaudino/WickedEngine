@@ -329,7 +329,8 @@ namespace wi
 				(hw_raytrace && wi::renderer::GetRaytracedShadowsEnabled()) ||
 				(hw_raytrace && getAO() == AO_RTAO) ||
 				(hw_raytrace && getRaytracedReflectionEnabled()) ||
-				(hw_raytrace && getRaytracedDiffuseEnabled())
+				(hw_raytrace && getRaytracedDiffuseEnabled()) ||
+				(hw_raytrace && getUnderwaterSnellEnabled() && getUnderwaterSnellRTEnabled())
 				)
 			{
 				scene->SetAccelerationStructureUpdateRequested(true);
@@ -2375,6 +2376,14 @@ namespace wi
 					getUnderwaterSnellEnabled()
 					? getUnderwaterSnellStrength()
 					: 0.0f;
+				// Ray-traced window: traces the refracted ray into the real
+				// scene when the device supports it (the underwaterCS_rtapi
+				// permutation is loaded then); otherwise the window shows the
+				// analytic sky:
+				const bool underwater_snell_rt =
+					getUnderwaterSnellEnabled()
+					&& getUnderwaterSnellRTEnabled()
+					&& device->CheckCapability(wi::graphics::GraphicsDeviceCapability::RAYTRACING);
 				wi::renderer::Postprocess_Underwater(
 					rt_first == nullptr ? *rt_read : *rt_first,
 					*rt_write,
@@ -2382,7 +2391,8 @@ namespace wi
 					underwater_magnification,
 					underwater_absorption,
 					underwater_snell,
-					getUnderwaterSnellDepth()
+					getUnderwaterSnellDepth(),
+					underwater_snell_rt
 				);
 
 				rt_first = nullptr;

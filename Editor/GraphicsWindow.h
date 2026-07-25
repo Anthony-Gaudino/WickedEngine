@@ -99,6 +99,7 @@ public:
 	wi::gui::CheckBox underwaterSnellCheckBox;
 	wi::gui::Slider underwaterSnellStrengthSlider;
 	wi::gui::Slider underwaterSnellDepthSlider;
+	wi::gui::CheckBox underwaterSnellRTCheckBox;
 	wi::gui::CheckBox bloomCheckBox;
 	wi::gui::Slider bloomStrengthSlider;
 	wi::gui::CheckBox fxaaCheckBox;

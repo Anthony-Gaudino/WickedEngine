@@ -1090,7 +1090,8 @@ namespace wi::renderer
 		float magnification = 1.0f,
 		float absorption = 0.0f,
 		float snell = 0.0f,
-		float snell_depth = 30.0f
+		float snell_depth = 30.0f,
+		bool snell_rt = false
 	);
 	struct MeshBlendResources
 	{

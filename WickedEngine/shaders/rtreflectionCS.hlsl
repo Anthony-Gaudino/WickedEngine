@@ -10,6 +10,7 @@
 #include "stochasticSSRHF.hlsli"
 #include "lightingHF.hlsli"
 #include "ShaderInterop_DDGI.h"
+#include "rtsceneHF.hlsli"
 
 PUSHCONSTANT(postprocess, PostProcess);
 
@@ -69,158 +70,19 @@ void main(uint2 DTid : SV_DispatchThreadID)
 	RayCone raycone = RayCone::from_spread_angle(pixel_cone_spread_angle_from_image_height(postprocess.resolution.y));
 	raycone = raycone.propagate(sqr(max(minraycone, roughness)), lineardepth * GetCamera().z_far);
 
-	float4 additive_dist = float4(0, 0, 0, FLT_MAX);
-
-	wiRayQuery q;
-	q.TraceRayInline(
-		scene_acceleration_structure,	// RaytracingAccelerationStructure AccelerationStructure
+	// Trace + shade the reflection ray through the shared scene-radiance
+	// gather:
+	SceneRadiance rad = TraceSceneRadiance(
+		ray,
+		asuint(postprocess.params1.x),
 		RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES |
-		RAY_FLAG_CULL_BACK_FACING_TRIANGLES, // uint RayFlags
-		asuint(postprocess.params1.x),	// uint InstanceInclusionMask
-		ray								// RayDesc Ray
+		RAY_FLAG_CULL_BACK_FACING_TRIANGLES,
+		raycone,
+		DTid.xy,
+		postprocess.resolution_rcp
 	);
-	while (q.Proceed())
-	{
-		PrimitiveID prim;
-		prim.init();
-		prim.primitiveIndex = q.CandidatePrimitiveIndex();
-		prim.instanceIndex = q.CandidateInstanceID();
-		prim.subsetIndex = q.CandidateGeometryIndex();
-
-		Surface surface;
-		surface.init();
-		surface.V = -ray.Direction;
-		surface.raycone = raycone;
-		surface.hit_depth = q.CandidateTriangleRayT();
-		if (!surface.load(prim, q.CandidateTriangleBarycentrics()))
-			break;
-
-		float alphatest = clamp(blue_noise(DTid.xy, q.CandidateTriangleRayT()).r, 0, 0.99);
-
-		if (surface.material.IsAdditive())
-		{
-			additive_dist.xyz += surface.emissiveColor;
-			additive_dist.w = min(additive_dist.w, q.CandidateTriangleRayT());
-		}
-		else if (surface.opacity - alphatest >= 0)
-		{
-			q.CommitNonOpaqueTriangleHit();
-		}
-	}
-
-	if (additive_dist.w <= q.CommittedRayT())
-	{
-		payload.data.xyz += max(0, additive_dist.xyz);
-	}
-
-	if (q.CommittedStatus() != COMMITTED_TRIANGLE_HIT)
-	{
-		// miss:
-		[branch]
-		if (IsStaticSky())
-		{
-			// We have envmap information in a texture:
-			payload.data.xyz += GetStaticSkyColor(q.WorldRayDirection());
-		}
-		else
-		{
-			payload.data.xyz += GetDynamicSkyColor(q.WorldRayDirection());
-		}
-		payload.data.w = FLT_MAX;
-	}
-	else
-	{
-		// closest hit:
-		PrimitiveID prim;
-		prim.init();
-		prim.primitiveIndex = q.CommittedPrimitiveIndex();
-		prim.instanceIndex = q.CommittedInstanceID();
-		prim.subsetIndex = q.CommittedGeometryIndex();
-
-		Surface surface;
-		surface.init();
-		surface.SetBackface(!q.CommittedTriangleFrontFace());
-		surface.V = -ray.Direction;
-		surface.raycone = raycone;
-		surface.hit_depth = q.CommittedRayT();
-		if (!surface.load(prim, q.CommittedTriangleBarycentrics()))
-			return;
-
-		surface.pixel = DTid.xy;
-		surface.screenUV = (surface.pixel + 0.5) * postprocess.resolution_rcp.xy;
-
-		if (surface.material.IsUnlit())
-		{
-			payload.data.xyz = surface.albedo + surface.emissiveColor;
-		}
-		else
-		{
-			// Light sampling:
-			surface.P = q.WorldRayOrigin() + q.WorldRayDirection() * q.CommittedRayT();
-			surface.V = -q.WorldRayDirection();
-			surface.update();
-
-			if (!surface.IsGIApplied())
-			{
-				float3 ambient = GetAmbient(surface.N);
-				surface.gi = lerp(ambient, ambient * surface.sss.rgb, saturate(surface.sss.a));
-			}
-
-			Lighting lighting;
-			lighting.create(0, 0, surface.gi, 0);
-
-			[loop]
-			for (uint iterator = 0; iterator < lights().item_count(); iterator++)
-			{
-				ShaderEntity light = load_entity(lights().first_item() + iterator);
-				if ((light.layerMask & surface.material.layerMask) == 0)
-					continue;
-
-				if (light.IsStaticLight())
-				{
-					continue; // static lights will be skipped (they are used in lightmap baking)
-				}
-
-				switch (light.GetType())
-				{
-				case ENTITY_TYPE_DIRECTIONALLIGHT:
-				{
-					light_directional(light, surface, lighting);
-				}
-				break;
-				case ENTITY_TYPE_POINTLIGHT:
-				{
-					light_point(light, surface, lighting);
-				}
-				break;
-				case ENTITY_TYPE_RECTLIGHT:
-				{
-					light_rect(light, surface, lighting);
-				}
-				break;
-				case ENTITY_TYPE_SPOTLIGHT:
-				{
-					light_spot(light, surface, lighting);
-				}
-				break;
-				}
-			}
-
-			lighting.indirect.specular += max(0, EnvironmentReflection_Global(surface));
-			lighting.indirect.specular += surface.emissiveColor;
-
-			[branch]
-			if (GetScene().ddgi.probe_buffer >= 0)
-			{
-				lighting.indirect.diffuse = ddgi_sample_irradiance(surface.P, surface.N, surface.dominant_lightdir, surface.dominant_lightcolor);
-			}
-
-			float4 color = 0;
-			ApplyLighting(surface, lighting, color);
-			payload.data.xyz += color.rgb;
-		}
-		payload.data.w = q.CommittedRayT();
-	}
+	payload.data.xyz = rad.color;
+	payload.data.w = rad.distance;
 
 	output_rayIndirectSpecular[DTid.xy] = float4(payload.data.xyz, 1);
 	output_rayDirectionPDF[DTid.xy] = float4(R, PDF);

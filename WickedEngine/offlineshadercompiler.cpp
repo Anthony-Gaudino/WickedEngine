@@ -67,6 +67,7 @@ wi::vector<ShaderEntry> shaders = {
 	{"temporalaaCS", wi::graphics::ShaderStage::CS},
 	{"tonemapCS", wi::graphics::ShaderStage::CS},
 	{"underwaterCS", wi::graphics::ShaderStage::CS},
+	{"underwaterCS_rtapi", wi::graphics::ShaderStage::CS, wi::graphics::ShaderModel::SM_6_5},
 	{"mesh_blend_prepareCS", wi::graphics::ShaderStage::CS},
 	{"mesh_blend_expandCS", wi::graphics::ShaderStage::CS},
 	{"mesh_blendPS", wi::graphics::ShaderStage::PS},

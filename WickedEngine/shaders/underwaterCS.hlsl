@@ -3,6 +3,14 @@
 #include "oceanSurfaceHF.hlsli"
 #include "lightingHF.hlsli"
 #include "fogHF.hlsli"
+#ifdef RTAPI
+	// Hardware ray-traced Snell's window: trace the refracted ray into the real
+	// scene so above-water objects (and their occlusion of the window) are
+	// exact, with no single-point probe to sit inside geometry. Compiled only
+	// in the underwaterCS_rtapi permutation; the base permutation falls back to
+	// the scene probe / analytic sky.
+	#include "rtsceneHF.hlsli"
+#endif // RTAPI
 
 #define INTERSECTION_DISTORT
 #define LENS_DISTORT
@@ -193,21 +201,6 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		color.rgb *= transmittance;
 		color.rgb = lerp(color.rgb, fogColor, fogAmount);
 
-		// Depth-based color absorption: sunlight is filtered on its way down
-		// through the water column, so warm wavelengths are gone at depth and
-		// the whole view shifts blue-green as the camera descends. Beer-Lambert
-		// with physically based per-channel coefficients for clear ocean water
-		// (in 1/m; red absorbed fastest, blue penetrates deepest). The strength
-		// param scales the coefficients uniformly (water clarity): 1 = clear
-		// ocean reference, higher = murkier, 0 disables the effect. References:
-		// Pope & Fry 1997; Smith & Baker 1981 (pure water).
-		if (underwater_absorption > 0)
-		{
-			const float3 waterAbsorption = float3(0.45, 0.08, 0.03);
-			color.rgb *=
-				exp(-waterAbsorption * underwater_absorption * camera_depth);
-		}
-
 		// Snell's window: looking up from under water, refraction gathers the
 		// whole above-water hemisphere into an overhead circular window of
 		// fixed angular size - half-angle equal to the critical angle for water
@@ -259,8 +252,13 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			// objects. Gate on true world up so it stays robust to the wavy
 			// normal above:
 			const float upward = smoothstep(0.0, 0.1, rayDir.y);
-			const float openWater =
-				saturate((surface_dist - ocean_dist) / max(ocean_dist, 1.0));
+			// The window only applies where the ocean surface is the nearest
+			// thing along the ray (so geometry in front is never covered). Use
+			// an ABSOLUTE gap, not a ratio: an object a fixed height above the
+			// water must stay fully inside the window at every depth. A ratio
+			// shrinks with depth and peels the object open as a dark silhouette
+			// from the bottom up:
+			const float openWater = smoothstep(0.0, 0.5, surface_dist - ocean_dist);
 
 			// Sunlight only reaches so far, so the window fades out with the
 			// water column it crosses to the surface. The rim's path is longer
@@ -271,19 +269,96 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			const float pathFade = saturate(exp(-ocean_dist * 3.0 / reach));
 
 			// Inside the window, refract the ray through the wave surface into
-			// the air (water -> air) and read the sky in that direction.
-			// Refraction squeezes the whole 180 deg hemisphere into the ~97 deg
-			// cone, with the sun landing at its true refracted place; refract()
-			// returns 0 past the critical angle, matching the cone edge. TODO:
-			// swap the analytic sky for a high-res realtime scene cubemap
-			// captured at the camera, so above-water objects (not just the sky)
-			// show through the window as well.
+			// the air (water -> air) and read the above-water world in that
+			// direction. Refraction squeezes the whole 180 deg hemisphere into
+			// the ~97 deg cone, with the sun and objects landing at their true
+			// refracted places; refract() returns 0 past the critical angle,
+			// matching the cone edge. When a realtime scene probe is available
+			// it carries the real above-water geometry; otherwise use analytic
+			// sky:
 			const float3 refractedDir = refract(rayDir, -surfaceNormal, 1.333);
-			const float3 aboveWater = GetDynamicSkyColor(refractedDir);
 
-			const float windowMask =
-				cone * upward * openWater * pathFade * underwater_snell;
-			color.rgb = lerp(color.rgb, aboveWater, saturate(windowMask));
+			// Only rays that actually form the window need above-water content:
+			// past the critical angle refract() returns 0 (no real refraction),
+			// and once pathFade has decayed the window has washed out to water
+			// color regardless of what is above. This also skips the ray-traced
+			// window entirely at the light-reach depth, saving that cost.
+			const bool windowActive =
+				(cone * upward * openWater) > 0.0
+				&& any(refractedDir)
+				&& pathFade > 0.003;
+
+			// The above-water view seen through the window. With ray tracing
+			// the refracted ray is traced into the real scene, so above-water
+			// objects appear and correctly occlude the window. The first hit is
+			// that true surface and a miss returns the sky. Without ray tracing
+			// (no capability, or the toggle off) it falls back to the analytic
+			// sky. This is the shared gather that also drives RT reflections;
+			// see rtsceneHF.hlsli.
+			float3 aboveWater;
+#ifdef RTAPI
+			[branch]
+			if (underwater_snell_rt != 0 && windowActive && GetScene().TLAS >= 0)
+			{
+				RayDesc ray;
+				ray.Origin = ocean_surface_pos;
+				ray.Direction = refractedDir;
+				ray.TMin = 0.01;
+				ray.TMax = FLT_MAX;
+
+				RayCone raycone = RayCone::from_spread_angle(
+					pixel_cone_spread_angle_from_image_height(
+						postprocess.resolution.y));
+				raycone = raycone.propagate(0, ocean_dist);
+
+				const SceneRadiance rad = TraceSceneRadiance(
+					ray,
+					~0u,
+					RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES |
+					RAY_FLAG_CULL_BACK_FACING_TRIANGLES,
+					raycone,
+					DTid.xy,
+					postprocess.resolution_rcp
+				);
+				aboveWater = rad.color;
+			}
+			else
+#endif // RTAPI
+			{
+				aboveWater = GetDynamicSkyColor(refractedDir);
+			}
+
+			// The window shows the refracted above-water view, hazing toward
+			// the water with DEPTH (not strength) so it dissolves uniformly
+			// into the blue as it attenuates. Fade to the flat base water
+			// color, NOT fogColor: fogColor carries the sun inscatter / god-ray
+			// modulation, which would otherwise show as a god-ray texture
+			// inside the window as it hazes out near the light-reach depth.
+			// Strength is the overall opacity, blending back to the normal
+			// underwater view:
+			const float3 windowContent =
+				lerp(ocean.water_color.rgb, aboveWater, pathFade);
+			const float windowShape = saturate(cone * upward * openWater);
+			color.rgb =
+				lerp(color.rgb, windowContent, saturate(windowShape * underwater_snell));
+		}
+
+		// Depth-based color absorption: sunlight is filtered on its way down
+		// through the water column, so warm wavelengths are gone at depth and
+		// the whole view shifts blue-green as the camera descends. Beer-Lambert
+		// with physically based per-channel coefficients for clear ocean water
+		// (in 1/m; red absorbed fastest, blue penetrates deepest). The strength
+		// param scales the coefficients uniformly (water clarity): 1 = clear
+		// ocean reference, higher = murkier, 0 disables the effect. Applied
+		// AFTER the Snell's window so the window's above-water light attenuates
+		// with the same water column - otherwise the surround darkens to black
+		// while the window keeps its color, leaving its shape visible at depth.
+		// References: Pope & Fry 1997; Smith & Baker 1981 (pure water).
+		if (underwater_absorption > 0)
+		{
+			const float3 waterAbsorption = float3(0.45, 0.08, 0.03);
+			color.rgb *=
+				exp(-waterAbsorption * underwater_absorption * camera_depth);
 		}
 
 		//color = fogAmount;

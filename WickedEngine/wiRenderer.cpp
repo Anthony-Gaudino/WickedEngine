@@ -1067,7 +1067,18 @@ void LoadShaders()
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_SHARPEN], "sharpenCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_CRT], "crt_screenCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_TONEMAP], "tonemapCS.cso"); });
-	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_UNDERWATER], "underwaterCS.cso"); });
+	if (device->CheckCapability(GraphicsDeviceCapability::RAYTRACING))
+	{
+		// Ray-traced Snell's window permutation: traces the refracted ray into
+		// the real scene so above-water objects (and their occlusion of the
+		// window) are exact. Runtime-toggleable; falls back to probe/sky
+		// within.
+		wi::jobsystem::Execute(raytracing_ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_UNDERWATER], "underwaterCS_rtapi.cso", ShaderModel::SM_6_5); });
+	}
+	else
+	{
+		wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_UNDERWATER], "underwaterCS.cso"); });
+	}
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_MESH_BLEND_PREPARE], "mesh_blend_prepareCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_MESH_BLEND_EXPAND], "mesh_blend_expandCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_FSR_UPSCALING], "fsr_upscalingCS.cso"); });
@@ -18709,7 +18720,8 @@ void Postprocess_Underwater(
 	float magnification,
 	float absorption,
 	float snell,
-	float snell_depth
+	float snell_depth,
+	bool snell_rt
 )
 {
 	device->EventBegin("Postprocess_Underwater", cmd);
@@ -18730,6 +18742,7 @@ void Postprocess_Underwater(
 	postprocess.params0.y = std::max(0.0f, absorption); // underwater_absorption
 	postprocess.params0.z = std::max(0.0f, snell); // underwater_snell
 	postprocess.params0.w = std::max(1.0f, snell_depth); // underwater_snell_depth
+	postprocess.params1.x = snell_rt ? 1.0f : 0.0f; // underwater_snell_rt
 	device->PushConstants(&postprocess, sizeof(postprocess), cmd);
 
 	device->BindResource(&input, 0, cmd);

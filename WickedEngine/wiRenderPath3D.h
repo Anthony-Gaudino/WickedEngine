@@ -95,6 +95,7 @@ namespace wi
 		bool underwaterMagnificationEnabled = true;
 		bool underwaterAbsorptionEnabled = true;
 		bool underwaterSnellEnabled = true;
+		bool underwaterSnellRTEnabled = true;
 		bool ditherEnabled = true;
 		bool occlusionCullingEnabled = true;
 		bool sceneUpdateEnabled = true;
@@ -311,6 +312,7 @@ namespace wi
 		[[nodiscard]] constexpr bool getUnderwaterMagnificationEnabled() const { return underwaterMagnificationEnabled; }
 		[[nodiscard]] constexpr bool getUnderwaterAbsorptionEnabled() const { return underwaterAbsorptionEnabled; }
 		[[nodiscard]] constexpr bool getUnderwaterSnellEnabled() const { return underwaterSnellEnabled; }
+		[[nodiscard]] constexpr bool getUnderwaterSnellRTEnabled() const { return underwaterSnellRTEnabled; }
 		constexpr bool getDitherEnabled() const { return ditherEnabled; }
 		constexpr bool getOcclusionCullingEnabled() const { return occlusionCullingEnabled; }
 		constexpr bool getSceneUpdateEnabled() const { return sceneUpdateEnabled; }
@@ -385,6 +387,7 @@ namespace wi
 		constexpr void setUnderwaterMagnificationEnabled(bool value) { underwaterMagnificationEnabled = value; }
 		constexpr void setUnderwaterAbsorptionEnabled(bool value) { underwaterAbsorptionEnabled = value; }
 		constexpr void setUnderwaterSnellEnabled(bool value) { underwaterSnellEnabled = value; }
+		constexpr void setUnderwaterSnellRTEnabled(bool value) { underwaterSnellRTEnabled = value; }
 		constexpr void setDitherEnabled(bool value) { ditherEnabled = value; }
 		constexpr void setOcclusionCullingEnabled(bool value) { occlusionCullingEnabled = value; }
 		constexpr void setSceneUpdateEnabled(bool value) { sceneUpdateEnabled = value; }
