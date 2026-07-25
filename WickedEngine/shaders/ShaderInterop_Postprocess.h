@@ -140,6 +140,16 @@ static const uint DEPTHOFFIELD_TILESIZE = 32;
 // the view is tinted by wavelength-dependent absorption of the downwelling
 // light scaled by camera depth (red absorbed fastest, blue penetrates deepest).
 #define underwater_absorption postprocess.params0.y
+// Snell's window strength for the underwater post pass: when > 0 the view is
+// modulated by refraction at the surface, so the above-water hemisphere is
+// compressed into an overhead circular window (critical angle ~48.6 deg for
+// water) and the surround falls to total internal reflection (water tint). The
+// value scales the effect intensity (1 = full), 0 disables it.
+#define underwater_snell postprocess.params0.z
+// Snell's window light-reach depth (in meters) for the underwater post pass:
+// the depth by which the window has essentially faded out, since sunlight only
+// penetrates so far. Smaller values close the window at shallower depth.
+#define underwater_snell_depth postprocess.params0.w
 
 enum TONEMAP_FLAGS
 {

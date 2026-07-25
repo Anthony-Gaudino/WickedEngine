@@ -2371,12 +2371,18 @@ namespace wi
 					getUnderwaterAbsorptionEnabled()
 					? getUnderwaterAbsorptionStrength()
 					: 0.0f;
+				const float underwater_snell =
+					getUnderwaterSnellEnabled()
+					? getUnderwaterSnellStrength()
+					: 0.0f;
 				wi::renderer::Postprocess_Underwater(
 					rt_first == nullptr ? *rt_read : *rt_first,
 					*rt_write,
 					cmd,
 					underwater_magnification,
-					underwater_absorption
+					underwater_absorption,
+					underwater_snell,
+					getUnderwaterSnellDepth()
 				);
 
 				rt_first = nullptr;

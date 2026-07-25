@@ -18707,7 +18707,9 @@ void Postprocess_Underwater(
 	const Texture& output,
 	CommandList cmd,
 	float magnification,
-	float absorption
+	float absorption,
+	float snell,
+	float snell_depth
 )
 {
 	device->EventBegin("Postprocess_Underwater", cmd);
@@ -18726,6 +18728,8 @@ void Postprocess_Underwater(
 	postprocess.resolution_rcp.y = 1.0f / postprocess.resolution.y;
 	postprocess.params0.x = std::max(1.0f, magnification); // underwater_magnification
 	postprocess.params0.y = std::max(0.0f, absorption); // underwater_absorption
+	postprocess.params0.z = std::max(0.0f, snell); // underwater_snell
+	postprocess.params0.w = std::max(1.0f, snell_depth); // underwater_snell_depth
 	device->PushConstants(&postprocess, sizeof(postprocess), cmd);
 
 	device->BindResource(&input, 0, cmd);

@@ -350,6 +350,13 @@ struct alignas(16) ShaderOcean
 	int texture_displacementmap;
 	int texture_gradientmap;
 
+	// Vertical scale (patch_length / dmap_dim) used to rebuild the wave surface
+	// normal from the gradient map, matching the ocean surface shader.
+	float texel_length;
+	float padding_ocean0;
+	float padding_ocean1;
+	float padding_ocean2;
+
 	bool IsValid() { return texture_displacementmap >= 0; }
 };
 

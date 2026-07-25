@@ -1088,7 +1088,9 @@ namespace wi::renderer
 		const wi::graphics::Texture& output,
 		wi::graphics::CommandList cmd,
 		float magnification = 1.0f,
-		float absorption = 0.0f
+		float absorption = 0.0f,
+		float snell = 0.0f,
+		float snell_depth = 30.0f
 	);
 	struct MeshBlendResources
 	{

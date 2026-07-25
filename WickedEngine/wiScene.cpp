@@ -966,6 +966,7 @@ namespace wi::scene
 		shaderscene.weather.ocean.patch_size_rcp = 1.0f / weather.oceanParameters.patch_length;
 		shaderscene.weather.ocean.texture_displacementmap = device->GetDescriptorIndex(ocean.getDisplacementMap(), SubresourceType::SRV);
 		shaderscene.weather.ocean.texture_gradientmap = device->GetDescriptorIndex(ocean.getGradientMap(), SubresourceType::SRV);
+		shaderscene.weather.ocean.texel_length = weather.oceanParameters.patch_length / (float)weather.oceanParameters.dmap_dim;
 		shaderscene.weather.stars = weather.stars;
 		XMStoreFloat4(&shaderscene.weather.stars_rotation, XMQuaternionNormalize(XMQuaternionInverse(XMLoadFloat4(&weather.stars_rotation_quaternion))));
 		shaderscene.weather.rain_amount = weather.rain_amount;

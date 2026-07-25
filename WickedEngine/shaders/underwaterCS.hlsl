@@ -208,6 +208,84 @@ void main(uint3 DTid : SV_DispatchThreadID)
 				exp(-waterAbsorption * underwater_absorption * camera_depth);
 		}
 
+		// Snell's window: looking up from under water, refraction gathers the
+		// whole above-water hemisphere into an overhead circular window of
+		// fixed angular size - half-angle equal to the critical angle for water
+		// (~48.6 deg, so ~97.2 deg across), independent of depth. What changes
+		// with depth is how much of it survives the water column: the light
+		// that forms the window is attenuated along its path to the surface, so
+		// the rim (a longer path than the center) fades first and the bright
+		// disc appears to shrink, and as the camera descends the crisp
+		// above-water view washes out into a glowing patch of sunlight that
+		// finally fades to nothing once the water swallows the light (the
+		// light-reach depth). Only drawn for upward rays that reach the surface
+		// through open water, so it never covers geometry and never appears
+		// when looking down. References:
+		// https://en.wikipedia.org/wiki/Snell%27s_window
+		if (underwater_snell > 0)
+		{
+			// View ray from the eye into the scene:
+			const float3 rayDir = -V;
+
+			// Surface normal where the ray pierces the water, rebuilt from the
+			// same wave gradient map the ocean surface is shaded with. Snell's
+			// law is relative to the local surface normal, so testing the
+			// critical angle against this wavy normal (instead of a flat up
+			// vector) makes the window rim genuinely ondulate with the waves -
+			// physically based, no procedural ripple:
+			float3 surfaceNormal = float3(0, 1, 0);
+			if (ocean.texture_gradientmap >= 0)
+			{
+				Texture2D texture_gradientmap =
+					bindless_textures[descriptor_index(ocean.texture_gradientmap)];
+				const float2 gradient = texture_gradientmap.SampleLevel(
+					sampler_linear_wrap, ocean_surface_uv, 0
+				).rg;
+				surfaceNormal = normalize(
+					float3(gradient.x, ocean.texel_length * 2.0, gradient.y)
+				);
+			}
+
+			const float cosTheta = dot(rayDir, surfaceNormal);
+			const float sinTheta = sqrt(saturate(1.0 - cosTheta * cosTheta));
+
+			// Snell's law: sin(theta) * n_water reaches 1 at the critical
+			// angle, so the window edge sits right at that angle at any depth:
+			const float escape = sinTheta * 1.333;
+			const float cone = 1.0 - smoothstep(0.92, 1.03, escape);
+
+			// Only upward rays looking at open water (the surface nearer than
+			// any geometry) form the window: never looking down, never over
+			// objects. Gate on true world up so it stays robust to the wavy
+			// normal above:
+			const float upward = smoothstep(0.0, 0.1, rayDir.y);
+			const float openWater =
+				saturate((surface_dist - ocean_dist) / max(ocean_dist, 1.0));
+
+			// Sunlight only reaches so far, so the window fades out with the
+			// water column it crosses to the surface. The rim's path is longer
+			// than the center's, so it fades first and the disc appears to
+			// shrink as the camera descends, then vanishes past the light-reach
+			// depth:
+			const float reach = max(underwater_snell_depth, 1.0);
+			const float pathFade = saturate(exp(-ocean_dist * 3.0 / reach));
+
+			// Inside the window, refract the ray through the wave surface into
+			// the air (water -> air) and read the sky in that direction.
+			// Refraction squeezes the whole 180 deg hemisphere into the ~97 deg
+			// cone, with the sun landing at its true refracted place; refract()
+			// returns 0 past the critical angle, matching the cone edge. TODO:
+			// swap the analytic sky for a high-res realtime scene cubemap
+			// captured at the camera, so above-water objects (not just the sky)
+			// show through the window as well.
+			const float3 refractedDir = refract(rayDir, -surfaceNormal, 1.333);
+			const float3 aboveWater = GetDynamicSkyColor(refractedDir);
+
+			const float windowMask =
+				cone * upward * openWater * pathFade * underwater_snell;
+			color.rgb = lerp(color.rgb, aboveWater, saturate(windowMask));
+		}
+
 		//color = fogAmount;
 		//color = float4(1, 0, 0, 1);
 	}

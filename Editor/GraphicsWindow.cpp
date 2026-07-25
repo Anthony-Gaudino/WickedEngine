@@ -1477,6 +1477,59 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 		});
 	AddWidget(&underwaterAbsorptionStrengthSlider);
 
+	underwaterSnellCheckBox.Create("Underwater Snell's Window: ");
+	underwaterSnellCheckBox.SetTooltip("Simulate Snell's window: looking up from under water, refraction compresses the whole above-water view into an overhead circular window (critical angle ~48.6 degrees), while the surround falls to total internal reflection and reads as deep water.");
+	underwaterSnellCheckBox.SetSize(XMFLOAT2(hei, hei));
+	underwaterSnellCheckBox.SetPos(XMFLOAT2(x, y += step));
+
+	if (editor->main->config.GetSection("graphics").Has("underwater_snell"))
+	{
+		editor->renderPath->setUnderwaterSnellEnabled(editor->main->config.GetSection("graphics").GetBool("underwater_snell"));
+	}
+
+	underwaterSnellCheckBox.OnClick([=](wi::gui::EventArgs args) {
+		editor->renderPath->setUnderwaterSnellEnabled(args.bValue);
+		editor->main->config.GetSection("graphics").Set("underwater_snell", args.bValue);
+		editor->main->config.Commit();
+		});
+	AddWidget(&underwaterSnellCheckBox);
+
+	underwaterSnellStrengthSlider.Create(0, 3, 1, 1000, "UnderwaterSnell.Strength: ");
+	underwaterSnellStrengthSlider.SetText("Strength: ");
+	underwaterSnellStrengthSlider.SetTooltip("Scale the Snell's window intensity. 1 = full effect, lower is subtler, higher darkens the total-internal-reflection surround and brightens the rim more.");
+	underwaterSnellStrengthSlider.SetSize(XMFLOAT2(mod_wid, hei));
+	underwaterSnellStrengthSlider.SetPos(XMFLOAT2(x + 100, y));
+
+	if (editor->main->config.GetSection("graphics").Has("underwater_snell_strength"))
+	{
+		editor->renderPath->setUnderwaterSnellStrength(editor->main->config.GetSection("graphics").GetFloat("underwater_snell_strength"));
+	}
+
+	underwaterSnellStrengthSlider.OnSlide([=](wi::gui::EventArgs args) {
+		editor->renderPath->setUnderwaterSnellStrength(args.fValue);
+		editor->main->config.GetSection("graphics").Set("underwater_snell_strength", args.fValue);
+		editor->main->config.Commit();
+		});
+	AddWidget(&underwaterSnellStrengthSlider);
+
+	underwaterSnellDepthSlider.Create(2, 150, 30, 1000, "UnderwaterSnell.Depth: ");
+	underwaterSnellDepthSlider.SetText("Light Reach: ");
+	underwaterSnellDepthSlider.SetTooltip("Depth (in meters) that sunlight reaches through the water: the window fades out as the camera passes this depth. Lower closes the window in shallower water (murkier), higher keeps it visible deeper (clearer water).");
+	underwaterSnellDepthSlider.SetSize(XMFLOAT2(mod_wid, hei));
+	underwaterSnellDepthSlider.SetPos(XMFLOAT2(x + 100, y));
+
+	if (editor->main->config.GetSection("graphics").Has("underwater_snell_depth"))
+	{
+		editor->renderPath->setUnderwaterSnellDepth(editor->main->config.GetSection("graphics").GetFloat("underwater_snell_depth"));
+	}
+
+	underwaterSnellDepthSlider.OnSlide([=](wi::gui::EventArgs args) {
+		editor->renderPath->setUnderwaterSnellDepth(args.fValue);
+		editor->main->config.GetSection("graphics").Set("underwater_snell_depth", args.fValue);
+		editor->main->config.Commit();
+		});
+	AddWidget(&underwaterSnellDepthSlider);
+
 	bloomCheckBox.Create("Bloom: ");
 	bloomCheckBox.SetTooltip("Enable bloom. The effect adds color bleeding to the brightest parts of the scene.");
 	bloomCheckBox.SetScriptTip("RenderPath3D::SetBloomEnabled(bool value)");
@@ -1978,6 +2031,9 @@ void GraphicsWindow::UpdateData()
 	underwaterMagnificationSlider.SetValue(editor->renderPath->getUnderwaterMagnification());
 	underwaterAbsorptionCheckBox.SetCheck(editor->renderPath->getUnderwaterAbsorptionEnabled());
 	underwaterAbsorptionStrengthSlider.SetValue(editor->renderPath->getUnderwaterAbsorptionStrength());
+	underwaterSnellCheckBox.SetCheck(editor->renderPath->getUnderwaterSnellEnabled());
+	underwaterSnellStrengthSlider.SetValue(editor->renderPath->getUnderwaterSnellStrength());
+	underwaterSnellDepthSlider.SetValue(editor->renderPath->getUnderwaterSnellDepth());
 	bloomCheckBox.SetCheck(editor->renderPath->getBloomEnabled());
 	bloomStrengthSlider.SetValue(editor->renderPath->getBloomThreshold());
 	fxaaCheckBox.SetCheck(editor->renderPath->getFXAAEnabled());
@@ -2247,6 +2303,9 @@ void GraphicsWindow::ResizeLayout()
 	underwaterMagnificationCheckBox.SetPos(XMFLOAT2(underwaterMagnificationSlider.GetPos().x - underwaterMagnificationCheckBox.GetSize().x - 80, underwaterMagnificationSlider.GetPos().y));
 	layout.add_right(underwaterAbsorptionStrengthSlider);
 	underwaterAbsorptionCheckBox.SetPos(XMFLOAT2(underwaterAbsorptionStrengthSlider.GetPos().x - underwaterAbsorptionCheckBox.GetSize().x - 80, underwaterAbsorptionStrengthSlider.GetPos().y));
+	layout.add_right(underwaterSnellStrengthSlider);
+	underwaterSnellCheckBox.SetPos(XMFLOAT2(underwaterSnellStrengthSlider.GetPos().x - underwaterSnellCheckBox.GetSize().x - 80, underwaterSnellStrengthSlider.GetPos().y));
+	layout.add_right(underwaterSnellDepthSlider);
 	layout.add_right(bloomStrengthSlider);
 	bloomCheckBox.SetPos(XMFLOAT2(bloomStrengthSlider.GetPos().x - bloomCheckBox.GetSize().x - 80, bloomStrengthSlider.GetPos().y));
 	layout.add_right(fxaaCheckBox);

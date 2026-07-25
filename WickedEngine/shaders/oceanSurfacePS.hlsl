@@ -111,9 +111,15 @@ float4 main(PSIn input) : SV_TARGET
 
 	if (camera_below_water)
 	{
-		// Just eyeballing a nice modified transition for refraction-reflection from underwater view:
-		const float3 VdotN = abs(dot(surface.V, surface.N));
-		surface.F = smoothstep(0.4, 0.6, 1 - VdotN);
+		// Total internal reflection (Snell's window): light from above only
+		// refracts through the surface within the critical angle for water
+		// (~48.6 deg, cos = 0.661). Past it the surface is a perfect mirror, so
+		// force full reflection - surface.F = 1 both cuts the sky refraction
+		// (composited as refraction * (1 - F)) and shows the reflection of the
+		// scene below. The soft band around the critical angle plus the wavy
+		// normal gives the shimmering window edge rather than a hard circle:
+		const float VdotN = abs(dot(surface.V, surface.N));
+		surface.F = 1.0 - smoothstep(0.611, 0.711, VdotN);
 	}
 	
 	[branch]
