@@ -21,10 +21,10 @@ namespace wi::scene::environment
 	 * The Jerlov classification sorts natural waters by how strongly they
 	 * attenuate downwelling daylight, from the clearest open ocean (**oceanic
 	 * type I**) through progressively more turbid coastal waters (**types 1C
-	 * to 9C**). Each entry here selects a preset pair of `turbidity` and
-	 * `dissolvedOrganics` coefficients in WaterMedium, chosen so the resulting
-	 * visibility distance follows the classical ladder (roughly 50 m for
-	 * oceanic type I down to well under a metre for coastal type 9C).
+	 * to 9C**). Each entry here selects a preset mix of the `algae`, `silt` and
+	 * `stain` constituents in WaterMedium, chosen so the resulting visibility
+	 * distance follows the classical ladder (roughly 50 m for oceanic type I
+	 * down to well under a metre for coastal type 9C).
 	 *
 	 * References:
 	 * https://en.wikipedia.org/wiki/Jerlov_water_type
