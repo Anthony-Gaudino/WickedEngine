@@ -63,7 +63,7 @@ else ()
     endif()
 
     # minimum sdl version is 2.0.14 for controller LED support
-    if((${SDL_VERSION_MAJOR} GREATER_EQUAL 2) AND (${SDL2_VERSION_MINOR} GREATER_EQUAL 0) AND (${SDL2_VERSION_PATCH} GREATER_EQUAL 14))
+    if(DEFINED SDL2_VERSION AND SDL2_VERSION VERSION_GREATER_EQUAL "2.0.14")
         add_compile_definitions(SDL2_FEATURE_CONTROLLER_LED=1)
     endif()
 endif()
@@ -85,6 +85,21 @@ add_compile_definitions(Jolt JPH_DEBUG_RENDERER)
 
 file(GLOB HEADER_FILES CONFIGURE_DEPENDS *.h)
 file(GLOB SOURCE_FILES CONFIGURE_DEPENDS *.cpp)
+
+# The globs above are deliberately non-recursive, so per-component
+# subdirectories are not covered by them. Gather those explicitly, otherwise a
+# new .cpp under one of them is silently left out of the build.
+file(GLOB_RECURSE COMPONENT_HEADER_FILES CONFIGURE_DEPENDS
+    wiMath/*.h
+    wiScene/*.h
+)
+file(GLOB_RECURSE COMPONENT_SOURCE_FILES CONFIGURE_DEPENDS
+    wiMath/*.cpp
+    wiScene/*.cpp
+)
+list(APPEND HEADER_FILES ${COMPONENT_HEADER_FILES})
+list(APPEND SOURCE_FILES ${COMPONENT_SOURCE_FILES})
+
 list(REMOVE_ITEM SOURCE_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/offlineshadercompiler.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/wiRenderer.cpp
