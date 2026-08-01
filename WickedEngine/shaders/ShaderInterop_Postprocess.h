@@ -146,10 +146,12 @@ static const uint DEPTHOFFIELD_TILESIZE = 32;
 // water) and the surround falls to total internal reflection (water tint). The
 // value scales the effect intensity (1 = full), 0 disables it.
 #define underwater_snell postprocess.params0.z
-// Snell's window light-reach depth (in meters) for the underwater post pass:
-// the depth by which the window has essentially faded out, since sunlight only
-// penetrates so far. Smaller values close the window at shallower depth.
-#define underwater_snell_depth postprocess.params0.w
+// Snell's window fade scale for the underwater post pass: multiplies the
+// water's own extinction along the window's path to the surface, so how deep
+// the window survives follows the authored water clarity instead of a magic
+// depth. 1 is physically correct; below 1 keeps the window alive deeper, above
+// 1 closes it sooner.
+#define underwater_snell_fade postprocess.params0.w
 // Ray-traced Snell's window flag (nonzero enables it). When set and the device
 // supports ray tracing (the underwaterCS_rtapi permutation), the refracted ray
 // is traced into the real scene so above-water objects and their occlusion of

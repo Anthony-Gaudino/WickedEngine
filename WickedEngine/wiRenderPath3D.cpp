@@ -2391,7 +2391,7 @@ namespace wi
 					underwater_magnification,
 					underwater_absorption,
 					underwater_snell,
-					getUnderwaterSnellDepth(),
+					getUnderwaterSnellFade(),
 					underwater_snell_rt
 				);
 

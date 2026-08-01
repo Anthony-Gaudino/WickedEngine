@@ -939,6 +939,72 @@ void WeatherWindow::Create(EditorComponent* _editor)
 		});
 	AddWidget(&ocean_windDriftStrengthSlider);
 
+	// Water optics: the inherent optical properties of the water, which decide
+	// turbidity, hue and how far one can see through it.
+	ocean_waterTypeComboBox.Create("Water type: ");
+	ocean_waterTypeComboBox.SetSize(XMFLOAT2(wid, hei));
+	ocean_waterTypeComboBox.SetPos(XMFLOAT2(x, y += step));
+	ocean_waterTypeComboBox.AddItem("Custom");
+	ocean_waterTypeComboBox.AddItem("Oceanic I (clearest)");
+	ocean_waterTypeComboBox.AddItem("Oceanic IA");
+	ocean_waterTypeComboBox.AddItem("Oceanic IB");
+	ocean_waterTypeComboBox.AddItem("Oceanic II");
+	ocean_waterTypeComboBox.AddItem("Oceanic III");
+	ocean_waterTypeComboBox.AddItem("Coastal 1C");
+	ocean_waterTypeComboBox.AddItem("Coastal 3C");
+	ocean_waterTypeComboBox.AddItem("Coastal 5C");
+	ocean_waterTypeComboBox.AddItem("Coastal 7C");
+	ocean_waterTypeComboBox.AddItem("Coastal 9C (murkiest)");
+	ocean_waterTypeComboBox.SetMaxVisibleItemCount(100);
+	ocean_waterTypeComboBox.SetTooltip("Jerlov optical water type preset. Sets turbidity and dissolved organics together, from the clearest open ocean down to murky harbour water.");
+	ocean_waterTypeComboBox.OnSelect([this](wi::gui::EventArgs args) {
+		GetWeather().oceanParameters.waterMedium.SetWaterType((wi::scene::environment::JerlovWaterType)args.iValue);
+		UpdateWaterMedium();
+		});
+	AddWidget(&ocean_waterTypeComboBox);
+
+	ocean_algaeSlider.Create(0, 30, 2.5f, 100000, "Algae: ");
+	ocean_algaeSlider.SetSize(XMFLOAT2(wid, hei));
+	ocean_algaeSlider.SetPos(XMFLOAT2(x, y += step));
+	ocean_algaeSlider.SetTooltip("Living phytoplankton, as chlorophyll-a in mg/m3. Absorbs blue and red while sparing green, so it turns the water green and darker as well as hazier. ~0.05 open ocean, 1-5 coastal, tens in a bloom.");
+	ocean_algaeSlider.OnSlide([this](wi::gui::EventArgs args) {
+		auto& waterMedium = GetWeather().oceanParameters.waterMedium;
+		waterMedium.SetAlgae(args.fValue);
+		waterMedium.SetWaterType(wi::scene::environment::JerlovWaterType::CUSTOM);
+		UpdateWaterMedium();
+		});
+	AddWidget(&ocean_algaeSlider);
+
+	ocean_siltSlider.Create(0, 20, 0.25f, 100000, "Silt: ");
+	ocean_siltSlider.SetSize(XMFLOAT2(wid, hei));
+	ocean_siltSlider.SetPos(XMFLOAT2(x, y += step));
+	ocean_siltSlider.SetTooltip("Suspended mineral matter, in g/m3. Scatters hard and absorbs little, so it makes the water BRIGHT and milky and kills contrast without darkening it. ~0 offshore, 1-10 coastal or river, more in a stirred estuary.");
+	ocean_siltSlider.OnSlide([this](wi::gui::EventArgs args) {
+		auto& waterMedium = GetWeather().oceanParameters.waterMedium;
+		waterMedium.SetSilt(args.fValue);
+		waterMedium.SetWaterType(wi::scene::environment::JerlovWaterType::CUSTOM);
+		UpdateWaterMedium();
+		});
+	AddWidget(&ocean_siltSlider);
+
+	ocean_stainSlider.Create(0, 3, 0.18f, 100000, "Stain: ");
+	ocean_stainSlider.SetSize(XMFLOAT2(wid, hei));
+	ocean_stainSlider.SetPos(XMFLOAT2(x, y += step));
+	ocean_stainSlider.SetTooltip("Dissolved organic staining (\"yellow substance\"), as absorption at 440nm in 1/m. Dissolved, not suspended, so it adds NO haze at all - it only absorbs, driving the hue through green to brown and taking light away.");
+	ocean_stainSlider.OnSlide([this](wi::gui::EventArgs args) {
+		auto& waterMedium = GetWeather().oceanParameters.waterMedium;
+		waterMedium.SetStain(args.fValue);
+		waterMedium.SetWaterType(wi::scene::environment::JerlovWaterType::CUSTOM);
+		UpdateWaterMedium();
+		});
+	AddWidget(&ocean_stainSlider);
+
+	ocean_visibilityLabel.Create("");
+	ocean_visibilityLabel.SetFitTextEnabled(true);
+	ocean_visibilityLabel.SetPos(XMFLOAT2(mod_x, y += step));
+	ocean_visibilityLabel.SetTooltip("Horizontal sighting range derived from the coefficients above, using Duntley's 2% contrast threshold. Read-only feedback.");
+	AddWidget(&ocean_visibilityLabel);
+
 	ocean_resetButton.Create("Reset Ocean");
 	ocean_resetButton.SetTooltip("Reset ocean to default values.");
 	ocean_resetButton.SetSize(XMFLOAT2(mod_wid, hei));
@@ -947,6 +1013,7 @@ void WeatherWindow::Create(EditorComponent* _editor)
 		auto& weather = GetWeather();
 		weather.oceanParameters = wi::Ocean::OceanParameters();
 		editor->GetCurrentScene().ocean = {};
+		UpdateWaterMedium();
 		});
 	AddWidget(&ocean_resetButton);
 
@@ -1174,6 +1241,7 @@ void WeatherWindow::UpdateData()
 		ocean_windInfluenceSlider.SetValue(weather.oceanWindInfluence);
 		ocean_windDriftCheckBox.SetCheck(weather.IsOceanWindDrift());
 		ocean_windDriftStrengthSlider.SetValue(weather.oceanWindDriftStrength);
+		UpdateWaterMedium();
 
 		volumetricCloudsCheckBox.SetCheck(weather.IsVolumetricClouds());
 		volumetricCloudsReceiveShadowCheckBox.SetCheck(weather.IsVolumetricCloudsReceiveShadow());
@@ -1305,6 +1373,24 @@ void WeatherWindow::UpdateWind()
 	XMStoreFloat3(&GetWeather().windDirection, dir);
 }
 
+void WeatherWindow::UpdateWaterMedium()
+{
+	const auto& waterMedium = GetWeather().oceanParameters.waterMedium;
+
+	ocean_waterTypeComboBox.SetSelectedWithoutCallback((int)waterMedium.GetWaterType());
+	ocean_algaeSlider.SetValue(waterMedium.GetAlgae());
+	ocean_siltSlider.SetValue(waterMedium.GetSilt());
+	ocean_stainSlider.SetValue(waterMedium.GetStain());
+
+	// Visibility is derived from the coefficients, so it is shown as read-only
+	// feedback rather than authored: it tells the artist what the two sliders
+	// above actually mean in metres.
+	char text[96] = {};
+	snprintf(text, arraysize(text), "Visibility: %.1f m   (turbidity %.2f /m)",
+		waterMedium.VisibilityDistance(), waterMedium.Turbidity());
+	ocean_visibilityLabel.SetText(text);
+}
+
 void WeatherWindow::ResizeLayout()
 {
 	wi::gui::Window::ResizeLayout();
@@ -1403,6 +1489,11 @@ void WeatherWindow::ResizeLayout()
 	layout.add(ocean_windInfluenceSlider);
 	layout.add_right(ocean_windDriftCheckBox);
 	layout.add(ocean_windDriftStrengthSlider);
+	layout.add(ocean_waterTypeComboBox);
+	layout.add(ocean_algaeSlider);
+	layout.add(ocean_siltSlider);
+	layout.add(ocean_stainSlider);
+	layout.add_fullwidth(ocean_visibilityLabel);
 	layout.add_fullwidth(ocean_resetButton);
 
 	layout.jump();

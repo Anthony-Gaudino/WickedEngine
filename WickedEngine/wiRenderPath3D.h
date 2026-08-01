@@ -50,7 +50,7 @@ namespace wi
 		float underwaterMagnification = 1.33f;
 		float underwaterAbsorptionStrength = 1.0f;
 		float underwaterSnellStrength = 1.0f;
-		float underwaterSnellDepth = 30.0f;
+		float underwaterSnellFade = 1.0f;
 		uint32_t screenSpaceShadowSampleCount = 16;
 		float screenSpaceShadowRange = 1;
 		float eyeadaptionKey = 0.115f;
@@ -266,7 +266,7 @@ namespace wi
 		[[nodiscard]] constexpr float getUnderwaterMagnification() const { return underwaterMagnification; }
 		[[nodiscard]] constexpr float getUnderwaterAbsorptionStrength() const { return underwaterAbsorptionStrength; }
 		[[nodiscard]] constexpr float getUnderwaterSnellStrength() const { return underwaterSnellStrength; }
-		[[nodiscard]] constexpr float getUnderwaterSnellDepth() const { return underwaterSnellDepth; }
+		[[nodiscard]] constexpr float getUnderwaterSnellFade() const { return underwaterSnellFade; }
 		constexpr uint32_t getScreenSpaceShadowSampleCount() const { return screenSpaceShadowSampleCount; }
 		constexpr float getScreenSpaceShadowRange() const { return screenSpaceShadowRange; }
 		constexpr float getEyeAdaptionKey() const { return eyeadaptionKey; }
@@ -342,7 +342,7 @@ namespace wi
 		constexpr void setUnderwaterMagnification(float value) { underwaterMagnification = value; }
 		constexpr void setUnderwaterAbsorptionStrength(float value) { underwaterAbsorptionStrength = value; }
 		constexpr void setUnderwaterSnellStrength(float value) { underwaterSnellStrength = value; }
-		constexpr void setUnderwaterSnellDepth(float value) { underwaterSnellDepth = value; }
+		constexpr void setUnderwaterSnellFade(float value) { underwaterSnellFade = value; }
 		constexpr void setScreenSpaceShadowSampleCount(uint32_t value) { screenSpaceShadowSampleCount = value; }
 		constexpr void setScreenSpaceShadowRange(float value) { screenSpaceShadowRange = value; }
 		constexpr void setEyeAdaptionKey(float value) { eyeadaptionKey = value; }

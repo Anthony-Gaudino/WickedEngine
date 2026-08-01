@@ -967,6 +967,16 @@ namespace wi::scene
 		shaderscene.weather.ocean.texture_displacementmap = device->GetDescriptorIndex(ocean.getDisplacementMap(), SubresourceType::SRV);
 		shaderscene.weather.ocean.texture_gradientmap = device->GetDescriptorIndex(ocean.getGradientMap(), SubresourceType::SRV);
 		shaderscene.weather.ocean.texel_length = weather.oceanParameters.patch_length / (float)weather.oceanParameters.dmap_dim;
+		{
+			// Inherent optical properties of the water: absorption and
+			// scattering are derived from the authored turbidity / dissolved
+			// organics rather than stored, so they always stay consistent.
+			const wi::scene::environment::WaterMedium& waterMedium = weather.oceanParameters.waterMedium;
+			const XMFLOAT3 absorption = waterMedium.Absorption();
+			const XMFLOAT3 scattering = waterMedium.Scattering();
+			shaderscene.weather.ocean.absorption = XMFLOAT4(absorption.x, absorption.y, absorption.z, 0);
+			shaderscene.weather.ocean.scattering = XMFLOAT4(scattering.x, scattering.y, scattering.z, waterMedium.PhaseAsymmetry());
+		}
 		shaderscene.weather.stars = weather.stars;
 		XMStoreFloat4(&shaderscene.weather.stars_rotation, XMQuaternionNormalize(XMQuaternionInverse(XMLoadFloat4(&weather.stars_rotation_quaternion))));
 		shaderscene.weather.rain_amount = weather.rain_amount;

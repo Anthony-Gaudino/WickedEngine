@@ -1512,23 +1512,23 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 		});
 	AddWidget(&underwaterSnellStrengthSlider);
 
-	underwaterSnellDepthSlider.Create(2, 150, 30, 1000, "UnderwaterSnell.Depth: ");
-	underwaterSnellDepthSlider.SetText("Light Reach: ");
-	underwaterSnellDepthSlider.SetTooltip("Depth (in meters) that sunlight reaches through the water: the window fades out as the camera passes this depth. Lower closes the window in shallower water (murkier), higher keeps it visible deeper (clearer water).");
-	underwaterSnellDepthSlider.SetSize(XMFLOAT2(mod_wid, hei));
-	underwaterSnellDepthSlider.SetPos(XMFLOAT2(x + 100, y));
+	underwaterSnellFadeSlider.Create(0, 4, 1, 1000, "UnderwaterSnell.Fade: ");
+	underwaterSnellFadeSlider.SetText("Window Fade: ");
+	underwaterSnellFadeSlider.SetTooltip("Scales the water's own extinction along the window's path to the surface, so how deep the window survives follows the water clarity set in Weather (turbidity / water type). 1 is physically correct; below 1 keeps the window visible deeper, above 1 closes it sooner.");
+	underwaterSnellFadeSlider.SetSize(XMFLOAT2(mod_wid, hei));
+	underwaterSnellFadeSlider.SetPos(XMFLOAT2(x + 100, y));
 
-	if (editor->main->config.GetSection("graphics").Has("underwater_snell_depth"))
+	if (editor->main->config.GetSection("graphics").Has("underwater_snell_fade"))
 	{
-		editor->renderPath->setUnderwaterSnellDepth(editor->main->config.GetSection("graphics").GetFloat("underwater_snell_depth"));
+		editor->renderPath->setUnderwaterSnellFade(editor->main->config.GetSection("graphics").GetFloat("underwater_snell_fade"));
 	}
 
-	underwaterSnellDepthSlider.OnSlide([=](wi::gui::EventArgs args) {
-		editor->renderPath->setUnderwaterSnellDepth(args.fValue);
-		editor->main->config.GetSection("graphics").Set("underwater_snell_depth", args.fValue);
+	underwaterSnellFadeSlider.OnSlide([=](wi::gui::EventArgs args) {
+		editor->renderPath->setUnderwaterSnellFade(args.fValue);
+		editor->main->config.GetSection("graphics").Set("underwater_snell_fade", args.fValue);
 		editor->main->config.Commit();
 		});
-	AddWidget(&underwaterSnellDepthSlider);
+	AddWidget(&underwaterSnellFadeSlider);
 
 	underwaterSnellRTCheckBox.Create("Snell Window Ray Tracing: ");
 	underwaterSnellRTCheckBox.SetTooltip("Ray trace the Snell's window surrounding objects. Requires a ray tracing capable GPU.");
@@ -2050,7 +2050,7 @@ void GraphicsWindow::UpdateData()
 	underwaterAbsorptionStrengthSlider.SetValue(editor->renderPath->getUnderwaterAbsorptionStrength());
 	underwaterSnellCheckBox.SetCheck(editor->renderPath->getUnderwaterSnellEnabled());
 	underwaterSnellStrengthSlider.SetValue(editor->renderPath->getUnderwaterSnellStrength());
-	underwaterSnellDepthSlider.SetValue(editor->renderPath->getUnderwaterSnellDepth());
+	underwaterSnellFadeSlider.SetValue(editor->renderPath->getUnderwaterSnellFade());
 	underwaterSnellRTCheckBox.SetCheck(editor->renderPath->getUnderwaterSnellRTEnabled());
 	bloomCheckBox.SetCheck(editor->renderPath->getBloomEnabled());
 	bloomStrengthSlider.SetValue(editor->renderPath->getBloomThreshold());
@@ -2323,7 +2323,7 @@ void GraphicsWindow::ResizeLayout()
 	underwaterAbsorptionCheckBox.SetPos(XMFLOAT2(underwaterAbsorptionStrengthSlider.GetPos().x - underwaterAbsorptionCheckBox.GetSize().x - 80, underwaterAbsorptionStrengthSlider.GetPos().y));
 	layout.add_right(underwaterSnellStrengthSlider);
 	underwaterSnellCheckBox.SetPos(XMFLOAT2(underwaterSnellStrengthSlider.GetPos().x - underwaterSnellCheckBox.GetSize().x - 80, underwaterSnellStrengthSlider.GetPos().y));
-	layout.add_right(underwaterSnellDepthSlider);
+	layout.add_right(underwaterSnellFadeSlider);
 	layout.add_right(underwaterSnellRTCheckBox);
 	layout.add_right(bloomStrengthSlider);
 	bloomCheckBox.SetPos(XMFLOAT2(bloomStrengthSlider.GetPos().x - bloomCheckBox.GetSize().x - 80, bloomStrengthSlider.GetPos().y));

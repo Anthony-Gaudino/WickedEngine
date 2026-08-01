@@ -136,7 +136,12 @@ float4 main(PSIn input) : SV_TARGET
 			float3 reflectivePosition = reconstruct_position(reflectionUV, reflectiveDepth, camera.reflection_inverse_view_projection);
 			float water_depth = -dot(float4(reflectivePosition, 1), water_plane);
 			water_depth += texture_ocean_displacementmap.SampleLevel(sampler_linear_wrap, reflectivePosition.xz * xOceanPatchSizeRecip, 0).z; // texture contains xzy!
-			reflectiveColor.rgb = lerp(color.rgb, reflectiveColor.rgb, saturate(exp(-water_depth * color.a)));
+			// Same medium as the refraction below: what the planar reflection
+			// shows has crossed water_depth of water too.
+			const ShaderOcean water = GetWeather().ocean;
+			const float3 reflectionTransmittance = saturate(exp(-water_depth *
+				max(water.absorption.rgb + water.scattering.rgb, 0.00001)));
+			reflectiveColor.rgb = lerp(color.rgb, reflectiveColor.rgb, reflectionTransmittance);
 		}
 
 		// remove planar reflection at high perturbation where it gets too inaccurate
@@ -185,11 +190,25 @@ float4 main(PSIn input) : SV_TARGET
 		water_depth += texture_ocean_displacementmap.SampleLevel(sampler_linear_wrap, refraction_position.xz * xOceanPatchSizeRecip, 0).z; // texture contains xzy!
 		if (camera_below_water && V.y < 0)
 			water_depth = -water_depth;
-		// Water fog computation:
-		float waterfog = saturate(exp(-water_depth * color.a));
-		float3 transmittance = saturate(exp(-water_depth * surface.extinction * color.a));
-		surface.refraction.a = waterfog;
-		surface.refraction.rgb *= transmittance;
+		// Water fog computation, using the same medium the underwater pass
+		// uses, so what the water looks like from above agrees with what it
+		// looks like from inside it.
+		const ShaderOcean water = GetWeather().ocean;
+		const float3 sigmaT =
+			max(water.absorption.rgb + water.scattering.rgb, 0.00001);
+		const float3 transmittance = saturate(exp(-water_depth * sigmaT));
+		// ApplyLighting() blends the water body's own lit color against the
+		// refraction with a scalar weight, so the channel that survives
+		// furthest sets how much shows through and the rest of the tint rides
+		// on the refraction color. Their product is the full spectral
+		// transmittance again.
+		// Deep enough water underflows every channel to zero, so guard the
+		// divide - otherwise the tint becomes 0/0 and NaN leaks into the frame.
+		const float scalarTransmittance =
+			max(transmittance.r, max(transmittance.g, transmittance.b));
+		surface.refraction.a = scalarTransmittance;
+		surface.refraction.rgb *=
+			transmittance / max(scalarTransmittance, 0.00001);
 		color.a = 1;
 	}
 	

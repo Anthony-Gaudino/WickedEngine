@@ -5,6 +5,7 @@
 #include "wiScene_Decl.h"
 #include "wiMath.h"
 #include "wiPrimitive.h"
+#include "wiScene/environment/WaterMedium/WaterMedium.h"
 
 namespace wi
 {
@@ -35,6 +36,11 @@ namespace wi
 
 			XMFLOAT4 waterColor = XMFLOAT4(0.0f, 2.0f / 255.0f, 6.0f / 255.0f, 0.6f);
 			XMFLOAT4 extinctionColor = XMFLOAT4(0, 0.9f, 1, 1);
+
+			// Inherent optical properties (absorption and scattering) of the
+			// water, driving turbidity and how far one can see through it.
+			wi::scene::environment::WaterMedium waterMedium;
+
 			float waterHeight = 0.0f;
 			uint32_t surfaceDetail = 4;
 			float surfaceDisplacementTolerance = 2;

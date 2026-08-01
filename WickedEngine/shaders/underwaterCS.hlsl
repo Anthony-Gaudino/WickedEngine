@@ -148,16 +148,59 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		ocean_surface_pos += displacement;
 		const float ocean_dist = length(ocean_surface_pos - campos);
 
-		const float ray_dist = min(surface_dist, ocean_dist) * 0.1;
+		// Distance the light travels through water on its way to the eye.
+		//
+		// This is the distance to the shaded geometry, NOT the distance at
+		// which the ray would leave the water surface. Clamping to the exit
+		// point is only right if what shows beyond it is the refracted world
+		// above; this pass shows the scene as rendered, and the depth buffer
+		// there holds submerged geometry, so the light really did cross the
+		// whole way.
+		//
+		// It also has to be this way to stay continuous. The exit distance
+		// comes from intersectPlaneClampInfinite(), which returns the true
+		// short distance for a ray heading up out of the water but z_far for
+		// one heading down - a hard jump exactly at the horizontal. Feeding
+		// that into the fog puts a visible seam across the view at eye level.
+		const float ray_dist = surface_dist;
+
+		// How deep the shaded point itself sits below the surface. Whatever
+		// lights it had to come DOWN through that much water first, so it is
+		// part of the optical path even when the view ray through the water is
+		// short - or degenerate, which it is wherever the ocean surface is not
+		// the thing being looked through (near plane cutoff, grazing angles at
+		// a partially submerged camera). Without this term a deep sea bed
+		// renders as if the water were not there at all.
 		const float water_depth = max(0, ocean_pos.y - surface_position.y);
 		const float camera_depth = max(0, ocean_pos.y - world_pos.y);
+
+		// Take the longer of the two rather than their sum: the two paths
+		// overlap for anything seen straight down, so adding them would double
+		// count the shared column.
 		const float fog_distance = max(ray_dist, water_depth);
 
-		float fogAmount = 1 - saturate(exp(-fog_distance * ocean.water_color.a));
+		// Inherent optical properties of the water, per RGB channel in 1/m.
+		// Absorption destroys light while scattering only redirects it; their
+		// sum is the extinction that attenuates anything crossing the water,
+		// and their ratio (the single-scattering albedo) decides whether the
+		// water reads as a dark filter or a bright milky haze. Turbidity raises
+		// the scattering term specifically, which is why murky water destroys
+		// contrast long before it destroys brightness, while clear deep water
+		// does the opposite. See wiScene/environment/WaterMedium.
+		const float3 sigmaS = ocean.scattering.rgb;
+		const float3 sigmaT = max(ocean.absorption.rgb + sigmaS, 0.00001);
+		const float3 scatterAlbedo = sigmaS / sigmaT;
+
+		// Beer-Lambert transmittance of whatever is behind the water, and the
+		// share of the extinguished light that single scattering puts back in
+		// its place as veiling light. Only the scattered fraction comes back,
+		// which is what separates the two: absorption darkens the view while
+		// scattering hazes it.
+		const float3 transmittance = exp(-fog_distance * sigmaT);
+		const float3 inscatterAmount = scatterAlbedo * (1 - transmittance);
 
 		color = input.SampleLevel(sampler_linear_mirror, uv, 0);
 
-		float3 transmittance = saturate(exp(-fog_distance * ocean.extinction_color.rgb * ocean.water_color.a));
 		half3 fogColor = ocean.water_color.rgb;
 
 		// Sample inscattering color:
@@ -181,8 +224,11 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			// Apply uniform phase since this medium is constant:
 			inscatteringColor *= UniformPhase();
 
-			// My custom water fog scatter modulation:
-			inscatteringColor *= (1 - ocean.extinction_color.rgb) * saturate(exp(-camera_depth * 0.25 * ocean.water_color.a));
+			// Sunlight has already crossed the water column above the camera
+			// before it can scatter towards the eye, so it arrives filtered by
+			// the same medium. Red goes first, which is what tints the scatter
+			// green-blue with depth without any authored colour:
+			inscatteringColor *= exp(-camera_depth * sigmaT);
 
 			// Add some fake godray modulation to scatter:
 			float4 lightScreen = mul(GetCamera().view_projection, float4(GetCamera().position + refractedLightDir * 10000, 1));
@@ -198,8 +244,9 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			fogColor += inscatteringColor;
 		}
 
-		color.rgb *= transmittance;
-		color.rgb = lerp(color.rgb, fogColor, fogAmount);
+		// Single-scattering composite: what survives the water plus what the
+		// water scatters back in.
+		color.rgb = color.rgb * transmittance + fogColor * inscatterAmount;
 
 		// Snell's window: looking up from under water, refraction gathers the
 		// whole above-water hemisphere into an overhead circular window of
@@ -260,13 +307,23 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			// from the bottom up:
 			const float openWater = smoothstep(0.0, 0.5, surface_dist - ocean_dist);
 
-			// Sunlight only reaches so far, so the window fades out with the
-			// water column it crosses to the surface. The rim's path is longer
-			// than the center's, so it fades first and the disc appears to
-			// shrink as the camera descends, then vanishes past the light-reach
-			// depth:
-			const float reach = max(underwater_snell_depth, 1.0);
-			const float pathFade = saturate(exp(-ocean_dist * 3.0 / reach));
+			// The window's light has to cross the whole water column from the
+			// surface down to the eye, so the medium attenuates it exactly like
+			// anything else - Beer-Lambert over ocean_dist with the real
+			// per-channel extinction. The rim's path is longer than the
+			// center's, so it fades first and the disc appears to shrink as the
+			// camera descends; and because the extinction is spectral the
+			// window also SHIFTS colour as it goes, losing red long before
+			// blue, instead of just dimming. Turbidity closes it much sooner
+			// than clear water, with no separate depth to author. The fade
+			// param scales the medium so an artist can keep the window alive
+			// deeper (<1) or shut it earlier (>1); 1 is physical:
+			const float3 pathTransmittance =
+				exp(-ocean_dist * sigmaT * underwater_snell_fade);
+			// Scalar stand-in for the activity gate below, taken from the
+			// channel that survives furthest:
+			const float pathFade = max(pathTransmittance.r,
+				max(pathTransmittance.g, pathTransmittance.b));
 
 			// Inside the window, refract the ray through the wave surface into
 			// the air (water -> air) and read the above-water world in that
@@ -329,39 +386,47 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			}
 
 			// The window shows the refracted above-water view, hazing toward
-			// the water with DEPTH (not strength) so it dissolves uniformly
-			// into the blue as it attenuates. Fade to the flat base water
-			// color, NOT fogColor: fogColor carries the sun inscatter / god-ray
-			// modulation, which would otherwise show as a god-ray texture
-			// inside the window as it hazes out near the light-reach depth.
-			// Strength is the overall opacity, blending back to the normal
-			// underwater view:
+			// the water with DEPTH (not strength) so it dissolves into the blue
+			// as it attenuates. The blend is per channel, so the window loses
+			// its warm end first and goes blue before it goes dark. Fade to the
+			// flat base water color, NOT fogColor: fogColor carries the sun
+			// inscatter / god-ray modulation, which would otherwise show as a
+			// god-ray texture inside the window as it hazes out. Strength is
+			// the overall opacity, blending back to the normal underwater view:
 			const float3 windowContent =
-				lerp(ocean.water_color.rgb, aboveWater, pathFade);
+				lerp(ocean.water_color.rgb, aboveWater, pathTransmittance);
 			const float windowShape = saturate(cone * upward * openWater);
 			color.rgb =
 				lerp(color.rgb, windowContent, saturate(windowShape * underwater_snell));
 		}
 
-		// Depth-based color absorption: sunlight is filtered on its way down
-		// through the water column, so warm wavelengths are gone at depth and
-		// the whole view shifts blue-green as the camera descends. Beer-Lambert
-		// with physically based per-channel coefficients for clear ocean water
-		// (in 1/m; red absorbed fastest, blue penetrates deepest). The strength
-		// param scales the coefficients uniformly (water clarity): 1 = clear
-		// ocean reference, higher = murkier, 0 disables the effect. Applied
-		// AFTER the Snell's window so the window's above-water light attenuates
-		// with the same water column - otherwise the surround darkens to black
-		// while the window keeps its color, leaving its shape visible at depth.
-		// References: Pope & Fry 1997; Smith & Baker 1981 (pure water).
+		// Depth-based color absorption: everything down here is ultimately lit
+		// by daylight that had to come down through the water column, so the
+		// whole view dims and shifts blue-green as the camera descends.
+		//
+		// Diffuse downwelling light is not a beam, so it is attenuated by the
+		// REDUCED (transport) extinction sigma_t' = sigma_a + sigma_s * (1 - g)
+		// rather than the full sigma_t: forward-scattered light keeps heading
+		// down instead of being lost, which is why a strongly forward-peaked
+		// medium stays brighter at depth than its extinction alone suggests.
+		// This is the standard diffusion-approximation coefficient and it lands
+		// close to the measured K_d of the corresponding Jerlov water type. The
+		// strength param scales it (1 = physical, 0 disables the effect).
+		//
+		// Applied AFTER the Snell's window so the window's above-water light
+		// attenuates with the same water column - otherwise the surround
+		// darkens while the window keeps its color, leaving its shape visible
+		// at depth. That does slightly double-count against the window's own
+		// path attenuation above, which is deliberate: a uniform view matters
+		// more here than the last few percent of radiometric accuracy.
 		if (underwater_absorption > 0)
 		{
-			const float3 waterAbsorption = float3(0.45, 0.08, 0.03);
+			const float3 sigmaTReduced =
+				ocean.absorption.rgb + sigmaS * (1 - ocean.scattering.a);
 			color.rgb *=
-				exp(-waterAbsorption * underwater_absorption * camera_depth);
+				exp(-sigmaTReduced * underwater_absorption * camera_depth);
 		}
 
-		//color = fogAmount;
 		//color = float4(1, 0, 0, 1);
 	}
 

@@ -61,7 +61,15 @@ public:
 	wi::gui::Slider ocean_windInfluenceSlider;
 	wi::gui::CheckBox ocean_windDriftCheckBox;
 	wi::gui::Slider ocean_windDriftStrengthSlider;
+	wi::gui::ComboBox ocean_waterTypeComboBox;
+	wi::gui::Slider ocean_algaeSlider;
+	wi::gui::Slider ocean_siltSlider;
+	wi::gui::Slider ocean_stainSlider;
+	wi::gui::Label ocean_visibilityLabel;
 	wi::gui::Button ocean_resetButton;
+
+	// Refreshes the water optics widgets from the weather's water medium.
+	void UpdateWaterMedium();
 
 	wi::gui::ComboBox colorComboBox;
 	wi::gui::ColorPicker colorPicker;

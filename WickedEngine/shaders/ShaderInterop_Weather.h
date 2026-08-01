@@ -357,6 +357,17 @@ struct alignas(16) ShaderOcean
 	float padding_ocean1;
 	float padding_ocean2;
 
+	// Absorption coefficient of the water in 1/m per RGB channel (w unused).
+	// Light removed from the beam; strongly wavelength selective, so it is what
+	// makes deep clear water read as dark blue.
+	float4 absorption;
+
+	// Scattering coefficient of the water in 1/m per RGB channel, with the
+	// Henyey-Greenstein phase asymmetry g in w. Light redirected rather than
+	// destroyed; this is the turbidity term, and it is what makes murky water
+	// read as a milky haze that kills contrast rather than a dark filter.
+	float4 scattering;
+
 	bool IsValid() { return texture_displacementmap >= 0; }
 };
 

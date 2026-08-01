@@ -1904,6 +1904,33 @@ namespace wi::scene
 				archive >> oceanWindInfluence;
 				archive >> oceanWindDriftStrength;
 			}
+			if (seri.GetVersion() >= 8)
+			{
+				// Read the water type first: applying it overwrites the
+				// constituents with the preset, and the stored values (which
+				// may have been hand-tweaked afterwards) must win.
+				uint32_t waterType = 0;
+				float algae = 0;
+				float silt = 0;
+				float stain = 0;
+				archive >> waterType;
+				archive >> algae;
+				archive >> silt;
+				archive >> stain;
+				oceanParameters.waterMedium.SetWaterType((wi::scene::environment::JerlovWaterType)waterType);
+				oceanParameters.waterMedium.SetAlgae(algae);
+				oceanParameters.waterMedium.SetSilt(silt);
+				oceanParameters.waterMedium.SetStain(stain);
+			}
+			else
+			{
+				// Older content described the water with the single density in
+				// the alpha of the water color. Carry it over, otherwise the
+				// scene silently switches to the default medium and its sea
+				// bed becomes visible through water that was authored to hide
+				// it.
+				oceanParameters.waterMedium.SetFromLegacyDensity(oceanParameters.waterColor.w);
+			}
 		}
 		else
 		{
@@ -2132,6 +2159,13 @@ namespace wi::scene
 			{
 				archive << oceanWindInfluence;
 				archive << oceanWindDriftStrength;
+			}
+			if (seri.GetVersion() >= 8)
+			{
+				archive << (uint32_t)oceanParameters.waterMedium.GetWaterType();
+				archive << oceanParameters.waterMedium.GetAlgae();
+				archive << oceanParameters.waterMedium.GetSilt();
+				archive << oceanParameters.waterMedium.GetStain();
 			}
 		}
 	}
