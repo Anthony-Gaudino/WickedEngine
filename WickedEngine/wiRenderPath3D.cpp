@@ -2431,9 +2431,6 @@ namespace wi
 					getUnderwaterSnellFade(),
 					underwater_snell_rt,
 					getUnderwaterGodRaysProceduralEnabled(),
-					getUnderwaterGodRaysMarchedEnabled()
-						? getUnderwaterGodRaysMarchedStrength()
-						: 0.0f,
 					underwater_volumetrics_texture
 				);
 

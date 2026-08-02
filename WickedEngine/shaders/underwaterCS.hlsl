@@ -3,7 +3,6 @@
 #include "oceanSurfaceHF.hlsli"
 #include "lightingHF.hlsli"
 #include "fogHF.hlsli"
-#include "waterVolumetricsHF.hlsli"
 #ifdef RTAPI
 	// Hardware ray-traced Snell's window: trace the refracted ray into the real
 	// scene so above-water objects (and their occlusion of the window) are
@@ -16,11 +15,6 @@
 #define INTERSECTION_DISTORT
 #define LENS_DISTORT
 //#define ANIMATED_DISTORT
-
-// Steps taken along the submerged view ray by the ray marched god rays. The
-// start of the march is dithered per pixel, so undersampling shows up as noise
-// rather than as banding.
-static const uint UNDERWATER_GODRAY_SAMPLES = 16;
 
 PUSHCONSTANT(postprocess, PostProcess);
 
@@ -151,10 +145,6 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		const float3 displacement = texture_displacementmap.SampleLevel(sampler_linear_wrap, ocean_surface_uv, 0).xzy;
 		ocean_surface_pos += displacement;
 		const float ocean_dist = length(ocean_surface_pos - campos);
-
-		// Distance to the shaded geometry. This is the span the ray marched god
-		// rays walk; the water path that drives the fog is derived below.
-		const float ray_dist = surface_dist;
 
 		// How deep the shaded point itself sits below the surface. Whatever
 		// lights it had to come DOWN through that much water first, so it is
@@ -487,44 +477,6 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			// is exactly where the window is, so without this the beams would
 			// be erased precisely where they matter most.
 			volSurvival *= 1 - windowBlend;
-		}
-
-		// Ray marched god rays: walk the submerged view ray sampling the sun's
-		// shadow cascades, so these shafts are cast AND occluded by real
-		// geometry, unlike the procedural stripes above. They also pick up the
-		// ocean's caustics, which ride along in the transparent shadow layer.
-		//
-		// Added on top of the analytic inscatter, which is the same sunlight
-		// unshadowed - so there is some double counting of the sun, and the
-		// strength multiplier doubles as the balance between the two.
-		//
-		// Applied AFTER the Snell's window because this light is scattered by
-		// the water BETWEEN the eye and the surface, so it sits in front of
-		// whatever the window shows. Adding it earlier lets the window
-		// overwrite it, which leaves the shafts surviving only where the window
-		// does not reach - on geometry floating in it - and that reads as the
-		// floating object glowing while everything around it does not.
-		[branch]
-		if (underwater_godrays_marched > 0)
-		{
-			// Air into water, so there is no critical angle to exceed and this
-			// always refracts - the march's own check for a usable shadow
-			// casting sun is what handles there being no sun to follow.
-			const float3 shaftSunDir =
-				refract(-GetSunDirection(), float3(0, 1, 0), 1.0 / 1.333);
-
-			color.rgb += underwater_godrays_marched * MarchWaterSunShafts(
-				campos,
-				-V,
-				ray_dist,
-				shaftSunDir,
-				GetSunColor(),
-				sigmaS,
-				sigmaT,
-				ocean.scattering.a,
-				UNDERWATER_GODRAY_SAMPLES,
-				DTid.xy
-			);
 		}
 
 		// Depth-based color absorption: everything down here is ultimately lit

@@ -51,7 +51,6 @@ namespace wi
 		float underwaterAbsorptionStrength = 1.0f;
 		float underwaterSnellStrength = 1.0f;
 		float underwaterSnellFade = 1.0f;
-		float underwaterGodRaysMarchedStrength = 1.0f;
 		uint32_t screenSpaceShadowSampleCount = 16;
 		float screenSpaceShadowRange = 1;
 		float eyeadaptionKey = 0.115f;
@@ -98,7 +97,6 @@ namespace wi
 		bool underwaterSnellEnabled = true;
 		bool underwaterSnellRTEnabled = true;
 		bool underwaterGodRaysProceduralEnabled = true;
-		bool underwaterGodRaysMarchedEnabled = false;
 		bool ditherEnabled = true;
 		bool occlusionCullingEnabled = true;
 		bool sceneUpdateEnabled = true;
@@ -317,8 +315,6 @@ namespace wi
 		[[nodiscard]] constexpr bool getUnderwaterSnellEnabled() const { return underwaterSnellEnabled; }
 		[[nodiscard]] constexpr bool getUnderwaterSnellRTEnabled() const { return underwaterSnellRTEnabled; }
 		[[nodiscard]] constexpr bool getUnderwaterGodRaysProceduralEnabled() const { return underwaterGodRaysProceduralEnabled; }
-		[[nodiscard]] constexpr bool getUnderwaterGodRaysMarchedEnabled() const { return underwaterGodRaysMarchedEnabled; }
-		[[nodiscard]] constexpr float getUnderwaterGodRaysMarchedStrength() const { return underwaterGodRaysMarchedStrength; }
 		constexpr bool getDitherEnabled() const { return ditherEnabled; }
 		constexpr bool getOcclusionCullingEnabled() const { return occlusionCullingEnabled; }
 		constexpr bool getSceneUpdateEnabled() const { return sceneUpdateEnabled; }
@@ -395,8 +391,6 @@ namespace wi
 		constexpr void setUnderwaterSnellEnabled(bool value) { underwaterSnellEnabled = value; }
 		constexpr void setUnderwaterSnellRTEnabled(bool value) { underwaterSnellRTEnabled = value; }
 		constexpr void setUnderwaterGodRaysProceduralEnabled(bool value) { underwaterGodRaysProceduralEnabled = value; }
-		constexpr void setUnderwaterGodRaysMarchedEnabled(bool value) { underwaterGodRaysMarchedEnabled = value; }
-		constexpr void setUnderwaterGodRaysMarchedStrength(float value) { underwaterGodRaysMarchedStrength = value; }
 		constexpr void setDitherEnabled(bool value) { ditherEnabled = value; }
 		constexpr void setOcclusionCullingEnabled(bool value) { occlusionCullingEnabled = value; }
 		constexpr void setSceneUpdateEnabled(bool value) { sceneUpdateEnabled = value; }

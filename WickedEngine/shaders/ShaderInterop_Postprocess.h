@@ -160,15 +160,9 @@ static const uint DEPTHOFFIELD_TILESIZE = 32;
 // Procedural god ray flag for the underwater post pass (nonzero enables it).
 // Radial stripes swept around the refracted sun's screen position, darkening
 // the inscatter. Costs nothing beyond a little maths - no shadow map, no ray
-// march - so it stays available as the cheap option, and is independent of the
-// ray marched shafts.
+// march - so it stays available as the cheap option for hardware that cannot
+// afford the volumetric light pass.
 #define underwater_godrays_procedural ((uint)postprocess.params1.y)
-// Ray marched god ray strength for the underwater post pass (0 disables it).
-// Walks the submerged view ray sampling the sun's shadow cascades, so the
-// shafts are cast and occluded by real geometry and pick up the ocean's
-// caustics. Scales with the water's scattering, so clear water shows almost
-// none; this multiplier is the artistic lever over that.
-#define underwater_godrays_marched postprocess.params1.z
 // Bindless descriptor index of the volumetric light target, or -1 when the
 // volumetric composite did not run (so it doubles as the enable flag).
 // Volumetric lights are composited into the scene long before this pass, so the

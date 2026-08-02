@@ -1091,10 +1091,6 @@ namespace wi::renderer
 	 * @param[in] godrays_procedural - Draw the screen space procedural god ray
 	 *                                 stripes. Cheap and stylised; independent
 	 *                                 of any ray marched shafts.
-	 * @param[in] godrays_marched - Strength of the shadow marched god rays
-	 *                              (0 disables them). Costs a ray march per
-	 *                              pixel, but the shafts are cast and occluded
-	 *                              by real geometry.
 	 * @param[in] volumetrics_texture - Bindless descriptor index of the
 	 *                                  volumetric light target, or -1 when the
 	 *                                  volumetric composite did not run. The
@@ -1113,7 +1109,6 @@ namespace wi::renderer
 		float snell_fade = 1.0f,
 		bool snell_rt = false,
 		bool godrays_procedural = true,
-		float godrays_marched = 0.0f,
 		int volumetrics_texture = -1
 	);
 	struct MeshBlendResources
