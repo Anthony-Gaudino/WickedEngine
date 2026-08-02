@@ -18723,7 +18723,8 @@ void Postprocess_Underwater(
 	float snell_fade,
 	bool snell_rt,
 	bool godrays_procedural,
-	float godrays_marched
+	float godrays_marched,
+	int volumetrics_texture
 )
 {
 	device->EventBegin("Postprocess_Underwater", cmd);
@@ -18747,6 +18748,9 @@ void Postprocess_Underwater(
 	postprocess.params1.x = snell_rt ? 1.0f : 0.0f; // underwater_snell_rt
 	postprocess.params1.y = godrays_procedural ? 1.0f : 0.0f; // underwater_godrays_procedural
 	postprocess.params1.z = std::max(0.0f, godrays_marched); // underwater_godrays_marched
+	// underwater_volumetrics_texture: reinterpreted as an int by the shader, so
+	// copy the bits rather than converting through float
+	std::memcpy(&postprocess.params1.w, &volumetrics_texture, sizeof(volumetrics_texture));
 	device->PushConstants(&postprocess, sizeof(postprocess), cmd);
 
 	device->BindResource(&input, 0, cmd);

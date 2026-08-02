@@ -2407,6 +2407,20 @@ namespace wi
 					getUnderwaterSnellEnabled()
 					&& getUnderwaterSnellRTEnabled()
 					&& device->CheckCapability(wi::graphics::GraphicsDeviceCapability::RAYTRACING);
+				// Volumetric lights were composited into the scene back in
+				// RenderTransparents, so the water fog inside this pass would
+				// attenuate them a second time - the volumetric march already
+				// applied its own. Hand the pass the original half resolution
+				// radiance so it can add back whatever its stages destroyed.
+				// The condition has to match the composite's exactly, or the
+				// pass would add back something that was never put in.
+				const int underwater_volumetrics_texture =
+					(getVolumeLightsEnabled()
+						&& visibility_main.IsRequestedVolumetricLights()
+						&& rtVolumetricLights.IsValid())
+					? device->GetDescriptorIndex(
+						&rtVolumetricLights, SubresourceType::SRV)
+					: -1;
 				wi::renderer::Postprocess_Underwater(
 					rt_first == nullptr ? *rt_read : *rt_first,
 					*rt_write,
@@ -2419,7 +2433,8 @@ namespace wi
 					getUnderwaterGodRaysProceduralEnabled(),
 					getUnderwaterGodRaysMarchedEnabled()
 						? getUnderwaterGodRaysMarchedStrength()
-						: 0.0f
+						: 0.0f,
+					underwater_volumetrics_texture
 				);
 
 				rt_first = nullptr;

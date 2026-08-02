@@ -169,6 +169,14 @@ static const uint DEPTHOFFIELD_TILESIZE = 32;
 // caustics. Scales with the water's scattering, so clear water shows almost
 // none; this multiplier is the artistic lever over that.
 #define underwater_godrays_marched postprocess.params1.z
+// Bindless descriptor index of the volumetric light target, or -1 when the
+// volumetric composite did not run (so it doubles as the enable flag).
+// Volumetric lights are composited into the scene long before this pass, so the
+// water fog below would attenuate them a second time - the volumetric march
+// already applied its own. The pass tracks how much of that contribution each
+// of its stages destroyed and adds the missing fraction back at the end, which
+// needs the original half resolution radiance to add back from.
+#define underwater_volumetrics_texture asint(postprocess.params1.w)
 
 enum TONEMAP_FLAGS
 {

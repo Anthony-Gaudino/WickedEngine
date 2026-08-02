@@ -319,6 +319,21 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		// water scatters back in.
 		color.rgb = color.rgb * transmittance + fogColor * inscatterAmount;
 
+		// Fraction of the volumetric light already sitting in the input that
+		// survives this pass.
+		//
+		// Volumetric lights are composited into the scene back in
+		// RenderTransparents, long before this runs, so everything below treats
+		// them as if they were surface radiance emitted at the far end of the
+		// water column - attenuating them all over again, when the volumetric
+		// march has already applied its own transmittance along the same ray.
+		// Rather than reorder the frame (the composite is a blended draw inside
+		// the transparent render pass, and the post chain has no render pass and
+		// targets without RTVs), track what each stage takes away and give the
+		// difference back at the end. That is exact, needs only additions, and
+		// leaves the above-water path untouched.
+		float3 volSurvival = transmittance;
+
 		// Snell's window: looking up from under water, refraction gathers the
 		// whole above-water hemisphere into an overhead circular window of
 		// fixed angular size - half-angle equal to the critical angle for water
@@ -464,8 +479,14 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			const float3 windowContent =
 				lerp(ocean.water_color.rgb, aboveWater, pathTransmittance);
 			const float windowShape = saturate(cone * upward * openWater);
-			color.rgb =
-				lerp(color.rgb, windowContent, saturate(windowShape * underwater_snell));
+			const float windowBlend = saturate(windowShape * underwater_snell);
+			color.rgb = lerp(color.rgb, windowContent, windowBlend);
+
+			// The window replaces the scene, so it replaces the volumetric
+			// light in it too. Looking up at a submerged lamp near the surface
+			// is exactly where the window is, so without this the beams would
+			// be erased precisely where they matter most.
+			volSurvival *= 1 - windowBlend;
 		}
 
 		// Ray marched god rays: walk the submerged view ray sampling the sun's
@@ -529,8 +550,36 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		{
 			const float3 sigmaTReduced =
 				ocean.absorption.rgb + sigmaS * (1 - ocean.scattering.a);
-			color.rgb *=
+			const float3 absorb =
 				exp(-sigmaTReduced * underwater_absorption * camera_depth);
+
+			color.rgb *= absorb;
+
+			// This stands in for the daylight that had to reach the camera's
+			// depth, which says nothing about a lamp scattering right in front
+			// of the eye, so the volumetric light must not be dimmed by it.
+			volSurvival *= absorb;
+		}
+
+		// Give back the share of the volumetric light the stages above took
+		// away, restoring it in full. Addition only: the composited value was
+		// multiplied by exactly volSurvival, so adding the rest cannot drive
+		// anything negative the way subtracting the beams out and re-adding
+		// them would - and the half resolution buffer disagreeing slightly with
+		// the temporally filtered copy in the input can only soften the result,
+		// never ring around it.
+		//
+		// Near the surface volSurvival tends to 1 and the fully filtered
+		// version is what survives; only at depth does this converge on the raw
+		// buffer, which is where the water has hidden the detail anyway.
+		[branch]
+		if (underwater_volumetrics_texture >= 0)
+		{
+			const float3 volumetrics =
+				bindless_textures[descriptor_index(underwater_volumetrics_texture)]
+					.SampleLevel(sampler_linear_clamp, uv, 0).rgb;
+
+			color.rgb += volumetrics * (1 - volSurvival);
 		}
 
 		//color = float4(1, 0, 0, 1);

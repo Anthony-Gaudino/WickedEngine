@@ -1095,6 +1095,13 @@ namespace wi::renderer
 	 *                              (0 disables them). Costs a ray march per
 	 *                              pixel, but the shafts are cast and occluded
 	 *                              by real geometry.
+	 * @param[in] volumetrics_texture - Bindless descriptor index of the
+	 *                                  volumetric light target, or -1 when the
+	 *                                  volumetric composite did not run. The
+	 *                                  pass adds back the share of that
+	 *                                  contribution its own stages destroyed,
+	 *                                  which would otherwise attenuate the
+	 *                                  beams by the water a second time.
 	 */
 	void Postprocess_Underwater(
 		const wi::graphics::Texture& input,
@@ -1106,7 +1113,8 @@ namespace wi::renderer
 		float snell_fade = 1.0f,
 		bool snell_rt = false,
 		bool godrays_procedural = true,
-		float godrays_marched = 0.0f
+		float godrays_marched = 0.0f,
+		int volumetrics_texture = -1
 	);
 	struct MeshBlendResources
 	{
