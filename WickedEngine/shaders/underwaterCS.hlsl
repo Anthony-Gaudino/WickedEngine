@@ -146,11 +146,8 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		ocean_surface_pos += displacement;
 		const float ocean_dist = length(ocean_surface_pos - campos);
 
-		// How deep the shaded point itself sits below the surface. Whatever
-		// lights it had to come DOWN through that much water first, so it is
-		// part of the optical path even when the view ray through the water is
-		// short. Without this term a deep sea bed renders as if the water were
-		// not there at all.
+		// How deep the shaded point itself sits below the surface, which tells
+		// genuinely submerged geometry from the shore and the sky beyond it.
 		//
 		// Real geometry only: where the depth buffer holds the far plane there
 		// is nothing that could be submerged, and the point it reconstructs to
@@ -208,10 +205,18 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		const float water_path =
 			lerp(exit_dist, min(surface_dist, exit_dist), submerged);
 
-		// Take the longer of the two rather than their sum: the two paths
-		// overlap for anything seen straight down, so adding them would double
-		// count the shared column.
-		const float fog_distance = max(water_path, water_depth);
+		// The view ray's own path through the water, and nothing else.
+		//
+		// The shaded point's depth used to be folded in here to stand for the
+		// daylight that had to come down to reach it, but it is not the same
+		// quantity and it cost far more than it stood for: a sea bed twenty
+		// metres down was fogged over twenty metres even with the camera a
+		// hand's width from it, leaving under a thousandth of the red while
+		// blue kept a fifth. Every light now attenuates over its own path to
+		// the point it lights, in lightingHF, which is what that term was
+		// reaching for and which no depth can express - so this is left as the
+		// one path it really does describe.
+		const float fog_distance = water_path;
 
 		// Inherent optical properties of the water, per RGB channel in 1/m.
 		// Absorption destroys light while scattering only redirects it; their

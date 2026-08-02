@@ -43,10 +43,10 @@ float4 main(VertexToPixel input) : SV_Target
 	const WaterVolumetrics water = GetWaterVolumetrics(GetCamera().position);
 
 	// Sunlight bends at the surface before it ever reaches a submerged sample.
-	// The interface is a plane and the source is at infinity, so one refraction
-	// here is exact - there is nothing to approximate per sample.
+	// Shared with surface shading, so a shaft and the sea bed it lands on agree
+	// about where the sun is.
 	const float3 Lwater = water.IsActive()
-		? -refract(-(float3)L, float3(0, 1, 0), 1.0 / 1.333)
+		? RefractIntoWater((float3)L)
 		: (float3)L;
 
 	float3 rayEnd = GetCamera().position;

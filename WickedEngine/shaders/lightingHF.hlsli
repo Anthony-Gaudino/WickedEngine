@@ -5,6 +5,7 @@
 #include "brdf.hlsli"
 #include "voxelConeTracingHF.hlsli"
 #include "skyHF.hlsli"
+#include "waterVolumetricsHF.hlsli"
 
 #ifdef CARTOON
 #define DISABLE_SOFT_SHADOWMAP
@@ -38,6 +39,36 @@ struct Lighting
 	}
 };
 
+// Transmittance of the water a light crossed on its way to a submerged point,
+// so it arrives dimmed and shifted towards blue exactly as the water between
+// that point and the eye shifts what leaves it. 1 above the surface.
+//
+// A surface flagged WATER is the air/water interface itself, so nothing is ever
+// above it - not even in a wave trough, which sits below the flat water plane
+// this measures against and would otherwise shade as if it were a metre under.
+inline half3 attenuation_water(in float3 P, in half3 L, in float dist_to_light)
+{
+#ifdef WATER
+	return 1;
+#else
+	return WaterLightTransmittance(P, L, dist_to_light);
+#endif // WATER
+}
+
+// Transmittance of the water above a submerged point, for the downwelling
+// daylight that ambient and the sky probes stand for. 1 above the surface.
+//
+// Exempt for the same reason as attenuation_water(): a WATER surface is the
+// interface itself, and a wave trough is not a metre of water down.
+inline half3 attenuation_water_ambient(in float3 P)
+{
+#ifdef WATER
+	return 1;
+#else
+	return WaterAmbientTransmittance(P);
+#endif // WATER
+}
+
 inline void ApplyLighting(in Surface surface, in Lighting lighting, inout half4 color)
 {
 	if (GetFrame().options & OPTION_BIT_FORCE_UNLIT)
@@ -46,8 +77,14 @@ inline void ApplyLighting(in Surface surface, in Lighting lighting, inout half4 
 		return;
 	}
 
-	half3 diffuse = lighting.direct.diffuse / PI + lighting.indirect.diffuse * GetGIBoost() * (1 - surface.F) * surface.occlusion + surface.ssgi;
-	half3 specular = lighting.direct.specular + lighting.indirect.specular * surface.occlusion; // reminder: cannot apply surface.F for whole indirect specular, because multiple layers have separate fresnels (sheen, clearcoat)
+	// Ambient and the sky probes are downwelling daylight, so underwater they
+	// arrive through the water above this point. Left off the emissive and the
+	// screen space GI below: one is made at the surface itself, the other is
+	// gathered from pixels that are already attenuated.
+	const half3 downwelling = attenuation_water_ambient(surface.P);
+
+	half3 diffuse = lighting.direct.diffuse / PI + lighting.indirect.diffuse * downwelling * GetGIBoost() * (1 - surface.F) * surface.occlusion + surface.ssgi;
+	half3 specular = lighting.direct.specular + lighting.indirect.specular * downwelling * surface.occlusion; // reminder: cannot apply surface.F for whole indirect specular, because multiple layers have separate fresnels (sheen, clearcoat)
 	color.rgb = lerp(surface.albedo * diffuse, surface.refraction.rgb * (1 - surface.F), surface.refraction.a);
 	color.rgb += specular;
 	color.rgb += surface.emissiveColor;
@@ -137,6 +174,11 @@ inline void light_directional(in ShaderEntity light, in Surface surface, inout L
 		light_color *= GetAtmosphericLightTransmittance(GetWeather().atmosphere, surface.P, L, texture_transmittancelut);
 	}
 
+	// Water crossed on the way down to a submerged point. The slant path from
+	// the surface, so it lengthens as the sun drops - and the refracted
+	// direction, because that is the one the light actually travelled.
+	light_color *= attenuation_water(surface.P, RefractIntoWater(L), FLT_MAX);
+
 	lighting.direct.diffuse = mad(light_color, BRDF_GetDiffuse(surface, surface_to_light), lighting.direct.diffuse);
 	lighting.direct.specular = mad(light_color, BRDF_GetSpecular(surface, surface_to_light), lighting.direct.specular);
 
@@ -222,6 +264,11 @@ inline void light_point(in ShaderEntity light, in Surface surface, inout Lightin
 	}
 		
 	light_color *= attenuation_pointlight(dist2, range, light.GetRange2Rcp());
+
+	// Water crossed on the way to a submerged point. Only the submerged part of
+	// the path counts, so a lamp hanging above the surface still lights what is
+	// under it. dist2 * dist_rcp is the distance to the light.
+	light_color *= attenuation_water(surface.P, L, dist2 * dist_rcp);
 
 	lighting.direct.diffuse = mad(light_color, BRDF_GetDiffuse(surface, surface_to_light), lighting.direct.diffuse);
 
@@ -341,6 +388,10 @@ inline void light_spot(in ShaderEntity light, in Surface surface, inout Lighting
 	
 	light_color *= attenuation_spotlight(dist2, range, light.GetRange2Rcp(), spot_factor, light.GetAngleScale(), light.GetAngleOffset());
 		
+	// Water crossed on the way to a submerged point, over the submerged part of
+	// the path only. dist2 * dist_rcp is the distance to the light.
+	light_color *= attenuation_water(surface.P, L, dist2 * dist_rcp);
+
 	lighting.direct.diffuse = mad(light_color, BRDF_GetDiffuse(surface, surface_to_light), lighting.direct.diffuse);
 
 #ifndef DISABLE_AREA_LIGHTS
@@ -464,6 +515,10 @@ inline void light_rect(in ShaderEntity light, in Surface surface, inout Lighting
 		
 	light_color *= attenuation_pointlight(dist2, range, light.GetRange2Rcp()); // dist2 is the closest point on rectangle, so it will not be a falloff from light center, but as if a point light is placed on the closest rectangle point
 	
+	// Water crossed on the way to a submerged point, measured to the same
+	// closest point on the rectangle that the falloff above uses.
+	light_color *= attenuation_water(surface.P, L, dist2 * dist_rcp);
+
 	half3 light_color_diffuse = light_color * light_area * PI; // I increase the light color by the surface area, because I want larger lights to illuminate more.
 	
 	half3 light_color_specular = light_color;

@@ -2,13 +2,18 @@
 #define WI_WATERVOLUMETRICS_HF
 
 /**
- * The ocean's water as a participating medium, for volumetric light marches.
+ * The ocean's water as a participating medium, for lighting under the surface.
  *
  * Provides `WaterVolumetrics`, which answers the three questions a march has to
  * ask of a medium at each sample: how much of the light arriving there is
  * turned towards the eye, how much of it was lost on the way in, and how much
  * of what was turned survives the trip back out. The engine's volumetric light
  * passes ask those of the height fog; below the waterline they ask them here.
+ *
+ * Surface shading asks only the second of those - through
+ * `WaterLightTransmittance` for a light it can name, and
+ * `WaterAmbientTransmittance` for the daylight it cannot - so a submerged
+ * surface is lit in the colour that actually reached it.
  *
  * These are deliberately stateless leaf functions rather than a march of their
  * own. HLSL has no function pointers, and the four volumetric light shaders
@@ -31,17 +36,89 @@
 #include "skyAtmosphere.hlsli"
 
 /**
- * Depth over which the water medium fades in as the camera submerges (metres).
+ * Depth over which the water medium fades in below the surface (metres).
  *
  * The volumetric light passes clamp their march at the water plane, so a ray
  * looking down flips from a segment that ends at the surface to one running all
  * the way to the sea bed the moment the eye crosses it. Ramping the medium in
  * over the first metre keeps that from landing as a step change in brightness.
+ *
+ * It does the same job for shaded points, where the discontinuity is spatial
+ * rather than temporal: a wall running down into the water would otherwise pick
+ * up the full attenuation of a distant submerged light on the first pixel below
+ * the waterline, drawing a hard line across it.
  */
 static const float WATER_VOLUMETRICS_FADE_DEPTH = 1.0;
 
 /**
- * The ocean's water medium, evaluated for one camera position.
+ * Refractive index of water for visible light, relative to air.
+ *
+ * Matches the value the engine's other water shaders use - fresh water at green
+ * wavelengths. Sea water is nearer 1.34 and the index climbs towards the blue
+ * end, but neither difference survives being rendered.
+ */
+static const float WATER_REFRACTIVE_INDEX = 1.333;
+
+/**
+ * Optical path of downwelling daylight, as a multiple of depth.
+ *
+ * Refraction packs the whole sky into Snell's window, so light from above
+ * reaches a submerged point from within a cone of about 48.6 degrees rather
+ * than from the full hemisphere. Averaging the slant \( \sec\theta \) over that
+ * cone under the cosine weight a diffuse surface applies anyway:
+ * \[
+ * \frac{\int_0^{\theta_c}\sec\theta\,\cos\theta\,\sin\theta\,d\theta}
+ *      {\int_0^{\theta_c}\cos\theta\,\sin\theta\,d\theta}
+ * = \frac{2\,(1 - \cos\theta_c)}{\sin^2\theta_c} \approx 1.2
+ * \]
+ * with \( \sin\theta_c = 1/1.333 \). So a point ten metres down sits under
+ * roughly twelve metres of water, not ten.
+ */
+static const float WATER_DOWNWELLING_SLANT = 1.204;
+
+/**
+ * Bends a direction pointing at an above-water light down into the water.
+ *
+ * Snell's law at the flat surface. Seen from below, a source above the water is
+ * pulled towards the vertical - the same compression that fits the whole sky
+ * inside Snell's window - so its light both arrives from a steeper angle and
+ * crosses less water than the straight line towards it suggests.
+ *
+ * Exact for a directional light, where the interface is a plane and the source
+ * is at infinity, so one refraction serves the whole scene. A local light would
+ * need a per-sample solution and does not get one here; near-overhead entry is
+ * close to straight anyway, and the path is clipped at the surface either way.
+ *
+ * Example usage:
+ * @code
+ * const float3 Lwater = RefractIntoWater(GetSunDirection());
+ * @endcode
+ *
+ * References:
+ * https://en.wikipedia.org/wiki/Snell%27s_law
+ *
+ * @param[in] toLight - Normalized direction from the sample to the light.
+ *
+ * @return The refracted direction, still pointing towards the light. Returned
+ *         unchanged for a light at or below the horizon, which has no downward
+ *         crossing to refract.
+ */
+float3 RefractIntoWater(float3 toLight)
+{
+	[branch]
+	if (toLight.y <= 0)
+	{
+		return toLight;
+	}
+
+	// refract() wants the direction of travel and a normal facing into it, so
+	// the ray is flipped to head downwards and flipped back on the way out.
+	// This enters the denser medium, so there is no internal reflection case.
+	return -refract(-toLight, float3(0, 1, 0), 1.0 / WATER_REFRACTIVE_INDEX);
+}
+
+/**
+ * The ocean's water medium, evaluated at one world position.
  *
  * Single scattering: what a sample sends to the eye is the light that reaches
  * it, turned through the phase function and attenuated on both legs:
@@ -91,9 +168,9 @@ struct WaterVolumetrics
 	half submersion;
 
 	/**
-	 * Whether the eye is under water, so this medium applies at all.
+	 * Whether this medium applies at all.
 	 *
-	 * @return true when the camera is below the surface.
+	 * @return true when the position it was built for is below the surface.
 	 */
 	bool IsActive()
 	{
@@ -151,6 +228,31 @@ struct WaterVolumetrics
 	}
 
 	/**
+	 * Beer-Lambert transmittance along the submerged part of a light's path.
+	 *
+	 * Water takes red out of a beam roughly an order of magnitude faster than
+	 * blue, so this is what leaves a submerged red lamp red within arm's reach
+	 * and blue a few metres out.
+	 *
+	 * @param[in] samplePos - Sample position, in world space.
+	 * @param[in] toLight - Normalized direction from the sample to the light.
+	 * @param[in] distanceToLight - Distance to the light, or `FLT_MAX` for a
+	 *                              directional light.
+	 *
+	 * @return Per-channel surviving fraction, in [0, 1].
+	 */
+	float3 LightTransmittance(
+		float3 samplePos,
+		float3 toLight,
+		float distanceToLight
+	)
+	{
+		return exp(
+			-SubmergedLightPath(samplePos, toLight, distanceToLight) * sigmaT
+		);
+	}
+
+	/**
 	 * Point at which the light's path to a sample crosses into the water.
 	 *
 	 * Occlusion of a submerged sample by anything above the surface happens on
@@ -194,9 +296,8 @@ struct WaterVolumetrics
 		float distanceToLight
 	)
 	{
-		const float3 lightTransmittance = exp(
-			-SubmergedLightPath(samplePos, toLight, distanceToLight) * sigmaT
-		);
+		const float3 lightTransmittance =
+			LightTransmittance(samplePos, toLight, distanceToLight);
 
 		// This HgPhase peaks at cosTheta = -1, so dot(toLight, toEye) puts the
 		// peak where the eye looks along the light's own direction of travel -
@@ -208,14 +309,17 @@ struct WaterVolumetrics
 };
 
 /**
- * Builds the water medium as seen from a camera position.
+ * Builds the water medium as it applies at a world position.
  *
- * @param[in] eyePos - Camera position, in world space.
+ * A march passes the camera, since its whole segment lies on one side of the
+ * surface; surface shading passes the lit point.
  *
- * @return The medium. Inactive when there is no ocean or the camera is above
+ * @param[in] position - World position to evaluate the medium at.
+ *
+ * @return The medium. Inactive when there is no ocean or the position is above
  *         the surface, in which case the caller keeps its own fog.
  */
-WaterVolumetrics GetWaterVolumetrics(float3 eyePos)
+WaterVolumetrics GetWaterVolumetrics(float3 position)
 {
 	const ShaderOcean ocean = GetWeather().ocean;
 
@@ -223,7 +327,7 @@ WaterVolumetrics GetWaterVolumetrics(float3 eyePos)
 	water.waterHeight = ocean.water_height;
 	water.submersion = ocean.IsValid()
 		? (half)saturate(
-			(ocean.water_height - eyePos.y) / WATER_VOLUMETRICS_FADE_DEPTH)
+			(ocean.water_height - position.y) / WATER_VOLUMETRICS_FADE_DEPTH)
 		: (half)0;
 
 	const float3 sigmaS = ocean.scattering.rgb;
@@ -241,6 +345,98 @@ WaterVolumetrics GetWaterVolumetrics(float3 eyePos)
 	water.phaseG = (half)ocean.scattering.a * (1 - (half)saturate(albedo.g));
 
 	return water;
+}
+
+/**
+ * Transmittance of the water lying between a lit point and one of its lights.
+ *
+ * The surface-shading counterpart to the marches above, and the missing leg of
+ * underwater light transport: the water a light crossed on its way in dims and
+ * colours it exactly as the water between the lit point and the eye does. Every
+ * light needs it, not only the sun. Without it a lamp on the sea bed lights its
+ * surroundings in the colour it was authored and only the view ray tints the
+ * result, so a red lamp reads blue everywhere - including right beside it.
+ *
+ * Attenuation follows PATH LENGTH, which is why no depth-based tint can stand
+ * in for it: a lamp a metre away across the sea bed and the sun twenty metres
+ * overhead are at the same depth and nothing alike.
+ *
+ * Free in a scene with no ocean, where the medium is inactive and the branch is
+ * uniform.
+ *
+ * Example usage:
+ * @code
+ * light_color *= WaterLightTransmittance(surface.P, L, dist);
+ * @endcode
+ *
+ * @param[in] samplePos - The lit point, in world space.
+ * @param[in] toLight - Normalized direction from the lit point to the light.
+ * @param[in] distanceToLight - Distance to the light, or `FLT_MAX` for a
+ *                              directional light.
+ *
+ * @return Per-channel surviving fraction, in [0, 1]. 1 at or above the surface,
+ *         so callers need no test of their own.
+ */
+half3 WaterLightTransmittance(
+	float3 samplePos,
+	float3 toLight,
+	float distanceToLight
+)
+{
+	const WaterVolumetrics water = GetWaterVolumetrics(samplePos);
+
+	[branch]
+	if (!water.IsActive())
+	{
+		return 1;
+	}
+
+	return (half3)water.LightTransmittance(samplePos, toLight, distanceToLight);
+}
+
+/**
+ * Transmittance of the water above a point, for downwelling daylight.
+ *
+ * The ambient term and the sky probes stand in for light arriving from the
+ * whole upper hemisphere, and none of it can reach a submerged point without
+ * coming down through the water first. That is the one part of the water's
+ * effect which genuinely is a function of DEPTH rather than of a path to some
+ * particular light, because the source is the sky itself.
+ *
+ * Without it a sea bed twenty metres down is lit by an ambient term that never
+ * got wet, which is enough on its own to hide the water's colour: at that depth
+ * daylight is already down to a ten-thousandth of its red and a fifth of its
+ * blue, so any unattenuated white washes the blue straight back out. Diffuse
+ * ambient also enters the shading without the 1/pi that direct light carries,
+ * which makes it the larger of the two long before the water alone would.
+ *
+ * Applies to reflected daylight as well as to the diffuse term, so it is only
+ * an approximation for a reflection of something nearby and submerged, whose
+ * light did not come down from the sky at all. The sky probe dominates.
+ *
+ * Example usage:
+ * @code
+ * lighting.indirect.diffuse *= WaterAmbientTransmittance(surface.P);
+ * @endcode
+ *
+ * @param[in] samplePos - The lit point, in world space.
+ *
+ * @return Per-channel surviving fraction, in [0, 1]. 1 at or above the surface,
+ *         so callers need no test of their own.
+ */
+half3 WaterAmbientTransmittance(float3 samplePos)
+{
+	const WaterVolumetrics water = GetWaterVolumetrics(samplePos);
+
+	[branch]
+	if (!water.IsActive())
+	{
+		return 1;
+	}
+
+	const float depth = max(0, water.waterHeight - samplePos.y);
+
+	return (half3)exp(-depth * WATER_DOWNWELLING_SLANT * water.sigmaT);
 }
 
 #endif // WI_WATERVOLUMETRICS_HF
