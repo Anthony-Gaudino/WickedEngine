@@ -152,36 +152,76 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		ocean_surface_pos += displacement;
 		const float ocean_dist = length(ocean_surface_pos - campos);
 
-		// Distance the light travels through water on its way to the eye.
-		//
-		// This is the distance to the shaded geometry, NOT the distance at
-		// which the ray would leave the water surface. Clamping to the exit
-		// point is only right if what shows beyond it is the refracted world
-		// above; this pass shows the scene as rendered, and the depth buffer
-		// there holds submerged geometry, so the light really did cross the
-		// whole way.
-		//
-		// It also has to be this way to stay continuous. The exit distance
-		// comes from intersectPlaneClampInfinite(), which returns the true
-		// short distance for a ray heading up out of the water but z_far for
-		// one heading down - a hard jump exactly at the horizontal. Feeding
-		// that into the fog puts a visible seam across the view at eye level.
+		// Distance to the shaded geometry. This is the span the ray marched god
+		// rays walk; the water path that drives the fog is derived below.
 		const float ray_dist = surface_dist;
 
 		// How deep the shaded point itself sits below the surface. Whatever
 		// lights it had to come DOWN through that much water first, so it is
 		// part of the optical path even when the view ray through the water is
-		// short - or degenerate, which it is wherever the ocean surface is not
-		// the thing being looked through (near plane cutoff, grazing angles at
-		// a partially submerged camera). Without this term a deep sea bed
-		// renders as if the water were not there at all.
-		const float water_depth = max(0, ocean_pos.y - surface_position.y);
+		// short. Without this term a deep sea bed renders as if the water were
+		// not there at all.
+		//
+		// Real geometry only: where the depth buffer holds the far plane there
+		// is nothing that could be submerged, and the point it reconstructs to
+		// sits kilometres down. Reverse-Z, so zero is the far plane.
+		const float water_depth = (depth > 0)
+			? max(0, ocean_pos.y - surface_position.y)
+			: 0;
 		const float camera_depth = max(0, ocean_pos.y - world_pos.y);
+
+		// View ray from the eye into the scene:
+		const float3 rayDir = -V;
+
+		// Distance at which the ray leaves the water.
+		//
+		// Only a ray heading up can reach the surface from below, and that has
+		// to be tested explicitly: intersectPlaneClampInfinite() returns a
+		// real, SHORT intersection for any ray whose origin is on the far side
+		// of the plane, and the origin here is the pixel's own point on the
+		// near plane rather than the eye - so with the camera near the
+		// waterline part of that plane sits in air, and those pixels would
+		// report an exit a few centimetres away and render with no fog at all.
+		//
+		// Continuous at the horizontal without needing a blend: the
+		// intersection distance already runs away towards the far plane as the
+		// ray flattens out, so both sides of the test are far enough that
+		// nothing can sit behind them.
+		const float exit_dist =
+			rayDir.y > 0 ? ocean_dist : GetCamera().z_far;
+
+		// How much of this pixel shows genuinely SUBMERGED geometry, rather
+		// than the surface and whatever lies beyond it.
+		const float submerged = smoothstep(0.0, 0.5, water_depth);
+
+		// Water the light crossed on its way to the eye.
+		//
+		// The ray stays in water until it either reaches submerged geometry or
+		// leaves through the surface, so the path is whichever comes first.
+		// Anything the depth buffer holds at or ABOVE the water plane - the
+		// shore, a boat, the sky at the far plane - cannot have been reached
+		// without crossing the surface first, whatever distance the buffer
+		// reports for it, so there the path runs to the surface instead.
+		//
+		// The ocean is not in the depth buffer, so without that second case a
+		// pixel looking up at the surface takes the depth of whatever lies
+		// beyond it - usually the sky, at the far plane - and gets fogged over
+		// kilometres, which extinguishes the surface entirely and erases the
+		// total internal reflection outside Snell's window. It is also what
+		// keeps grazing views honest: the exit distance runs away to infinity
+		// as the ray flattens, so the water thickens smoothly to full fog at
+		// eye level instead of showing the far shore through it.
+		//
+		// Continuous across a shoreline, where geometry at the waterline has no
+		// depth AND sits where the ray meets the surface, so both ends of the
+		// blend agree there.
+		const float water_path =
+			lerp(exit_dist, min(surface_dist, exit_dist), submerged);
 
 		// Take the longer of the two rather than their sum: the two paths
 		// overlap for anything seen straight down, so adding them would double
 		// count the shared column.
-		const float fog_distance = max(ray_dist, water_depth);
+		const float fog_distance = max(water_path, water_depth);
 
 		// Inherent optical properties of the water, per RGB channel in 1/m.
 		// Absorption destroys light while scattering only redirects it; their
@@ -295,9 +335,6 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		// https://en.wikipedia.org/wiki/Snell%27s_window
 		if (underwater_snell > 0)
 		{
-			// View ray from the eye into the scene:
-			const float3 rayDir = -V;
-
 			// Surface normal where the ray pierces the water, rebuilt from the
 			// same wave gradient map the ocean surface is shaded with. Snell's
 			// law is relative to the local surface normal, so testing the
