@@ -16,8 +16,6 @@
 #define LENS_DISTORT
 //#define ANIMATED_DISTORT
 
-#define WATER_INSCATTERING_PHASE_G 0.25
-
 PUSHCONSTANT(postprocess, PostProcess);
 
 Texture2D<float4> input : register(t0);
@@ -217,11 +215,32 @@ void main(uint3 DTid : SV_DispatchThreadID)
 				inscatteringColor *= GetAtmosphericLightTransmittance(GetWeather().atmosphere, 0, L, texture_transmittancelut);
 			}
 		
-			// Apply phase function solely for directionality:
+			// Phase function of the medium, at a REDUCED asymmetry.
+			//
+			// Marine particulates scatter extremely far forward (g around 0.9,
+			// see WaterMedium::PhaseAsymmetry), but that is the phase of a
+			// SINGLE scattering event. What is being modulated here is the
+			// whole veiling radiance integrated along the path, and by the time
+			// light has bounced several times it has lost its original
+			// direction entirely. Feeding the raw single-scattering g into an
+			// integrated term puts an enormous spike at the sun: its peak is
+			// some 300x the isotropic value, so even a little of it swamps
+			// everything else.
+			//
+			// Similarity theory says to use a reduced asymmetry instead, scaled
+			// down by how much of the light has been scattered at all - which
+			// is exactly the veiling term computed above, since it already
+			// combines "how much was extinguished" with "how much of that was
+			// redirected rather than absorbed". Clear water keeps a sharp sun
+			// glow; turbid water, having scattered far more, spreads it into an
+			// even haze.
+			const half multiScatter = (half)saturate(inscatterAmount.g);
+			const half phaseG = (half)ocean.scattering.a * (1 - multiScatter);
 			const half cosTheta = dot(V, -refractedLightDir);
-			inscatteringColor *= HgPhase(WATER_INSCATTERING_PHASE_G, cosTheta);
+			inscatteringColor *= HgPhase(phaseG, cosTheta);
 
-			// Apply uniform phase since this medium is constant:
+			// Uniform base phase, matching what the engine's height fog does
+			// for a constant medium (see GetFog in fogHF.hlsli):
 			inscatteringColor *= UniformPhase();
 
 			// Sunlight has already crossed the water column above the camera
