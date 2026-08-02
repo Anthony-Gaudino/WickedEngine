@@ -3,6 +3,7 @@
 #include "volumetricCloudsHF.hlsli"
 #include "fogHF.hlsli"
 #include "oceanSurfaceHF.hlsli"
+#include "waterVolumetricsHF.hlsli"
 
 float4 main(VertexToPixel input) : SV_Target
 {
@@ -35,6 +36,19 @@ float4 main(VertexToPixel input) : SV_Target
 	const half3 L = light.GetDirection();
 	const half scattering = ComputeScattering(saturate(dot(L, -V)));
 
+	// Below the waterline the segment this pass marches is entirely under
+	// water, because the ocean clamp above already ends an upward ray at the
+	// surface and a ray heading down or along never reaches it from below. So
+	// one test decides the medium for the whole loop, with no straddling.
+	const WaterVolumetrics water = GetWaterVolumetrics(GetCamera().position);
+
+	// Sunlight bends at the surface before it ever reaches a submerged sample.
+	// The interface is a plane and the source is at infinity, so one refraction
+	// here is exact - there is nothing to approximate per sample.
+	const float3 Lwater = water.IsActive()
+		? -refract(-(float3)L, float3(0, 1, 0), 1.0 / 1.333)
+		: (float3)L;
+
 	float3 rayEnd = GetCamera().position;
 
 	const uint sampleCount = 16;
@@ -51,9 +65,17 @@ float4 main(VertexToPixel input) : SV_Target
 		bool valid = false;
 
 		half3 shadow = 1;
+		// A submerged sample is occluded above the surface, on the part of the
+		// path that is still straight, so the cascades - which know nothing of
+		// refraction - are exactly right when sampled at the point the light
+		// enters the water. That is also where the ocean writes its caustics
+		// into the transparent shadow layer, so they land where they form.
+		const float3 shadowSample = water.IsActive()
+			? water.SurfaceEntry(P, Lwater, FLT_MAX)
+			: P;
 		for (uint cascade = 0; cascade < light.GetShadowCascadeCount(); ++cascade)
 		{
-			float3 shadow_pos = mul(load_entitymatrix(light.GetMatrixIndex() + cascade), float4(P, 1)).xyz; // ortho matrix, no divide by .w
+			float3 shadow_pos = mul(load_entitymatrix(light.GetMatrixIndex() + cascade), float4(shadowSample, 1)).xyz; // ortho matrix, no divide by .w
 			float3 shadow_uv = clipspace_to_uv(shadow_pos.xyz);
 
 			[branch]
@@ -69,16 +91,37 @@ float4 main(VertexToPixel input) : SV_Target
 			shadow *= shadow_2D_volumetricclouds(P);
 		}
 
-		// Evaluate sample height for height fog calculation, given 0 for V:
-		shadow *= (half)g_xColor.y + GetFogAmount(cameraDistance - marchedDistance, P, 0);
-		shadow *= scattering;
+		[branch]
+		if (water.IsActive())
+		{
+			// Physical single scattering, so this integrates over the segment
+			// rather than averaging across it: the beam now scales with how
+			// much water the ray actually crosses, and with the medium's own
+			// scattering coefficient instead of an authored fog density.
+			shadow *= (half3)(
+				water.InScatter(P, Lwater, V, FLT_MAX)
+				* water.ViewTransmittance(cameraDistance - marchedDistance)
+				* stepSize
+			);
+		}
+		else
+		{
+			// Evaluate sample height for height fog calculation, given 0 for V:
+			shadow *= (half)g_xColor.y + GetFogAmount(cameraDistance - marchedDistance, P, 0);
+			shadow *= scattering;
+		}
 
 		accumulation += shadow;
 
 		marchedDistance += stepSize;
 		P = P + V * stepSize;
 	}
-	accumulation *= sampleCount_rcp;
+	// The water march integrates, so it must not be divided by the sample
+	// count. That turns the per-light boost from a density floor for the fog to
+	// scatter from into a gain over the physical result, 0 meaning physical.
+	accumulation *= water.IsActive()
+		? (half)(1 + g_xColor.y)
+		: sampleCount_rcp;
 
 	half3 atmosphere_transmittance = 1;
 	if (GetFrame().options & OPTION_BIT_REALISTIC_SKY)
