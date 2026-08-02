@@ -1548,7 +1548,7 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 	AddWidget(&underwaterSnellRTCheckBox);
 
 	underwaterGodRaysProceduralCheckBox.Create("God Rays (Procedural): ");
-	underwaterGodRaysProceduralCheckBox.SetTooltip("Stylised underwater god rays: radial stripes swept around the sun's screen position. Costs almost nothing, but it is screen space - the stripes are not attached to the world and no geometry blocks them.");
+	underwaterGodRaysProceduralCheckBox.SetTooltip("Stylised underwater god rays: radial stripes swept around the sun's screen position. Costs almost nothing, but it is screen space - the stripes are not attached to the world and no geometry blocks them. Independent of the ray marched shafts; either or both can be on.");
 	underwaterGodRaysProceduralCheckBox.SetSize(XMFLOAT2(hei, hei));
 	underwaterGodRaysProceduralCheckBox.SetPos(XMFLOAT2(x, y += step));
 
@@ -1563,6 +1563,41 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 		editor->main->config.Commit();
 		});
 	AddWidget(&underwaterGodRaysProceduralCheckBox);
+
+	underwaterGodRaysMarchedCheckBox.Create("God Rays (Ray Marched): ");
+	underwaterGodRaysMarchedCheckBox.SetTooltip("Physical underwater god rays: marches the view ray through the water sampling the sun's shadow cascades, so the shafts are cast and blocked by real geometry and pick up the ocean's caustics. Costs a ray march per pixel. Independent of the procedural rays.");
+	underwaterGodRaysMarchedCheckBox.SetSize(XMFLOAT2(hei, hei));
+	underwaterGodRaysMarchedCheckBox.SetPos(XMFLOAT2(x, y += step));
+
+	if (editor->main->config.GetSection("graphics").Has("underwater_godrays_marched"))
+	{
+		editor->renderPath->setUnderwaterGodRaysMarchedEnabled(editor->main->config.GetSection("graphics").GetBool("underwater_godrays_marched"));
+	}
+
+	underwaterGodRaysMarchedCheckBox.OnClick([=](wi::gui::EventArgs args) {
+		editor->renderPath->setUnderwaterGodRaysMarchedEnabled(args.bValue);
+		editor->main->config.GetSection("graphics").Set("underwater_godrays_marched", args.bValue);
+		editor->main->config.Commit();
+		});
+	AddWidget(&underwaterGodRaysMarchedCheckBox);
+
+	underwaterGodRaysMarchedStrengthSlider.Create(0, 8, 1, 1000, "UnderwaterGodRays.Strength: ");
+	underwaterGodRaysMarchedStrengthSlider.SetText("Shaft Strength: ");
+	underwaterGodRaysMarchedStrengthSlider.SetTooltip("Multiplier over the ray marched shafts. They scale with the water's scattering, so clear water shows almost none - raise this, or raise Silt in Weather, to bring them out.");
+	underwaterGodRaysMarchedStrengthSlider.SetSize(XMFLOAT2(mod_wid, hei));
+	underwaterGodRaysMarchedStrengthSlider.SetPos(XMFLOAT2(x + 100, y));
+
+	if (editor->main->config.GetSection("graphics").Has("underwater_godrays_marched_strength"))
+	{
+		editor->renderPath->setUnderwaterGodRaysMarchedStrength(editor->main->config.GetSection("graphics").GetFloat("underwater_godrays_marched_strength"));
+	}
+
+	underwaterGodRaysMarchedStrengthSlider.OnSlide([=](wi::gui::EventArgs args) {
+		editor->renderPath->setUnderwaterGodRaysMarchedStrength(args.fValue);
+		editor->main->config.GetSection("graphics").Set("underwater_godrays_marched_strength", args.fValue);
+		editor->main->config.Commit();
+		});
+	AddWidget(&underwaterGodRaysMarchedStrengthSlider);
 
 	bloomCheckBox.Create("Bloom: ");
 	bloomCheckBox.SetTooltip("Enable bloom. The effect adds color bleeding to the brightest parts of the scene.");
@@ -2070,6 +2105,8 @@ void GraphicsWindow::UpdateData()
 	underwaterSnellFadeSlider.SetValue(editor->renderPath->getUnderwaterSnellFade());
 	underwaterSnellRTCheckBox.SetCheck(editor->renderPath->getUnderwaterSnellRTEnabled());
 	underwaterGodRaysProceduralCheckBox.SetCheck(editor->renderPath->getUnderwaterGodRaysProceduralEnabled());
+	underwaterGodRaysMarchedCheckBox.SetCheck(editor->renderPath->getUnderwaterGodRaysMarchedEnabled());
+	underwaterGodRaysMarchedStrengthSlider.SetValue(editor->renderPath->getUnderwaterGodRaysMarchedStrength());
 	bloomCheckBox.SetCheck(editor->renderPath->getBloomEnabled());
 	bloomStrengthSlider.SetValue(editor->renderPath->getBloomThreshold());
 	fxaaCheckBox.SetCheck(editor->renderPath->getFXAAEnabled());
@@ -2344,6 +2381,8 @@ void GraphicsWindow::ResizeLayout()
 	layout.add_right(underwaterSnellFadeSlider);
 	layout.add_right(underwaterSnellRTCheckBox);
 	layout.add_right(underwaterGodRaysProceduralCheckBox);
+	layout.add_right(underwaterGodRaysMarchedCheckBox);
+	layout.add_right(underwaterGodRaysMarchedStrengthSlider);
 	layout.add_right(bloomStrengthSlider);
 	bloomCheckBox.SetPos(XMFLOAT2(bloomStrengthSlider.GetPos().x - bloomCheckBox.GetSize().x - 80, bloomStrengthSlider.GetPos().y));
 	layout.add_right(fxaaCheckBox);

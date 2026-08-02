@@ -2234,13 +2234,36 @@ namespace wi
 		XMVECTOR sunDirection = XMLoadFloat3(&scene->weather.sunDirection);
 		if (getLightShaftsEnabled() && XMVectorGetX(XMVector3Dot(sunDirection, camera->GetAt())) > 0)
 		{
-			device->EventBegin("Contribute LightShafts", cmd);
-			wi::image::Params fx;
-			fx.enableFullScreen();
-			fx.blendFlag = BLENDMODE_ADDITIVE;
-			fx.opacity = lightShaftsFadeFactor;
-			wi::image::Draw(&rtSun[1], fx, cmd);
-			device->EventEnd(cmd);
+			// The sun cutout these shafts are blurred from is drawn before the
+			// ocean is, so the water surface is not in the depth buffer that
+			// occludes it. Submerged, that paints the sun at full strength as
+			// if the camera were in air: no refraction into Snell's window, no
+			// attenuation by the water column, and the radial blur smears it
+			// over whatever it passes - which is what lights up the underside
+			// of anything floating on the surface. Fade the whole contribution
+			// out as the camera goes under; the underwater pass owns the sun's
+			// appearance from down there.
+			float lightShaftsWaterFade = 1;
+			if (scene->weather.IsOceanEnabled())
+			{
+				// Fade across a wave's worth of height rather than snapping at
+				// the still water level, so a camera bobbing at the waterline
+				// does not flicker.
+				const float waterHeight = scene->weather.oceanParameters.waterHeight;
+				lightShaftsWaterFade =
+					wi::math::SmoothStep(0.0f, 1.0f, camera->Eye.y - waterHeight);
+			}
+
+			if (lightShaftsWaterFade > 0)
+			{
+				device->EventBegin("Contribute LightShafts", cmd);
+				wi::image::Params fx;
+				fx.enableFullScreen();
+				fx.blendFlag = BLENDMODE_ADDITIVE;
+				fx.opacity = lightShaftsFadeFactor * lightShaftsWaterFade;
+				wi::image::Draw(&rtSun[1], fx, cmd);
+				device->EventEnd(cmd);
+			}
 		}
 
 		if (getLensFlareEnabled())
@@ -2393,7 +2416,10 @@ namespace wi
 					underwater_snell,
 					getUnderwaterSnellFade(),
 					underwater_snell_rt,
-					getUnderwaterGodRaysProceduralEnabled()
+					getUnderwaterGodRaysProceduralEnabled(),
+					getUnderwaterGodRaysMarchedEnabled()
+						? getUnderwaterGodRaysMarchedStrength()
+						: 0.0f
 				);
 
 				rt_first = nullptr;
