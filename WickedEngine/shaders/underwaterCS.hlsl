@@ -290,6 +290,20 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			// green-blue with depth without any authored colour:
 			inscatteringColor *= exp(-camera_depth * sigmaT);
 
+			// And some of it never got in: the surface reflects a share away
+			// instead of refracting it down, nearly all of it once the sun is
+			// low. The same term the lit surfaces use, so the haze and the sea
+			// bed agree about how much sun reached the water - without it the
+			// water would still glow at sunset while everything in it went
+			// dark.
+			//
+			// RefractIntoWater rather than refractedLightDir above: the two
+			// agree while the sun is up, but refract() keeps bending a sun
+			// that has already set into a downward ray, whose cosine would
+			// read as light still getting in.
+			inscatteringColor *=
+				(half)FresnelTransmittanceIntoWater(RefractIntoWater(L).y);
+
 			// Procedural god ray modulation: radial stripes swept around the
 			// refracted sun's SCREEN position, darkening the inscatter. Purely
 			// screen space - it is anchored to where the sun projects rather

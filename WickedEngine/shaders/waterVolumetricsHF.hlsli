@@ -77,6 +77,80 @@ static const float WATER_REFRACTIVE_INDEX = 1.333;
 static const float WATER_DOWNWELLING_SLANT = 1.204;
 
 /**
+ * Fraction of light reflected by the surface at straight-down incidence.
+ *
+ * \[
+ * R_0 = \left(\frac{n - 1}{n + 1}\right)^2
+ * \]
+ * for \( n = 1.333 \), so a sun directly overhead loses about 2% at the
+ * surface. It climbs to everything at grazing incidence.
+ */
+static const float WATER_FRESNEL_NORMAL_REFLECTANCE = 0.020373;
+
+/**
+ * Fraction of a uniform sky's light that gets through the surface.
+ *
+ * The cosine-weighted mean of the Fresnel transmittance over the hemisphere,
+ * which is what the downwelling irradiance below a flat surface works out to:
+ * \[
+ * \bar{T} = 2\int_0^{\pi/2} T(\theta)\,\cos\theta\,\sin\theta\,d\theta
+ * \]
+ * evaluated against the exact unpolarized Fresnel equations. So the sky loses
+ * about 7% at the surface however it is oriented - a constant, unlike the sun,
+ * which arrives from one angle that changes through the day.
+ */
+static const float WATER_FRESNEL_DIFFUSE_TRANSMITTANCE = 0.9336;
+
+/**
+ * Fraction of the light arriving from above that crosses into the water.
+ *
+ * Some of what reaches the surface reflects off it instead of refracting down,
+ * and how much depends steeply on the angle: about 2% straight down, still only
+ * 6% at 60 degrees, but 58% at 85 and everything at the horizon. This is what
+ * puts out a setting sun for anything below the surface, smoothly, rather than
+ * leaving it lit until the moment it dips below the horizon.
+ *
+ * Parameterised by the SUBMERGED angle, which is what the shading code has to
+ * hand, and converted back through Snell's law - exact for a directional light,
+ * whose direction really was refracted, and an approximation for a local one,
+ * which is treated as though it had been.
+ *
+ * Uses Schlick's approximation, which for this index ratio matches the exact
+ * unpolarized Fresnel equations to better than a part in a thousand on the
+ * hemisphere average.
+ *
+ * Example usage:
+ * @code
+ * light_color *= FresnelTransmittanceIntoWater(Lwater.y);
+ * @endcode
+ *
+ * References:
+ * https://en.wikipedia.org/wiki/Fresnel_equations
+ *
+ * @param[in] cosThetaSubmerged - Cosine of the angle between straight up and
+ *                                the direction towards the light, taken below
+ *                                the surface.
+ *
+ * @return Transmitted fraction, in [0, 1]. 0 for a light at or below the
+ *         horizon, which delivers nothing through the surface at all.
+ */
+float FresnelTransmittanceIntoWater(float cosThetaSubmerged)
+{
+	// Snell's law back to the air side. The reflectance is governed by the
+	// angle the light struck the surface at, not by the steeper one it travels
+	// at afterwards, and the two differ by a lot - the whole hemisphere above
+	// maps into a cone of 48.6 degrees below.
+	const float cosBelow = saturate(cosThetaSubmerged);
+	const float sinBelow = sqrt(saturate(1 - cosBelow * cosBelow));
+	const float sinAbove = saturate(sinBelow * WATER_REFRACTIVE_INDEX);
+	const float cosAbove = sqrt(saturate(1 - sinAbove * sinAbove));
+
+	const float grazing = pow5(1 - cosAbove);
+
+	return (1 - WATER_FRESNEL_NORMAL_REFLECTANCE) * (1 - grazing);
+}
+
+/**
  * Bends a direction pointing at an above-water light down into the water.
  *
  * Snell's law at the flat surface. Seen from below, a source above the water is
@@ -228,11 +302,12 @@ struct WaterVolumetrics
 	}
 
 	/**
-	 * Beer-Lambert transmittance along the submerged part of a light's path.
+	 * What survives of a light's journey to a sample: surface, then water.
 	 *
 	 * Water takes red out of a beam roughly an order of magnitude faster than
 	 * blue, so this is what leaves a submerged red lamp red within arm's reach
-	 * and blue a few metres out.
+	 * and blue a few metres out. A light that started in the air loses a second
+	 * share of itself at the surface, to reflection.
 	 *
 	 * @param[in] samplePos - Sample position, in world space.
 	 * @param[in] toLight - Normalized direction from the sample to the light.
@@ -247,9 +322,18 @@ struct WaterVolumetrics
 		float distanceToLight
 	)
 	{
-		return exp(
-			-SubmergedLightPath(samplePos, toLight, distanceToLight) * sigmaT
-		);
+		const float path =
+			SubmergedLightPath(samplePos, toLight, distanceToLight);
+
+		// A path that had to be clipped is one that reached the surface before
+		// it reached the light, so the light is in the air and part of it
+		// reflected away rather than coming down. A submerged light crosses
+		// nothing and keeps all of it.
+		const float crossing = (path < distanceToLight)
+			? FresnelTransmittanceIntoWater(toLight.y)
+			: 1;
+
+		return crossing * exp(-path * sigmaT);
 	}
 
 	/**
@@ -410,6 +494,10 @@ half3 WaterLightTransmittance(
  * ambient also enters the shading without the 1/pi that direct light carries,
  * which makes it the larger of the two long before the water alone would.
  *
+ * Includes the share the surface reflects away before any of it gets in, which
+ * for a whole sky is a constant rather than the steep function of angle a
+ * single light sees.
+ *
  * Applies to reflected daylight as well as to the diffuse term, so it is only
  * an approximation for a reflection of something nearby and submerged, whose
  * light did not come down from the sky at all. The sky probe dominates.
@@ -436,7 +524,10 @@ half3 WaterAmbientTransmittance(float3 samplePos)
 
 	const float depth = max(0, water.waterHeight - samplePos.y);
 
-	return (half3)exp(-depth * WATER_DOWNWELLING_SLANT * water.sigmaT);
+	return (half3)(
+		WATER_FRESNEL_DIFFUSE_TRANSMITTANCE
+		* exp(-depth * WATER_DOWNWELLING_SLANT * water.sigmaT)
+	);
 }
 
 #endif // WI_WATERVOLUMETRICS_HF
