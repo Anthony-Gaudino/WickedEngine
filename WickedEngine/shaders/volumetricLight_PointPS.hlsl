@@ -2,6 +2,7 @@
 #include "volumetricLightHF.hlsli"
 #include "fogHF.hlsli"
 #include "oceanSurfaceHF.hlsli"
+#include "waterVolumetricsHF.hlsli"
 
 float4 main(VertexToPixel input) : SV_TARGET
 {
@@ -48,6 +49,11 @@ float4 main(VertexToPixel input) : SV_TARGET
 	
 	const uint maskTex = light.GetTextureIndex();
 
+	// Below the waterline the whole marched segment is under water, because the
+	// ocean clamp above ends an upward ray at the surface and a ray heading
+	// down or along never reaches it from below. One test, no straddling.
+	const WaterVolumetrics water = GetWaterVolumetrics(GetCamera().position);
+
 	// Perform ray marching to integrate light volume along view ray:
 	[loop]
 	for(uint i = 0; i < sampleCount; ++i)
@@ -75,17 +81,36 @@ float4 main(VertexToPixel input) : SV_TARGET
 			attenuation *= mask.rgb * mask.a;
 		}
 
-		// Evaluate sample height for height fog calculation, given 0 for V:
-		attenuation *= (half)g_xColor.y + GetFogAmount(cameraDistance - marchedDistance, P, 0);
-		attenuation *= ComputeScattering(saturate(dot(L, -V)));
-		
+		[branch]
+		if (water.IsActive())
+		{
+			// Physical single scattering: the beam is now attenuated on both
+			// legs, so a submerged lamp loses its warm end within a metre or
+			// two and fades with distance instead of carrying forever.
+			attenuation *= (half3)(
+				water.InScatter(P, L, V, dist)
+				* water.ViewTransmittance(cameraDistance - marchedDistance)
+				* stepSize
+			);
+		}
+		else
+		{
+			// Evaluate sample height for height fog calculation, given 0 for V:
+			attenuation *= (half)g_xColor.y + GetFogAmount(cameraDistance - marchedDistance, P, 0);
+			attenuation *= ComputeScattering(saturate(dot(L, -V)));
+		}
+
 		accumulation += attenuation;
 
 		marchedDistance += stepSize;
 		P = P + V * stepSize;
 	}
 
-	accumulation *= sampleCount_rcp;
+	// The water march integrates rather than averages, so the per-light boost
+	// becomes a gain over the physical result, 0 meaning physical.
+	accumulation *= water.IsActive()
+		? (half)(1 + g_xColor.y)
+		: sampleCount_rcp;
 
 	return saturateMediump(max(0, half4(accumulation * light.GetColor().rgb, 1)));
 }

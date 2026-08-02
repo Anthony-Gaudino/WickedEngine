@@ -2,6 +2,7 @@
 #include "volumetricLightHF.hlsli"
 #include "fogHF.hlsli"
 #include "oceanSurfaceHF.hlsli"
+#include "waterVolumetricsHF.hlsli"
 
 float4 main(VertexToPixel input) : SV_TARGET
 {
@@ -54,6 +55,11 @@ float4 main(VertexToPixel input) : SV_TARGET
 	const float3 p1 = light.position + right * light_length * 0.5 + up * light_height * 0.5;
 	const float3 p2 = light.position + right * light_length * 0.5 - up * light_height * 0.5;
 	const float3 p3 = light.position - right * light_length * 0.5 - up * light_height * 0.5;
+
+	// Below the waterline the whole marched segment is under water, because the
+	// ocean clamp above ends an upward ray at the surface and a ray heading
+	// down or along never reaches it from below. One test, no straddling.
+	const WaterVolumetrics water = GetWaterVolumetrics(GetCamera().position);
 
 	// Perform ray marching to integrate light volume along view ray:
 	[loop]
@@ -117,9 +123,22 @@ float4 main(VertexToPixel input) : SV_TARGET
 			attenuation *= mask.rgb * mask.a;
 		}
 
-		// Evaluate sample height for exponential fog calculation, given 0 for V:
-		attenuation *= g_xColor.y + GetFogAmount(cameraDistance - marchedDistance, P, 0);
-		attenuation *= ComputeScattering(saturate(dot(L, -V)));
+		[branch]
+		if (water.IsActive())
+		{
+			// Physical single scattering, attenuated on both legs.
+			attenuation *= (half3)(
+				water.InScatter(P, L, V, dist)
+				* water.ViewTransmittance(cameraDistance - marchedDistance)
+				* stepSize
+			);
+		}
+		else
+		{
+			// Evaluate sample height for exponential fog calculation, given 0 for V:
+			attenuation *= g_xColor.y + GetFogAmount(cameraDistance - marchedDistance, P, 0);
+			attenuation *= ComputeScattering(saturate(dot(L, -V)));
+		}
 
 		accumulation += attenuation;
 
@@ -127,7 +146,11 @@ float4 main(VertexToPixel input) : SV_TARGET
 		P = P + V * stepSize;
 	}
 
-	accumulation *= sampleCount_rcp;
+	// The water march integrates rather than averages, so the per-light boost
+	// becomes a gain over the physical result, 0 meaning physical.
+	accumulation *= water.IsActive()
+		? (half)(1 + g_xColor.y)
+		: sampleCount_rcp;
 
 	return saturateMediump(max(0, half4(accumulation * light.GetColor().rgb, 1)));
 }
