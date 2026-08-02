@@ -157,6 +157,11 @@ static const uint DEPTHOFFIELD_TILESIZE = 32;
 // is traced into the real scene so above-water objects and their occlusion of
 // the window are exact. Otherwise the window shows the analytic sky.
 #define underwater_snell_rt ((uint)postprocess.params1.x)
+// Procedural god ray flag for the underwater post pass (nonzero enables it).
+// Radial stripes swept around the refracted sun's screen position, darkening
+// the inscatter. Costs nothing beyond a little maths - no shadow map, no ray
+// march - so it stays available as the cheap option.
+#define underwater_godrays_procedural ((uint)postprocess.params1.y)
 
 enum TONEMAP_FLAGS
 {

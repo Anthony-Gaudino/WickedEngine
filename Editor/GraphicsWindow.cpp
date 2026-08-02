@@ -1547,6 +1547,23 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 		});
 	AddWidget(&underwaterSnellRTCheckBox);
 
+	underwaterGodRaysProceduralCheckBox.Create("God Rays (Procedural): ");
+	underwaterGodRaysProceduralCheckBox.SetTooltip("Stylised underwater god rays: radial stripes swept around the sun's screen position. Costs almost nothing, but it is screen space - the stripes are not attached to the world and no geometry blocks them.");
+	underwaterGodRaysProceduralCheckBox.SetSize(XMFLOAT2(hei, hei));
+	underwaterGodRaysProceduralCheckBox.SetPos(XMFLOAT2(x, y += step));
+
+	if (editor->main->config.GetSection("graphics").Has("underwater_godrays_procedural"))
+	{
+		editor->renderPath->setUnderwaterGodRaysProceduralEnabled(editor->main->config.GetSection("graphics").GetBool("underwater_godrays_procedural"));
+	}
+
+	underwaterGodRaysProceduralCheckBox.OnClick([=](wi::gui::EventArgs args) {
+		editor->renderPath->setUnderwaterGodRaysProceduralEnabled(args.bValue);
+		editor->main->config.GetSection("graphics").Set("underwater_godrays_procedural", args.bValue);
+		editor->main->config.Commit();
+		});
+	AddWidget(&underwaterGodRaysProceduralCheckBox);
+
 	bloomCheckBox.Create("Bloom: ");
 	bloomCheckBox.SetTooltip("Enable bloom. The effect adds color bleeding to the brightest parts of the scene.");
 	bloomCheckBox.SetScriptTip("RenderPath3D::SetBloomEnabled(bool value)");
@@ -2052,6 +2069,7 @@ void GraphicsWindow::UpdateData()
 	underwaterSnellStrengthSlider.SetValue(editor->renderPath->getUnderwaterSnellStrength());
 	underwaterSnellFadeSlider.SetValue(editor->renderPath->getUnderwaterSnellFade());
 	underwaterSnellRTCheckBox.SetCheck(editor->renderPath->getUnderwaterSnellRTEnabled());
+	underwaterGodRaysProceduralCheckBox.SetCheck(editor->renderPath->getUnderwaterGodRaysProceduralEnabled());
 	bloomCheckBox.SetCheck(editor->renderPath->getBloomEnabled());
 	bloomStrengthSlider.SetValue(editor->renderPath->getBloomThreshold());
 	fxaaCheckBox.SetCheck(editor->renderPath->getFXAAEnabled());
@@ -2325,6 +2343,7 @@ void GraphicsWindow::ResizeLayout()
 	underwaterSnellCheckBox.SetPos(XMFLOAT2(underwaterSnellStrengthSlider.GetPos().x - underwaterSnellCheckBox.GetSize().x - 80, underwaterSnellStrengthSlider.GetPos().y));
 	layout.add_right(underwaterSnellFadeSlider);
 	layout.add_right(underwaterSnellRTCheckBox);
+	layout.add_right(underwaterGodRaysProceduralCheckBox);
 	layout.add_right(bloomStrengthSlider);
 	bloomCheckBox.SetPos(XMFLOAT2(bloomStrengthSlider.GetPos().x - bloomCheckBox.GetSize().x - 80, bloomStrengthSlider.GetPos().y));
 	layout.add_right(fxaaCheckBox);

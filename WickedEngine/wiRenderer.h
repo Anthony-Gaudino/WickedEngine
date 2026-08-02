@@ -1088,6 +1088,8 @@ namespace wi::renderer
 	 *                         the window survives (1 = physically correct).
 	 * @param[in] snell_rt - Trace the refracted ray into the real scene instead
 	 *                       of showing the analytic sky. Requires ray tracing.
+	 * @param[in] godrays_procedural - Draw the screen space procedural god ray
+	 *                                 stripes. Cheap and stylised.
 	 */
 	void Postprocess_Underwater(
 		const wi::graphics::Texture& input,
@@ -1097,7 +1099,8 @@ namespace wi::renderer
 		float absorption = 0.0f,
 		float snell = 0.0f,
 		float snell_fade = 1.0f,
-		bool snell_rt = false
+		bool snell_rt = false,
+		bool godrays_procedural = true
 	);
 	struct MeshBlendResources
 	{

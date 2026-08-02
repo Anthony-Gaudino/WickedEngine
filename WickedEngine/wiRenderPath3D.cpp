@@ -2392,7 +2392,8 @@ namespace wi
 					underwater_absorption,
 					underwater_snell,
 					getUnderwaterSnellFade(),
-					underwater_snell_rt
+					underwater_snell_rt,
+					getUnderwaterGodRaysProceduralEnabled()
 				);
 
 				rt_first = nullptr;

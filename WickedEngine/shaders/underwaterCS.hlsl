@@ -249,11 +249,17 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			// green-blue with depth without any authored colour:
 			inscatteringColor *= exp(-camera_depth * sigmaT);
 
-			// Add some fake godray modulation to scatter:
-			float4 lightScreen = mul(GetCamera().view_projection, float4(GetCamera().position + refractedLightDir * 10000, 1));
-			lightScreen.xy /= lightScreen.w;
-			//if (lightScreen.z > 0)
+			// Procedural god ray modulation: radial stripes swept around the
+			// refracted sun's SCREEN position, darkening the inscatter. Purely
+			// screen space - it is anchored to where the sun projects rather
+			// than to the world, and no geometry occludes it - so it is a
+			// stylised effect rather than a physical one, kept as the option
+			// that costs nothing.
+			[branch]
+			if (underwater_godrays_procedural != 0)
 			{
+				float4 lightScreen = mul(GetCamera().view_projection, float4(GetCamera().position + refractedLightDir * 10000, 1));
+				lightScreen.xy /= lightScreen.w;
 				float godray = GodRays(lightScreen, clipspace2, uv, GetTime(), 0.1, 32.0) + GodRays(lightScreen, clipspace2, uv, -GetTime() * 0.5, 0.1, 20.0);
 				godray *= 1 - pow(abs(dot(refractedLightDir, V)), 2); // blend out at light center
 				godray *= pow(1 - saturate(-dot(refractedLightDir, V)), 1); // blend out at other side
