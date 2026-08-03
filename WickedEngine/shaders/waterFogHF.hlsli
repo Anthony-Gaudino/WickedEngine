@@ -384,4 +384,53 @@ void ApplyWaterFog(
 	ApplyWaterFog(screenUV, fragmentPosition, 0, color);
 }
 
+/**
+ * Fogs a fragment whose colour is already multiplied by its own coverage.
+ *
+ * Fonts, gaussian splats and clouds output premultiplied radiance, so the
+ * veiling light has to be scaled the same way. Adding the full inscatter to a
+ * fragment that only covers a tenth of the pixel would paint haze into the nine
+ * tenths it never touched.
+ *
+ * @param[in] screenUV - Screen space UV coordinates (0-1) of the fragment.
+ * @param[in] fragmentPosition - World position of the fragment.
+ * @param[in,out] color - Premultiplied fragment colour, fogged in place.
+ */
+void ApplyWaterFogPremultiplied(
+	float2 screenUV,
+	float3 fragmentPosition,
+	inout half4 color
+)
+{
+	const WaterFog fog = GetWaterFog(screenUV, fragmentPosition);
+
+	color.rgb = (half3)(
+		color.rgb * fog.transmittance + fog.inscatter * color.a
+	);
+}
+
+/**
+ * Fogs a fragment that is added to what is already on screen.
+ *
+ * Transmittance only, deliberately: the destination has already had the water's
+ * veiling light put into it by whatever drew it. An additive draw contributes
+ * nothing of its own to that haze, and adding it again would multiply the haze
+ * by the number of additive draws stacked on the pixel - so a lamp's glow and
+ * its visualizer would each thicken the water.
+ *
+ * @param[in] screenUV - Screen space UV coordinates (0-1) of the fragment.
+ * @param[in] fragmentPosition - World position of the fragment.
+ * @param[in,out] color - Fragment colour, attenuated in place.
+ */
+void ApplyWaterFogAdditive(
+	float2 screenUV,
+	float3 fragmentPosition,
+	inout half4 color
+)
+{
+	color.rgb = (half3)(
+		color.rgb * GetWaterFog(screenUV, fragmentPosition).transmittance
+	);
+}
+
 #endif // WI_WATERFOG_HF

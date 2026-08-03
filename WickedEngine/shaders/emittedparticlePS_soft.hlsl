@@ -140,6 +140,30 @@ float4 main(VertextoPixel input) : SV_TARGET
 
 #endif // EMITTEDPARTICLE_LIGHTING
 
+#ifndef EMITTEDPARTICLE_DISTORTION
+	// The water between this particle and the eye.
+	//
+	// Outside the lighting block on purpose: the default emitter type is SOFT,
+	// which does not define it, so a particle would otherwise never be fogged
+	// at all - and it is a particle's own distance that has to fog it, which is
+	// the whole reason this moved out of the post pass.
+	//
+	// An additive particle takes the extinction only. The water's veiling light
+	// is already in the destination, put there by whatever drew it, so adding
+	// it again would thicken the haze once per additive particle stacked on the
+	// pixel. An alpha blended one does take it, or a distant particle would
+	// fade towards black instead of towards the colour of the water.
+	[branch]
+	if (material.IsAdditive())
+	{
+		ApplyWaterFogAdditive(ScreenCoord, pos3D, color);
+	}
+	else
+	{
+		ApplyWaterFog(ScreenCoord, pos3D, color);
+	}
+#endif // EMITTEDPARTICLE_DISTORTION
+
 	color.rgb = mul(saturationMatrix(material.GetSaturation()), color.rgb);
 
 	return color;

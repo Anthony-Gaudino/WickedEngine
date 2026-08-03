@@ -266,6 +266,7 @@ wi::vector<ShaderEntry> shaders = {
 	{"objectPS_prepass", wi::graphics::ShaderStage::PS },
 	{"objectPS_prepass_alphatest", wi::graphics::ShaderStage::PS },
 	{"objectPS_prepass_depthonly_alphatest", wi::graphics::ShaderStage::PS },
+	{"lightvisualizerPS", wi::graphics::ShaderStage::PS },
 	{"vRectLightPS", wi::graphics::ShaderStage::PS },
 	{"lensFlarePS", wi::graphics::ShaderStage::PS },
 	{"impostorPS", wi::graphics::ShaderStage::PS },
