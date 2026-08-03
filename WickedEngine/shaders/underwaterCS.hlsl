@@ -3,6 +3,7 @@
 #include "oceanSurfaceHF.hlsli"
 #include "lightingHF.hlsli"
 #include "fogHF.hlsli"
+#include "waterFogHF.hlsli"
 #ifdef RTAPI
 	// Hardware ray-traced Snell's window: trace the refracted ray into the real
 	// scene so above-water objects (and their occlusion of the window) are
@@ -38,23 +39,6 @@ float2 brownConradyDistortion(float2 uv)
 	// is not modeled in this function, but if it was, the terms would go here
 	return uv;
 }
-
-// Modified version of: https://www.shadertoy.com/view/XdyfR1
-float GodRays(in float2 lightscreen, in float2 ndc, in float2 uv, in float iTime, in float GOD_RAY_LENGTH = 0.1, in float GOD_RAY_FREQUENCY = 48.0)
-{
-	float2 godRayOrigin = ndc - lightscreen;
-	//float rayInputFunc = atan2(godRayOrigin.y, godRayOrigin.x) * 0.63661977236; // that's 2/pi
-	float rayInputFunc = atan2(godRayOrigin.y, godRayOrigin.x);
-	float light = (sin(rayInputFunc * GOD_RAY_FREQUENCY + iTime * -2.25) * 0.5 + 0.5);
-	light = 0.5 * (light + (sin(rayInputFunc * 13.0 + iTime) * 0.5 + 0.5));
-	//light *= (sin(rayUVFunc * 8.0 + -iTime * 0.25) * 0.5 + 0.5);
-	//light *= pow(clamp(dot(normalize(-godRayOrigin), normalize(ndc - godRayOrigin)), 0.0, 1.0), 2.5);
-	light *= pow(uv.y, GOD_RAY_LENGTH);
-	light = pow(light, 1.75);
-	//light *= pow(length(godRayOrigin), 4);
-	return light;
-}
-
 
 [numthreads(POSTPROCESS_BLOCKSIZE, POSTPROCESS_BLOCKSIZE, 1)]
 void main(uint3 DTid : SV_DispatchThreadID)
@@ -218,115 +202,30 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		// one path it really does describe.
 		const float fog_distance = water_path;
 
-		// Inherent optical properties of the water, per RGB channel in 1/m.
-		// Absorption destroys light while scattering only redirects it; their
-		// sum is the extinction that attenuates anything crossing the water,
-		// and their ratio (the single-scattering albedo) decides whether the
-		// water reads as a dark filter or a bright milky haze. Turbidity raises
-		// the scattering term specifically, which is why murky water destroys
-		// contrast long before it destroys brightness, while clear deep water
-		// does the opposite. See wiScene/environment/WaterMedium.
-		const float3 sigmaS = ocean.scattering.rgb;
-		const float3 sigmaT = max(ocean.absorption.rgb + sigmaS, 0.00001);
-		const float3 scatterAlbedo = sigmaS / sigmaT;
+		// The water's own fog over the view ray's path through it. Shared with
+		// the draw shaders, so a pixel fogged here and a pixel fogged where it
+		// was drawn cannot drift apart.
+		//
+		// The medium is taken unfaded: this whole block is already masked to
+		// the submerged part of the screen by the waterline blend at the end.
+		const WaterVolumetrics medium = MakeWaterVolumetrics(1);
+		const WaterFog fog = MakeWaterFog(
+			medium,
+			fog_distance,
+			V,
+			camera_depth,
+			uv,
+			clipspace2.xy,
+			underwater_godrays_procedural != 0
+		);
 
-		// Beer-Lambert transmittance of whatever is behind the water, and the
-		// share of the extinguished light that single scattering puts back in
-		// its place as veiling light. Only the scattered fraction comes back,
-		// which is what separates the two: absorption darkens the view while
-		// scattering hazes it.
-		const float3 transmittance = exp(-fog_distance * sigmaT);
-		const float3 inscatterAmount = scatterAlbedo * (1 - transmittance);
+		const float3 transmittance = fog.transmittance;
 
 		color = input.SampleLevel(sampler_linear_mirror, uv, 0);
 
-		half3 fogColor = ocean.water_color.rgb;
-
-		// Sample inscattering color:
-		{
-			const half3 L = GetSunDirection();
-			const half3 refractedLightDir = refract(-L, float3(0, 1, 0), 1.0 / 1.333);
-		
-			half3 inscatteringColor = GetSunColor();
-
-			// Apply atmosphere transmittance:
-			if (GetFrame().options & OPTION_BIT_REALISTIC_SKY)
-			{
-				// 0 for position since fog is centered around world center
-				inscatteringColor *= GetAtmosphericLightTransmittance(GetWeather().atmosphere, 0, L, texture_transmittancelut);
-			}
-		
-			// Phase function of the medium, at a REDUCED asymmetry.
-			//
-			// Marine particulates scatter extremely far forward (g around 0.9,
-			// see WaterMedium::PhaseAsymmetry), but that is the phase of a
-			// SINGLE scattering event. What is being modulated here is the
-			// whole veiling radiance integrated along the path, and by the time
-			// light has bounced several times it has lost its original
-			// direction entirely. Feeding the raw single-scattering g into an
-			// integrated term puts an enormous spike at the sun: its peak is
-			// some 300x the isotropic value, so even a little of it swamps
-			// everything else.
-			//
-			// Similarity theory says to use a reduced asymmetry instead, scaled
-			// down by how much of the light has been scattered at all - which
-			// is exactly the veiling term computed above, since it already
-			// combines "how much was extinguished" with "how much of that was
-			// redirected rather than absorbed". Clear water keeps a sharp sun
-			// glow; turbid water, having scattered far more, spreads it into an
-			// even haze.
-			const half multiScatter = (half)saturate(inscatterAmount.g);
-			const half phaseG = (half)ocean.scattering.a * (1 - multiScatter);
-			const half cosTheta = dot(V, -refractedLightDir);
-			inscatteringColor *= HgPhase(phaseG, cosTheta);
-
-			// Uniform base phase, matching what the engine's height fog does
-			// for a constant medium (see GetFog in fogHF.hlsli):
-			inscatteringColor *= UniformPhase();
-
-			// Sunlight has already crossed the water column above the camera
-			// before it can scatter towards the eye, so it arrives filtered by
-			// the same medium. Red goes first, which is what tints the scatter
-			// green-blue with depth without any authored colour:
-			inscatteringColor *= exp(-camera_depth * sigmaT);
-
-			// And some of it never got in: the surface reflects a share away
-			// instead of refracting it down, nearly all of it once the sun is
-			// low. The same term the lit surfaces use, so the haze and the sea
-			// bed agree about how much sun reached the water - without it the
-			// water would still glow at sunset while everything in it went
-			// dark.
-			//
-			// RefractIntoWater rather than refractedLightDir above: the two
-			// agree while the sun is up, but refract() keeps bending a sun
-			// that has already set into a downward ray, whose cosine would
-			// read as light still getting in.
-			inscatteringColor *=
-				(half)FresnelTransmittanceIntoWater(RefractIntoWater(L).y);
-
-			// Procedural god ray modulation: radial stripes swept around the
-			// refracted sun's SCREEN position, darkening the inscatter. Purely
-			// screen space - it is anchored to where the sun projects rather
-			// than to the world, and no geometry occludes it - so it is a
-			// stylised effect rather than a physical one, kept as the option
-			// that costs nothing.
-			[branch]
-			if (underwater_godrays_procedural != 0)
-			{
-				float4 lightScreen = mul(GetCamera().view_projection, float4(GetCamera().position + refractedLightDir * 10000, 1));
-				lightScreen.xy /= lightScreen.w;
-				float godray = GodRays(lightScreen, clipspace2, uv, GetTime(), 0.1, 32.0) + GodRays(lightScreen, clipspace2, uv, -GetTime() * 0.5, 0.1, 20.0);
-				godray *= 1 - pow(abs(dot(refractedLightDir, V)), 2); // blend out at light center
-				godray *= pow(1 - saturate(-dot(refractedLightDir, V)), 1); // blend out at other side
-				inscatteringColor *= 1 - godray;
-			}
-		
-			fogColor += inscatteringColor;
-		}
-
 		// Single-scattering composite: what survives the water plus what the
 		// water scatters back in.
-		color.rgb = color.rgb * transmittance + fogColor * inscatterAmount;
+		color.rgb = color.rgb * transmittance + fog.inscatter;
 
 		// Fraction of the volumetric light already sitting in the input that
 		// survives this pass.
@@ -411,7 +310,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			// param scales the medium so an artist can keep the window alive
 			// deeper (<1) or shut it earlier (>1); 1 is physical:
 			const float3 pathTransmittance =
-				exp(-ocean_dist * sigmaT * underwater_snell_fade);
+				exp(-ocean_dist * medium.sigmaT * underwater_snell_fade);
 			// Scalar stand-in for the activity gate below, taken from the
 			// channel that survives furthest:
 			const float pathFade = max(pathTransmittance.r,
@@ -481,8 +380,8 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			// the water with DEPTH (not strength) so it dissolves into the blue
 			// as it attenuates. The blend is per channel, so the window loses
 			// its warm end first and goes blue before it goes dark. Fade to the
-			// flat base water color, NOT fogColor: fogColor carries the sun
-			// inscatter / god-ray modulation, which would otherwise show as a
+			// flat base water color, NOT the fog's inscatter: that carries the
+			// sun and the god-ray modulation, which would otherwise show as a
 			// god-ray texture inside the window as it hazes out. Strength is
 			// the overall opacity, blending back to the normal underwater view:
 			const float3 windowContent =
