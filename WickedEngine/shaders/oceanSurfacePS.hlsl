@@ -138,9 +138,8 @@ float4 main(PSIn input) : SV_TARGET
 			water_depth += texture_ocean_displacementmap.SampleLevel(sampler_linear_wrap, reflectivePosition.xz * xOceanPatchSizeRecip, 0).z; // texture contains xzy!
 			// Same medium as the refraction below: what the planar reflection
 			// shows has crossed water_depth of water too.
-			const ShaderOcean water = GetWeather().ocean;
-			const float3 reflectionTransmittance = saturate(exp(-water_depth *
-				max(water.absorption.rgb + water.scattering.rgb, 0.00001)));
+			const float3 reflectionTransmittance = saturate(exp(
+				-water_depth * MakeWaterVolumetrics(1).sigmaT));
 			reflectiveColor.rgb = lerp(color.rgb, reflectiveColor.rgb, reflectionTransmittance);
 		}
 
@@ -193,9 +192,7 @@ float4 main(PSIn input) : SV_TARGET
 		// Water fog computation, using the same medium the underwater pass
 		// uses, so what the water looks like from above agrees with what it
 		// looks like from inside it.
-		const ShaderOcean water = GetWeather().ocean;
-		const float3 sigmaT =
-			max(water.absorption.rgb + water.scattering.rgb, 0.00001);
+		const float3 sigmaT = MakeWaterVolumetrics(1).sigmaT;
 
 		// What the refraction crossed is the SLANT path through the water, not
 		// the vertical drop to it. Refraction bends the view ray towards the

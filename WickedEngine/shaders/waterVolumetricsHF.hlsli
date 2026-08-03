@@ -242,11 +242,23 @@ struct WaterVolumetrics
 	float3 sigmaT;
 
 	/**
-	 * Henyey-Greenstein asymmetry, already reduced by similarity theory.
+	 * Henyey-Greenstein asymmetry as authored, before any reduction.
 	 *
-	 * Marine particulates scatter far forward, but that is the phase of a
-	 * single event; a single-scattering march standing in for a multiply
-	 * scattering medium should use the reduced value.
+	 * Marine particulates scatter extremely far forward - g around 0.9, see
+	 * WaterMedium::PhaseAsymmetry - but that is the phase of a SINGLE
+	 * scattering event, and feeding it straight into a term that stands for
+	 * many puts a spike some 300x the isotropic value at the sun. Use one of
+	 * the reduced forms below instead; this is here to derive them from.
+	 */
+	half phaseG0;
+
+	/**
+	 * Henyey-Greenstein asymmetry reduced by similarity theory.
+	 *
+	 * Reduced by the single-scattering albedo, which is the limit the
+	 * path-dependent reduction tends to as the path grows. The right choice
+	 * for a MARCH: it integrates a segment sample by sample and so has no one
+	 * path length to reduce by.
 	 */
 	half phaseG;
 
@@ -283,6 +295,29 @@ struct WaterVolumetrics
 	float VisibleRange()
 	{
 		return WATER_MARCH_OPTICAL_DEPTHS / min3(sigmaT.r, sigmaT.g, sigmaT.b);
+	}
+
+	/**
+	 * Asymmetry reduced by how much of the light was actually scattered.
+	 *
+	 * For a single stretch of water of known length, where the veiling term is
+	 * to hand. It already combines "how much was extinguished" with "how much
+	 * of that was redirected rather than absorbed", which is exactly what the
+	 * similarity reduction asks for - so clear water keeps a sharp sun glow
+	 * while turbid water, having scattered far more, spreads it into an even
+	 * haze.
+	 *
+	 * Tends to `phaseG` as the path grows and the veiling term saturates at
+	 * the albedo, so the two agree in the limit and differ only where there
+	 * genuinely is a path length to be had.
+	 *
+	 * @param[in] inscatterAmount - Veiling term, albedo * (1 - transmittance).
+	 *
+	 * @return The reduced asymmetry, for `HgPhase`.
+	 */
+	half ReducedPhaseG(float3 inscatterAmount)
+	{
+		return phaseG0 * (1 - (half)saturate(inscatterAmount.g));
 	}
 
 	/**
@@ -492,7 +527,8 @@ WaterVolumetrics MakeWaterVolumetrics(half submersion)
 	// Reduce the asymmetry from the UNFADED ratio, so crossing the surface
 	// changes how much the medium scatters but not the shape of its lobe.
 	const float3 albedo = sigmaS / sigmaT;
-	water.phaseG = (half)ocean.scattering.a * (1 - (half)saturate(albedo.g));
+	water.phaseG0 = (half)ocean.scattering.a;
+	water.phaseG = water.phaseG0 * (1 - (half)saturate(albedo.g));
 
 	return water;
 }

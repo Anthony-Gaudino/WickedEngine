@@ -174,32 +174,12 @@ WaterFog MakeWaterFog(
 			GetWeather().atmosphere, 0, L, texture_transmittancelut);
 	}
 
-	// Phase function of the medium, at a REDUCED asymmetry.
-	//
-	// Marine particulates scatter extremely far forward (g around 0.9, see
-	// WaterMedium::PhaseAsymmetry), but that is the phase of a SINGLE
-	// scattering event. What is being modulated here is the whole veiling
-	// radiance integrated along the path, and by the time light has bounced
-	// several times it has lost its original direction entirely. Feeding the
-	// raw single-scattering g into an integrated term puts an enormous spike at
-	// the sun: its peak is some 300x the isotropic value, so even a little of
-	// it swamps everything else.
-	//
-	// Similarity theory says to use a reduced asymmetry instead, scaled down by
-	// how much of the light has been scattered at all - which is exactly the
-	// veiling term computed above, since it already combines "how much was
-	// extinguished" with "how much of that was redirected rather than
-	// absorbed". Clear water keeps a sharp sun glow; turbid water, having
-	// scattered far more, spreads it into an even haze.
-	//
-	// Taken from the raw authored asymmetry rather than the medium's own
-	// phaseG, which is reduced by the albedo instead - the right choice for a
-	// march, which has no single path length to reduce by, and the wrong one
-	// here where there is exactly one.
-	const half multiScatter = (half)saturate(inscatterAmount.g);
-	const half phaseG = (half)ocean.scattering.a * (1 - multiScatter);
+	// Phase function of the medium, reduced by how much of the light this
+	// particular path actually scattered - see ReducedPhaseG. There is exactly
+	// one path length here, unlike in a march, so the medium's own albedo
+	// reduced phaseG would be throwing that away.
 	const half cosTheta = dot(toEye, -refractedLightDir);
-	inscatteringColor *= HgPhase(phaseG, cosTheta);
+	inscatteringColor *= HgPhase(medium.ReducedPhaseG(inscatterAmount), cosTheta);
 
 	// Uniform base phase, matching what the engine's height fog does for a
 	// constant medium (see GetFog in fogHF.hlsli):
