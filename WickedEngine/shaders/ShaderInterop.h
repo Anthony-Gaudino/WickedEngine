@@ -87,10 +87,17 @@ struct IndirectDispatchArgs
 #if !defined(__PSSL__) && !defined(__SCE__)
 // Common buffers:
 // These are usable by all shaders
-#define CBSLOT_IMAGE							0
-#define CBSLOT_FONT								0
 #define CBSLOT_RENDERER_FRAME					0
 #define CBSLOT_RENDERER_CAMERA					1
+
+// Image and font share a slot with the on demand buffers below rather than
+// with the frame, because those are the ones they genuinely never coexist
+// with. Sharing with the frame meant an image or font shader could not so much
+// as declare it - DXC rejects the overlap outright - which ruled out anything
+// scene dependent in a sprite, down to knowing where the camera is.
+// Still inside ROOT_CBV_COUNT, so they keep the dynamic offset fast path.
+#define CBSLOT_IMAGE							2
+#define CBSLOT_FONT								2
 
 // On demand buffers:
 // These are bound on demand and alive until another is bound at the same slot
@@ -115,10 +122,14 @@ struct IndirectDispatchArgs
 #define CBSLOT_RESERVED_PS5_0					0
 #define CBSLOT_RESERVED_PS5_1					1
 
-#define CBSLOT_IMAGE							2
-#define CBSLOT_FONT								2
 #define CBSLOT_RENDERER_FRAME					2
 #define CBSLOT_RENDERER_CAMERA					3
+
+// Off the frame's slot for the same reason as above. This block is headed
+// "don't use overlapping slots", and image and font were overlapping the frame
+// in spite of it.
+#define CBSLOT_IMAGE							8
+#define CBSLOT_FONT								8
 
 #define CBSLOT_RENDERER_VOLUMELIGHT				4
 #define CBSLOT_RENDERER_VOXELIZER				5
