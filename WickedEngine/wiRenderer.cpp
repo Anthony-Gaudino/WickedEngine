@@ -6671,6 +6671,13 @@ void DrawLensFlares(
 
 				XMStoreFloat3(&cb.xLensFlarePos, flarePos);
 
+				// The flare's screen position cannot say how much water the
+				// light crossed to reach the lens, so hand over where it
+				// actually is. For a directional light that is the far plane
+				// point along its direction, which clips at the surface to the
+				// same slant path the sun's own lighting uses.
+				XMStoreFloat3(&cb.xLensFlareWorldPos, POS);
+
 				uint32_t i = 0;
 				for (auto& x : light.lensFlareRimTextures)
 				{

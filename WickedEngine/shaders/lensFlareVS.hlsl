@@ -1,4 +1,5 @@
 #include "globals.hlsli"
+#include "waterVolumetricsHF.hlsli"
 
 PUSHCONSTANT(push, LensFlarePush);
 
@@ -16,6 +17,7 @@ struct VertexOut
 	float4 pos : SV_POSITION;
 	float2 uv : TEXCOORD0;
 	nointerpolation float opacity : TEXCOORD1;
+	nointerpolation float3 waterTransmittance : TEXCOORD2;
 };
 
 VertexOut main(uint vertexID : SV_VertexID)
@@ -54,6 +56,48 @@ VertexOut main(uint vertexID : SV_VertexID)
 	Out.opacity *= saturate(1 - length(pos - moddedpos));
 
 	Out.pos = float4(moddedpos + BILLBOARD[vertexID] * push.xLensFlareSize * GetCamera().canvas_size_rcp, 0, 1);
+
+	// What the water leaves of the light before it ever reaches the lens.
+	//
+	// A flare is made inside the lens, so being under water does not suppress
+	// it - a submerged camera pointed at a lamp flares just as one in air does.
+	// What changes is the light arriving to make it: dimmed, and shifted blue,
+	// by however much water it crossed. A red lamp thirty metres off flares
+	// faintly and blue, not brightly and red.
+	//
+	// Spectral, so it cannot ride on the scalar opacity above. Per flare rather
+	// than per pixel - one light, one path, and the quad is a screen space
+	// artefact rather than a place in the world.
+	Out.waterTransmittance = 1;
+
+	[branch]
+	if (GetCamera().IsUnderwaterFog())
+	{
+		// The same submersion test the rest of the frame uses, taken where the
+		// light appears on screen. Saturated because a directional light
+		// projects to wherever the sun is, which may be off screen entirely.
+		const WaterVolumetrics medium =
+			GetWaterVolumetricsAtEye(saturate(push.xLensFlarePos.xy));
+
+		[branch]
+		if (medium.IsActive())
+		{
+			const float3 toLight =
+				push.xLensFlareWorldPos - GetCamera().position;
+			const float distanceToLight = length(toLight);
+
+			// LightTransmittance clips the path at the surface and takes the
+			// Fresnel loss when it had to, so a lamp above the water and one
+			// below it are both handled - and the sun's flare dies out as it
+			// drops, most of a low sun reflecting off the surface rather than
+			// entering the water at all.
+			Out.waterTransmittance = medium.LightTransmittance(
+				GetCamera().position,
+				toLight / max(distanceToLight, 0.00001),
+				distanceToLight
+			);
+		}
+	}
 
 	return Out;
 }

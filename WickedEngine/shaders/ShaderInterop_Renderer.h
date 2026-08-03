@@ -1604,6 +1604,11 @@ struct LensFlarePush
 	float xLensFlareOffset;
 	float2 xLensFlareSize;
 	uint2 xLensFlareDirectionalLight;
+	// World position of the light itself, which the screen position above
+	// cannot stand in for: the water between it and the eye is what decides
+	// how much of the flare survives, and that is a distance in the world.
+	float3 xLensFlareWorldPos;
+	float xLensFlarePadding;
 };
 
 struct WetmapPush
