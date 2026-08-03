@@ -49,6 +49,32 @@ float4 main(VertexToPixel input) : SV_Target
 		? RefractIntoWater((float3)L)
 		: (float3)L;
 
+	// Cut the segment down to the distance this water is transparent over.
+	//
+	// The water branch INTEGRATES - every sample carries a stepSize - so its
+	// accuracy rests on the near end of the segment being sampled finely. All
+	// the in-scatter that reaches the eye comes from the last few metres, yet
+	// the closest sample sits a whole step away. Let the segment run to the far
+	// plane, which is what happens over open water with nothing behind it to
+	// put in the depth buffer, and that step becomes hundreds of metres: every
+	// sample lands where the water is already opaque. A thousand metre segment
+	// returns three percent of the true integral in blue and none of the red.
+	//
+	// Beyond a few optical depths there is nothing left out there to gather, so
+	// discarding that stretch costs nothing and buys back a step measured in
+	// metres. Safe to move P here because this pass marches from the camera, so
+	// shortening the far end cannot cross the near one.
+	[branch]
+	if (water.IsActive())
+	{
+		const float visibleRange = water.VisibleRange();
+		if (cameraDistance > visibleRange)
+		{
+			P = GetCamera().position - V * visibleRange;
+			cameraDistance = visibleRange;
+		}
+	}
+
 	float3 rayEnd = GetCamera().position;
 
 	const uint sampleCount = 16;

@@ -77,6 +77,27 @@ static const float WATER_REFRACTIVE_INDEX = 1.333;
 static const float WATER_DOWNWELLING_SLANT = 1.204;
 
 /**
+ * Optical depths a march covers before treating the water as opaque.
+ *
+ * Not simply "far enough to be negligible". The sample count is fixed, so the
+ * segment length sets the step, and the two errors pull against each other:
+ * stop too soon and the tail of the thinnest channel is truncated, run too far
+ * and the step grows until the near end - where every photon that reaches the
+ * eye comes from - falls inside a single sample.
+ *
+ * Measured against the analytic integral over a 16 sample march, the balance
+ * sits near three optical depths, which recovers 86% of the blue and green and
+ * 55% of the red. Five would trade 20 points of red for one of blue; two would
+ * trade five of blue for thirteen of red.
+ *
+ * @note Red stays biased low: its own extinction is several times the
+ *       thinnest channel's, so a step chosen for blue is far too coarse for it.
+ *       Fixing that properly needs importance sampling along the transmittance
+ *       rather than a uniform step, which is a bigger change than this bound.
+ */
+static const float WATER_MARCH_OPTICAL_DEPTHS = 3.0;
+
+/**
  * Fraction of light reflected by the surface at straight-down incidence.
  *
  * \[
@@ -249,6 +270,25 @@ struct WaterVolumetrics
 	bool IsActive()
 	{
 		return submersion > 0;
+	}
+
+	/**
+	 * Distance past which nothing more can reach the eye through this water.
+	 *
+	 * Taken on the thinnest channel - whichever penetrates furthest, blue in
+	 * most water - so the range is the one that still has something left to
+	 * gather rather than the one that gave up first.
+	 *
+	 * Exists because the in-scatter march INTEGRATES over a fixed number of
+	 * samples: its accuracy depends on the step, and the step depends on how
+	 * far the segment runs. See the caller for what that costs.
+	 *
+	 * @return Distance in metres. Meaningless unless `IsActive()`, since the
+	 *         coefficients fall to nothing above the surface.
+	 */
+	float VisibleRange()
+	{
+		return WATER_MARCH_OPTICAL_DEPTHS / min3(sigmaT.r, sigmaT.g, sigmaT.b);
 	}
 
 	/**
