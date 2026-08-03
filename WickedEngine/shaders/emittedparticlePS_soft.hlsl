@@ -133,14 +133,23 @@ float4 main(VertextoPixel input) : SV_TARGET
 		//color.rgb = float3(unrotated_uv, 0);
 		//color.rgb = float3(input.tex, 0);
 
-		ApplyFog(dist, V, color);
-
 		color = max(0, color);
 	}
 
 #endif // EMITTEDPARTICLE_LIGHTING
 
 #ifndef EMITTEDPARTICLE_DISTORTION
+	// Height fog.
+	//
+	// Outside the lighting block on purpose. It used to sit inside it, and the
+	// DEFAULT emitter type is SOFT, which does not define EMITTEDPARTICLE_
+	// LIGHTING - so an ordinary emitter was never fogged at all, above water or
+	// below. Skipped for the distortion permutation, which writes a normal map
+	// into the distortion buffer rather than radiance into the scene.
+	const float3 toEye = input.GetViewVector();
+	const float distToEye = length(toEye);
+	ApplyFog(distToEye, toEye / max(distToEye, 0.00001), color);
+
 	// The water between this particle and the eye.
 	//
 	// Outside the lighting block on purpose: the default emitter type is SOFT,
