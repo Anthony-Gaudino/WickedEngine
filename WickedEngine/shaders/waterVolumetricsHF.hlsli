@@ -34,19 +34,17 @@
 
 #include "globals.hlsli"
 #include "skyAtmosphere.hlsli"
+#include "underwaterHF.hlsli"
 
 /**
  * Depth over which the water medium fades in below the surface (metres).
  *
- * The volumetric light passes clamp their march at the water plane, so a ray
- * looking down flips from a segment that ends at the surface to one running all
- * the way to the sea bed the moment the eye crosses it. Ramping the medium in
- * over the first metre keeps that from landing as a step change in brightness.
+ * Applies to SHADED POINTS only. A wall running down into the water would
+ * otherwise pick up the full attenuation of a distant submerged light on the
+ * first pixel below the waterline, drawing a hard line across it, and geometry
+ * straddling the surface is common enough to be worth a metre of softening.
  *
- * It does the same job for shaded points, where the discontinuity is spatial
- * rather than temporal: a wall running down into the water would otherwise pick
- * up the full attenuation of a distant submerged light on the first pixel below
- * the waterline, drawing a hard line across it.
+ * Deliberately NOT applied to the eye - see GetWaterVolumetricsAtEye.
  */
 static const float WATER_VOLUMETRICS_FADE_DEPTH = 1.0;
 
@@ -226,7 +224,7 @@ float3 RefractIntoWater(float3 toLight)
  *
  * Example usage:
  * @code
- * const WaterVolumetrics water = GetWaterVolumetrics(GetCamera().position);
+ * const WaterVolumetrics water = GetWaterVolumetricsAtEye(ScreenCoord);
  * [branch]
  * if (water.IsActive())
  * {
@@ -433,26 +431,23 @@ struct WaterVolumetrics
 };
 
 /**
- * Builds the water medium as it applies at a world position.
+ * Builds the water medium for a given degree of submersion.
  *
- * A march passes the camera, since its whole segment lies on one side of the
- * surface; surface shading passes the lit point.
+ * Shared by the two entry points below, which differ only in how they decide
+ * that number.
  *
- * @param[in] position - World position to evaluate the medium at.
+ * @param[in] submersion - 0 for no medium at all, 1 for the full authored
+ *                         water, in between to fade it in.
  *
- * @return The medium. Inactive when there is no ocean or the position is above
- *         the surface, in which case the caller keeps its own fog.
+ * @return The medium. Inactive when there is no ocean, whatever was asked for.
  */
-WaterVolumetrics GetWaterVolumetrics(float3 position)
+WaterVolumetrics MakeWaterVolumetrics(half submersion)
 {
 	const ShaderOcean ocean = GetWeather().ocean;
 
 	WaterVolumetrics water;
 	water.waterHeight = ocean.water_height;
-	water.submersion = ocean.IsValid()
-		? (half)saturate(
-			(ocean.water_height - position.y) / WATER_VOLUMETRICS_FADE_DEPTH)
-		: (half)0;
+	water.submersion = ocean.IsValid() ? submersion : (half)0;
 
 	const float3 sigmaS = ocean.scattering.rgb;
 	const float3 sigmaT = max(ocean.absorption.rgb + sigmaS, 0.00001);
@@ -469,6 +464,60 @@ WaterVolumetrics GetWaterVolumetrics(float3 position)
 	water.phaseG = (half)ocean.scattering.a * (1 - (half)saturate(albedo.g));
 
 	return water;
+}
+
+/**
+ * Builds the water medium as it applies at a shaded point.
+ *
+ * Fades in over the first metre of depth, because a point's own submersion is
+ * a SPATIAL quantity: a wall running down into the water would otherwise take
+ * the full attenuation of a distant submerged light on the first pixel below
+ * the waterline, drawing a hard line across it.
+ *
+ * @param[in] position - World position of the shaded point.
+ *
+ * @return The medium. Inactive when there is no ocean or the point is at or
+ *         above the surface, in which case nothing attenuates.
+ */
+WaterVolumetrics GetWaterVolumetrics(float3 position)
+{
+	const float waterHeight = GetWeather().ocean.water_height;
+
+	return MakeWaterVolumetrics((half)saturate(
+		(waterHeight - position.y) / WATER_VOLUMETRICS_FADE_DEPTH));
+}
+
+/**
+ * Builds the water medium as it applies to one pixel's view ray.
+ *
+ * Per PIXEL, not per camera, and using the very test the underwater post pass
+ * and the submerged depth of field and chromatic aberration already share. A
+ * camera crossing the surface is submerged across part of the frame long before
+ * its own centre goes under - the waterline sweeps down the screen - and asking
+ * where the camera is instead answered for the whole frame at once. That left
+ * the post pass painting water over the bottom of the view while this medium
+ * was still inactive, so the fog appeared but the shafts did not, and they came
+ * in together only once the camera itself was a good way under.
+ *
+ * Judged against the wave displaced surface, so a crest counts as water, and at
+ * the same plane a metre ahead of the near plane, so all of them switch on the
+ * same pixels at the same instant.
+ *
+ * There is no fade with depth here, unlike a shaded point. Fading the medium
+ * thins the water rather than removing it, and both halves of that are wrong:
+ * scaling sigmaS costs the in-scatter over any path bounded by geometry - a sea
+ * bed forty metres out gathers under a third of what it should at ten
+ * centimetres down - while scaling sigmaT makes the water CLEARER the nearer
+ * the surface the eye is, seen as looking far too far while going under.
+ *
+ * @param[in] screenUV - Screen space UV coordinates (0-1) of the pixel.
+ *
+ * @return The medium. Inactive where there is no ocean or the pixel is above
+ *         the waterline, in which case the caller keeps its own fog.
+ */
+WaterVolumetrics GetWaterVolumetricsAtEye(float2 screenUV)
+{
+	return MakeWaterVolumetrics((half)ocean_underwater_factor(screenUV));
 }
 
 /**

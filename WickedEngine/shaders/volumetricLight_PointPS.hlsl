@@ -20,11 +20,17 @@ float4 main(VertexToPixel input) : SV_TARGET
 	const ShaderOcean ocean = GetWeather().ocean;
 	if (ocean.IsValid())
 	{
+		// Traced from this pixel's own submersion test point against the
+		// wave displaced surface, matching GetWaterVolumetricsAtEye below.
+		// Using the camera and the flat plane here would clamp a downward ray
+		// to nothing for the very pixels that test as submerged, so the medium
+		// would be active over a segment too short to scatter anything.
+		const float3 waterEye = ocean_underwater_test_position(ScreenCoord);
 		float3 rayDirection = -V;
-		float dist = intersectPlaneClampInfiniteDist(GetCamera().position, rayDirection, float3(0, 1, 0), ocean.water_height);
+		float dist = intersectPlaneClampInfiniteDist(waterEye, rayDirection, float3(0, 1, 0), ocean_surface_height(waterEye.xz));
 		if (dist > 0 && dist < cameraDistance)
 		{
-			P = GetCamera().position + rayDirection * dist;
+			P = waterEye + rayDirection * dist;
 			cameraDistance = dist;
 		}
 	}
@@ -49,10 +55,12 @@ float4 main(VertexToPixel input) : SV_TARGET
 	
 	const uint maskTex = light.GetTextureIndex();
 
-	// Below the waterline the whole marched segment is under water, because the
-	// ocean clamp above ends an upward ray at the surface and a ray heading
-	// down or along never reaches it from below. One test, no straddling.
-	const WaterVolumetrics water = GetWaterVolumetrics(GetCamera().position);
+	// The whole marched segment is on one side of the surface, because the
+	// clamp above ends an upward ray there and a ray heading down or along
+	// never reaches it from below. One test, no straddling - the PIXEL's test
+	// rather than the camera's, so this agrees with the other underwater
+	// effects while the camera is crossing.
+	const WaterVolumetrics water = GetWaterVolumetricsAtEye(ScreenCoord);
 
 	// Perform ray marching to integrate light volume along view ray:
 	[loop]

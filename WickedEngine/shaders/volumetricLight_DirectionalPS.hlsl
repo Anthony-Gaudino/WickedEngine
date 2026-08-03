@@ -21,11 +21,17 @@ float4 main(VertexToPixel input) : SV_Target
 	const ShaderOcean ocean = GetWeather().ocean;
 	if (ocean.IsValid())
 	{
+		// Traced from this pixel's own submersion test point against the
+		// wave displaced surface, matching GetWaterVolumetricsAtEye below.
+		// Using the camera and the flat plane here would clamp a downward ray
+		// to nothing for the very pixels that test as submerged, so the medium
+		// would be active over a segment too short to scatter anything.
+		const float3 waterEye = ocean_underwater_test_position(ScreenCoord);
 		float3 rayDirection = -V;
-		float dist = intersectPlaneClampInfiniteDist(GetCamera().position, rayDirection, float3(0, 1, 0), ocean.water_height);
+		float dist = intersectPlaneClampInfiniteDist(waterEye, rayDirection, float3(0, 1, 0), ocean_surface_height(waterEye.xz));
 		if (dist > 0 && dist < cameraDistance)
 		{
-			P = GetCamera().position + rayDirection * dist;
+			P = waterEye + rayDirection * dist;
 			cameraDistance = dist;
 		}
 	}
@@ -36,11 +42,13 @@ float4 main(VertexToPixel input) : SV_Target
 	const half3 L = light.GetDirection();
 	const half scattering = ComputeScattering(saturate(dot(L, -V)));
 
-	// Below the waterline the segment this pass marches is entirely under
-	// water, because the ocean clamp above already ends an upward ray at the
-	// surface and a ray heading down or along never reaches it from below. So
-	// one test decides the medium for the whole loop, with no straddling.
-	const WaterVolumetrics water = GetWaterVolumetrics(GetCamera().position);
+	// The segment is entirely on one side of the surface, because the clamp
+	// above already ends an upward ray there and a ray heading down or along
+	// never reaches it from below. So one test decides the medium for the whole
+	// loop, with no straddling - but it has to be the PIXEL's test, not the
+	// camera's, or this disagrees with every other underwater effect while the
+	// camera is crossing.
+	const WaterVolumetrics water = GetWaterVolumetricsAtEye(ScreenCoord);
 
 	// Sunlight bends at the surface before it ever reaches a submerged sample.
 	// Shared with surface shading, so a shaft and the sea bed it lands on agree
