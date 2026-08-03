@@ -18737,7 +18737,6 @@ void Postprocess_Underwater(
 	float snell,
 	float snell_fade,
 	bool snell_rt,
-	bool godrays_procedural,
 	int volumetrics_texture
 )
 {
@@ -18759,7 +18758,6 @@ void Postprocess_Underwater(
 	postprocess.params0.z = std::max(0.0f, snell); // underwater_snell
 	postprocess.params0.w = std::max(0.0f, snell_fade); // underwater_snell_fade
 	postprocess.params1.x = snell_rt ? 1.0f : 0.0f; // underwater_snell_rt
-	postprocess.params1.y = godrays_procedural ? 1.0f : 0.0f; // underwater_godrays_procedural
 	// underwater_volumetrics_texture: reinterpreted as an int by the shader, so
 	// copy the bits rather than converting through float
 	std::memcpy(&postprocess.params1.w, &volumetrics_texture, sizeof(volumetrics_texture));

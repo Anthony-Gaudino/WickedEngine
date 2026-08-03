@@ -1513,7 +1513,7 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 	AddWidget(&underwaterSnellRTCheckBox);
 
 	underwaterGodRaysProceduralCheckBox.Create("God Rays (Procedural): ");
-	underwaterGodRaysProceduralCheckBox.SetTooltip("Stylised underwater god rays: radial stripes swept around the sun's screen position. Costs almost nothing, but it is screen space - the stripes are not attached to the world and no geometry blocks them. Independent of the ray marched shafts; either or both can be on.");
+	underwaterGodRaysProceduralCheckBox.SetTooltip("Stylised underwater god rays: radial stripes swept around the sun's screen position. Costs almost nothing, but it is screen space - the stripes are not attached to the world and no geometry blocks them. Independent of a light's own Volumetric flag; either or both can be on.");
 	underwaterGodRaysProceduralCheckBox.SetSize(XMFLOAT2(hei, hei));
 	underwaterGodRaysProceduralCheckBox.SetPos(XMFLOAT2(x, y += step));
 

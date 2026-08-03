@@ -229,20 +229,6 @@ WaterFog MakeWaterFog(
 }
 
 /**
- * Whether the fog is applied where a fragment is drawn or by the post pass.
- *
- * Temporary scaffold for the migration. Both implementations are live and this
- * picks between them, so the two can be compared in one scene by flipping this
- * and rebuilding the shaders. Setting it removes the post pass's fog and hands
- * the job to every draw shader; clearing it does the reverse.
- *
- * @note Goes away once the per-fragment path has proven itself; the post pass
- *       cannot fog a transparent correctly and is only kept here to compare
- *       against.
- */
-static const bool WATER_FOG_PER_FRAGMENT = true;
-
-/**
  * The water's fog between the eye and a fragment.
  *
  * The whole point of applying this where a fragment is drawn rather than over
@@ -274,7 +260,7 @@ WaterFog GetWaterFog(float2 screenUV, float3 fragmentPosition)
 	fog.inscatter = 0;
 
 	[branch]
-	if (!WATER_FOG_PER_FRAGMENT || !GetCamera().IsUnderwaterFog())
+	if (!GetCamera().IsUnderwaterFog())
 	{
 		return fog;
 	}

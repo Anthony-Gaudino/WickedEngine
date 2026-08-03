@@ -130,79 +130,25 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		ocean_surface_pos += displacement;
 		const float ocean_dist = length(ocean_surface_pos - campos);
 
-		// How deep the EYE sits below the surface. Not a path: it is the water
-		// column the sun had to come down through before it could scatter
-		// towards the eye at all.
-		const float camera_depth = max(0, ocean_pos.y - world_pos.y);
-
 		// View ray from the eye into the scene:
 		const float3 rayDir = -V;
 
-		// Water the light crossed on its way to the eye: the stretch of the
-		// segment from this pixel's near-plane point to whatever it sees that
-		// lies below the surface.
-		//
-		// One expression for every case the reconstruction here used to sort
-		// out by hand. Both ends under water gives the whole distance; the eye
-		// under and the far end above - a shore, a boat, the sky - gives the
-		// stretch up to the crossing; the eye above and the far end under gives
-		// the stretch down from it. The far plane needs no special case: there
-		// is no geometry there, the reconstruction simply lands a very long way
-		// off, and a downward ray correctly takes all of it.
-		//
-		// That replaces an exit-distance trace, a smoothstep over the shaded
-		// point's own depth, and a lerp between the two - machinery that existed
-		// only because a screen-space pass had to guess which of those three
-		// cases it was looking at from a depth buffer the ocean is not in.
-		//
-		// Clipped against the STILL water plane, not the displaced surface: the
-		// crossing point's xz is not known until the crossing is found, so a
-		// displaced clip would need a march. It is also the plane
-		// SubmergedLightPath clips the light's own path against, so the fog and
-		// the lighting it fogs agree about where the water stops.
-		const float submerged_fraction = saturate(
-			(ocean.water_height - min(campos.y, surface_position.y))
-			/ max(abs(surface_position.y - campos.y), 0.00001));
-		const float fog_distance = surface_dist * submerged_fraction;
-
-		// The water's own fog over the view ray's path through it. Shared with
-		// the draw shaders, so a pixel fogged here and a pixel fogged where it
-		// was drawn cannot drift apart.
-		//
-		// The medium is taken unfaded: this whole block is already masked to
-		// the submerged part of the screen by the waterline blend at the end.
+		// The medium, for Snell's window below. This pass no longer fogs
+		// anything: every fragment applied the water's fog over its own view
+		// path as it was drawn, which is the only way a transparent can be
+		// fogged by its own distance rather than by whatever is behind it.
 		const WaterVolumetrics medium = MakeWaterVolumetrics(1);
 
 		color = input.SampleLevel(sampler_linear_mirror, uv, 0);
 
 		// Fraction of what this pass received that it goes on to keep.
 		//
-		// Every stage below that scales or replaces the input has to be
-		// multiplied in here, because the volumetric light already sitting in
-		// it was composited back in RenderTransparents with the march's own
-		// transmittance applied - so whatever this pass takes off it has to be
-		// given back at the end.
+		// Whatever this pass scales or replaces has to be multiplied in here,
+		// because the volumetric light already sitting in the input was
+		// composited back in RenderTransparents with the march's own
+		// transmittance applied - so anything taken off it has to be given back
+		// at the end. Only Snell's window is left to take any.
 		float3 volSurvival = 1;
-
-		[branch]
-		if (!WATER_FOG_PER_FRAGMENT)
-		{
-			// Every fragment now fogs itself as it is drawn, so this is dead
-			// unless the migration switch is turned back. Kept only so the two
-			// implementations can be compared in one scene.
-			const WaterFog fog = MakeWaterFog(
-				medium,
-				fog_distance,
-				V,
-				camera_depth,
-				uv,
-				clipspace2.xy,
-				underwater_godrays_procedural != 0
-			);
-
-			color.rgb = color.rgb * fog.transmittance + fog.inscatter;
-			volSurvival = fog.transmittance;
-		}
 
 		// Snell's window: looking up from under water, refraction gathers the
 		// whole above-water hemisphere into an overhead circular window of

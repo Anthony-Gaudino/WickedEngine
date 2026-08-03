@@ -1085,9 +1085,6 @@ namespace wi::renderer
 	 *                         the window survives (1 = physically correct).
 	 * @param[in] snell_rt - Trace the refracted ray into the real scene instead
 	 *                       of showing the analytic sky. Requires ray tracing.
-	 * @param[in] godrays_procedural - Draw the screen space procedural god ray
-	 *                                 stripes. Cheap and stylised; independent
-	 *                                 of any ray marched shafts.
 	 * @param[in] volumetrics_texture - Bindless descriptor index of the
 	 *                                  volumetric light target, or -1 when the
 	 *                                  volumetric composite did not run. The
@@ -1104,7 +1101,6 @@ namespace wi::renderer
 		float snell = 0.0f,
 		float snell_fade = 1.0f,
 		bool snell_rt = false,
-		bool godrays_procedural = true,
 		int volumetrics_texture = -1
 	);
 	struct MeshBlendResources

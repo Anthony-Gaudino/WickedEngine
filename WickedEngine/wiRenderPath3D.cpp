@@ -2264,9 +2264,8 @@ namespace wi
 			// if the camera were in air: no refraction into Snell's window, no
 			// attenuation by the water column, and the radial blur smears it
 			// over whatever it passes - which is what lights up the underside
-			// of anything floating on the surface. Fade the whole contribution
-			// out as the camera goes under; the underwater pass owns the sun's
-			// appearance from down there.
+			// of anything floating on the surface. The underwater pass owns the
+			// sun's appearance from down there.
 			float lightShaftsWaterFade = 1;
 			if (scene->weather.IsOceanEnabled())
 			{
@@ -2427,15 +2426,19 @@ namespace wi
 					getUnderwaterSnellEnabled()
 					&& getUnderwaterSnellRTEnabled()
 					&& device->CheckCapability(wi::graphics::GraphicsDeviceCapability::RAYTRACING);
-				// Volumetric lights were composited into the scene back in
-				// RenderTransparents, so the water fog inside this pass would
-				// attenuate them a second time - the volumetric march already
-				// applied its own. Hand the pass the original half resolution
-				// radiance so it can add back whatever its stages destroyed.
-				// The condition has to match the composite's exactly, or the
-				// pass would add back something that was never put in.
+				// Snell's window REPLACES what is behind it, including any
+				// volumetric light already composited there back in
+				// RenderTransparents. Hand the pass the original half
+				// resolution radiance so it can put those beams back inside the
+				// window. The condition has to match the composite's exactly,
+				// or the pass would add back something that was never put in.
+				//
+				// Only the window destroys anything now that the fog is applied
+				// per fragment, so with the window off there is nothing to
+				// restore and the texture need not be bound at all.
 				const int underwater_volumetrics_texture =
-					(getVolumeLightsEnabled()
+					(underwater_snell > 0
+						&& getVolumeLightsEnabled()
 						&& visibility_main.IsRequestedVolumetricLights()
 						&& rtVolumetricLights.IsValid())
 					? device->GetDescriptorIndex(
@@ -2449,7 +2452,6 @@ namespace wi
 					underwater_snell,
 					getUnderwaterSnellFade(),
 					underwater_snell_rt,
-					getUnderwaterGodRaysProceduralEnabled(),
 					underwater_volumetrics_texture
 				);
 
