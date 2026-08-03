@@ -77,21 +77,17 @@ static const float WATER_DOWNWELLING_SLANT = 1.204;
 /**
  * Optical depths a march covers before treating the water as opaque.
  *
- * Not simply "far enough to be negligible". The sample count is fixed, so the
- * segment length sets the step, and the two errors pull against each other:
- * stop too soon and the tail of the thinnest channel is truncated, run too far
- * and the step grows until the near end - where every photon that reaches the
- * eye comes from - falls inside a single sample.
+ * The in-scatter itself no longer needs this - `StepIntegralWeight` makes the
+ * march exact however coarsely the segment is divided. What still needs it is
+ * everything sampled per step rather than integrated: the light's path to the
+ * sample and the shadow lookup are held constant across a step, so a segment
+ * left to run to the far plane would resolve the shafts at one sample per
+ * hundred metres and lose their shape even while carrying the right energy.
  *
- * Measured against the analytic integral over a 16 sample march, the balance
- * sits near three optical depths, which recovers 86% of the blue and green and
- * 55% of the red. Five would trade 20 points of red for one of blue; two would
- * trade five of blue for thirteen of red.
- *
- * @note Red stays biased low: its own extinction is several times the
- *       thinnest channel's, so a step chosen for blue is far too coarse for it.
- *       Fixing that properly needs importance sampling along the transmittance
- *       rather than a uniform step, which is a bigger change than this bound.
+ * Three optical depths of the thinnest channel keeps the step in metres and
+ * still captures 95% of that channel's in-scatter, essentially all of the
+ * others'. Running further buys the last few percent of blue at the cost of a
+ * coarser shadow.
  */
 static const float WATER_MARCH_OPTICAL_DEPTHS = 3.0;
 
@@ -305,6 +301,41 @@ struct WaterVolumetrics
 	float3 ViewTransmittance(float distanceFromEye)
 	{
 		return exp(-distanceFromEye * sigmaT);
+	}
+
+	/**
+	 * Integral of the view transmittance across one march step.
+	 *
+	 * A step contributes the in-scatter along a whole segment rather than at a
+	 * point, and the view transmittance falls exponentially across it:
+	 * \[
+	 * \int_{d-\Delta}^{d} e^{-\sigma_t s}\,ds
+	 *   = e^{-\sigma_t (d - \Delta)}\,
+	 *     \frac{1 - e^{-\sigma_t \Delta}}{\sigma_t}
+	 * \]
+	 * so a step weighs this much, not its own length. Sampling the
+	 * transmittance at one end and multiplying by the length is a left Riemann
+	 * sum over an exponential: it misses whatever falls inside the first step,
+	 * and that is where nearly all the light reaching the eye comes from. Red
+	 * loses about half its in-scatter at a two metre step, being extinguished
+	 * several times faster than blue.
+	 *
+	 * Summed over the march this telescopes back to the closed form, so the
+	 * result is exact at any step size and in every channel - the accuracy no
+	 * longer depends on how finely the segment happens to be divided.
+	 *
+	 * Depends only on the step, so callers hoist it out of their loop. Pair it
+	 * with `ViewTransmittance` evaluated at the step's NEAR end, which is what
+	 * the formula above is anchored to.
+	 *
+	 * @param[in] stepSize - Length of one march step (in metres).
+	 *
+	 * @return Per-channel weight for the step's in-scatter (in metres). Tends
+	 *         to `stepSize` itself as the step shrinks.
+	 */
+	float3 StepIntegralWeight(float stepSize)
+	{
+		return (1 - exp(-stepSize * sigmaT)) / sigmaT;
 	}
 
 	/**

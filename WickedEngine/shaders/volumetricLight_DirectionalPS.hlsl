@@ -92,6 +92,16 @@ float4 main(VertexToPixel input) : SV_Target
 	// dither ray start to help with undersampling:
 	P = P + V * min(stepSize * dither(input.pos.xy), 10); // limit dithering step to 10 to avoid very large dither on sky
 
+	// Weight of one march step's in-scatter, hoisted out of the loop because it
+	// depends only on the step. Guarded, because above the waterline the
+	// medium's coefficients are zero and this divides by them.
+	float3 stepIntegralWeight = 0;
+	[branch]
+	if (water.IsActive())
+	{
+		stepIntegralWeight = water.StepIntegralWeight(stepSize);
+	}
+
 	// Perform ray marching to integrate light volume along view ray:
 	[loop]
 	for (uint i = 0; i < sampleCount; ++i)
@@ -134,8 +144,9 @@ float4 main(VertexToPixel input) : SV_Target
 			// scattering coefficient instead of an authored fog density.
 			shadow *= (half3)(
 				water.InScatter(P, Lwater, V, FLT_MAX)
-				* water.ViewTransmittance(cameraDistance - marchedDistance)
-				* stepSize
+				* water.ViewTransmittance(
+					cameraDistance - marchedDistance - stepSize)
+				* stepIntegralWeight
 			);
 		}
 		else

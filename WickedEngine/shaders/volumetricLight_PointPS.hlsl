@@ -62,6 +62,16 @@ float4 main(VertexToPixel input) : SV_TARGET
 	// effects while the camera is crossing.
 	const WaterVolumetrics water = GetWaterVolumetricsAtEye(ScreenCoord);
 
+	// Weight of one march step's in-scatter, hoisted out of the loop because it
+	// depends only on the step. Guarded, because above the waterline the
+	// medium's coefficients are zero and this divides by them.
+	float3 stepIntegralWeight = 0;
+	[branch]
+	if (water.IsActive())
+	{
+		stepIntegralWeight = water.StepIntegralWeight(stepSize);
+	}
+
 	// Perform ray marching to integrate light volume along view ray:
 	[loop]
 	for(uint i = 0; i < sampleCount; ++i)
@@ -97,8 +107,9 @@ float4 main(VertexToPixel input) : SV_TARGET
 			// two and fades with distance instead of carrying forever.
 			attenuation *= (half3)(
 				water.InScatter(P, L, V, dist)
-				* water.ViewTransmittance(cameraDistance - marchedDistance)
-				* stepSize
+				* water.ViewTransmittance(
+					cameraDistance - marchedDistance - stepSize)
+				* stepIntegralWeight
 			);
 		}
 		else
