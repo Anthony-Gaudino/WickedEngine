@@ -70,8 +70,15 @@ float4 main(VertexToPixel input) : SV_TARGET
 	const WaterVolumetrics water = GetWaterVolumetricsAtEye(ScreenCoord);
 
 	// Perform ray marching to integrate light volume along view ray:
+	//
+	// The ray advances in the increment expression rather than at the foot of
+	// the body, so that the "behind light" early-out below still moves it. As a
+	// `continue` over an advance written at the end, that test froze P: every
+	// remaining sample re-tested the same point, found it behind the light too,
+	// and the rest of the segment - including whatever lay in front of the
+	// light - was never marched at all.
 	[loop]
-	for (uint i = 0; i < sampleCount; ++i)
+	for (uint i = 0; i < sampleCount; ++i, marchedDistance += stepSize, P += V * stepSize)
 	{
 		float3 L = light.position - P;
 		const float3 Lunnormalized = L;
@@ -149,9 +156,6 @@ float4 main(VertexToPixel input) : SV_TARGET
 		}
 
 		accumulation += attenuation;
-
-		marchedDistance += stepSize;
-		P = P + V * stepSize;
 	}
 
 	// The water march integrates rather than averages, so the per-light boost
