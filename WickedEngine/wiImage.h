@@ -62,6 +62,7 @@ namespace wi::image
 			ANGULAR_INVERSE = 1 << 11,
 			DISTORTION_MASK = 1 << 12,
 			HIGHLIGHT = 1 << 13,
+			UNDERWATER_FOG = 1 << 14,
 		};
 		uint32_t _flags = EMPTY;
 
@@ -143,6 +144,7 @@ namespace wi::image
 		constexpr bool isDrawRect2Enabled() const { return _flags & DRAWRECT2; }
 		constexpr bool isMirrorEnabled() const { return _flags & MIRROR; }
 		constexpr bool isExtractNormalMapEnabled() const { return _flags & EXTRACT_NORMALMAP; }
+		constexpr bool isUnderwaterFogEnabled() const { return _flags & UNDERWATER_FOG; }
 		constexpr bool isFullScreenEnabled() const { return _flags & FULLSCREEN; }
 		constexpr bool isBackgroundEnabled() const { return _flags & BACKGROUND; }
 		constexpr bool isHDR10OutputMappingEnabled() const { return _flags & OUTPUT_COLOR_SPACE_HDR10_ST2084; }
@@ -162,6 +164,9 @@ namespace wi::image
 		constexpr void enableMirror() { _flags |= MIRROR; }
 		// enable normal map extraction shader that will perform texcolor * 2 - 1 (preferably onto a signed render target)
 		constexpr void enableExtractNormalMap() { _flags |= EXTRACT_NORMALMAP; }
+		// Fog this draw with the ocean's water. Only meaningful for something drawn
+		// into the scene with a customProjection; never set it for UI.
+		constexpr void enableUnderwaterFog() { _flags |= UNDERWATER_FOG; }
 		// enable full screen override. It will draw the image over the full screen, disabling any positioning and sizing setup
 		constexpr void enableFullScreen() { _flags |= FULLSCREEN; }
 		// enable background, which samples a background screen texture on transparent areas instead of alpha blending
@@ -185,6 +190,7 @@ namespace wi::image
 		constexpr void disableDrawRect2() { _flags &= ~DRAWRECT2; }
 		constexpr void disableMirror() { _flags &= ~MIRROR; }
 		constexpr void disableExtractNormalMap() { _flags &= ~EXTRACT_NORMALMAP; }
+		constexpr void disableUnderwaterFog() { _flags &= ~UNDERWATER_FOG; }
 		constexpr void disableFullScreen() { _flags &= ~FULLSCREEN; }
 		constexpr void disableBackground() { _flags &= ~BACKGROUND; }
 		constexpr void disableHDR10OutputMapping() { _flags &= ~OUTPUT_COLOR_SPACE_HDR10_ST2084; }

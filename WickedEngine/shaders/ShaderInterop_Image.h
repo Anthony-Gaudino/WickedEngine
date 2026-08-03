@@ -19,6 +19,12 @@ enum IMAGE_FLAGS
 	IMAGE_FLAG_GRADIENT_LINEAR = 1u << 12u,
 	IMAGE_FLAG_GRADIENT_LINEAR_REFLECTED = 1u << 13u,
 	IMAGE_FLAG_GRADIENT_CIRCULAR = 1u << 14u,
+	// Fog this draw with the ocean's water. Set only for sprites drawn into the
+	// scene: this same shader is every 2D UI element, every post-process blit
+	// and the final compose, none of which are in the world at all.
+	IMAGE_FLAG_UNDERWATER_FOG = 1u << 15u,
+	// ...and this draw is additive, so it takes the extinction only.
+	IMAGE_FLAG_UNDERWATER_FOG_ADDITIVE = 1u << 16u,
 };
 
 struct alignas(16) ImageConstants

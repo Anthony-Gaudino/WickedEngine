@@ -160,6 +160,16 @@ namespace wi::image
 		if (params.isHighlightEnabled())
 		{
 			image.flags |= IMAGE_FLAG_HIGHLIGHT;
+		}
+		if (params.isUnderwaterFogEnabled())
+		{
+			image.flags |= IMAGE_FLAG_UNDERWATER_FOG;
+			if (params.blendFlag == wi::enums::BLENDMODE_ADDITIVE)
+			{
+				// An additive draw takes the extinction only: the water's veiling
+				// light is already in whatever it is drawn over.
+				image.flags |= IMAGE_FLAG_UNDERWATER_FOG_ADDITIVE;
+			}
 			image.highlight_xy = wi::math::pack_half2(params.highlight_pos.x * canvas_aspect, params.highlight_pos.y);
 			image.highlight_color_spread = wi::math::pack_half4(params.highlight_color.x, params.highlight_color.y, params.highlight_color.z, params.highlight_spread);
 		}

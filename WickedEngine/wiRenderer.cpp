@@ -6235,6 +6235,13 @@ void DrawSpritesAndFonts(
 				M = R * M;
 			}
 			params.customProjection = &M;
+			if (!distortion)
+			{
+				// A scene sprite is in the world, so the water fogs it like
+				// anything else. Never on the distortion pass, which targets the
+				// distortion buffer rather than the scene.
+				params.enableUnderwaterFog();
+			}
 			if (sprite.maskResource.IsValid())
 			{
 				params.setMaskMap(&sprite.maskResource.GetTexture());
@@ -6266,6 +6273,11 @@ void DrawSpritesAndFonts(
 				M = R * M;
 			}
 			params.customProjection = &M;
+			if (!distortion)
+			{
+				// Scene text is in the world, so the water fogs it too.
+				params.enableUnderwaterFog();
+			}
 			wi::font::Draw(font.GetText().c_str(), font.GetCurrentTextLength(), params, cmd);
 		}
 		break;

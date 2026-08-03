@@ -5,6 +5,10 @@
 static const uint FONT_FLAG_SDF_RENDERING = 1u << 0u;
 static const uint FONT_FLAG_OUTPUT_COLOR_SPACE_HDR10_ST2084 = 1u << 1u;
 static const uint FONT_FLAG_OUTPUT_COLOR_SPACE_LINEAR = 1u << 2u;
+// Fog this draw with the ocean's water. Set only for text drawn into the
+// scene: this same shader draws all UI text and the debug overlay, whose
+// transform is a 2D canvas projection with no world position behind it.
+static const uint FONT_FLAG_UNDERWATER_FOG = 1u << 3u;
 
 struct FontVertex
 {

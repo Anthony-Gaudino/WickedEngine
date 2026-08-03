@@ -656,6 +656,10 @@ namespace wi::font
 		if (params.isLinearOutputMappingEnabled())
 		{
 			flags |= FONT_FLAG_OUTPUT_COLOR_SPACE_LINEAR;
+		}
+		if (params.isUnderwaterFogEnabled())
+		{
+			flags |= FONT_FLAG_UNDERWATER_FOG;
 			hdr_scaling = params.hdr_scaling;
 		}
 

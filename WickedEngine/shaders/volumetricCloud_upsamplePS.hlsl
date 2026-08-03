@@ -1,5 +1,6 @@
 #include "globals.hlsli"
 #include "ShaderInterop_Postprocess.h"
+#include "waterFogHF.hlsli"
 
 PUSHCONSTANT(postprocess, PostProcess);
 
@@ -91,6 +92,15 @@ float4 main(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
 			result = color / weightSum;
 		}
 	}
+
+	// The water between the clouds and the eye. They are blended over the scene
+	// after the sky, so without this they overwrite the sky's fog and leave a
+	// bright unfogged band at the horizon when seen from under water.
+	//
+	// Fogged at the cloud's own distance where there is one, and at the depth
+	// buffer's otherwise - clouds sit at the far field either way, so the path
+	// saturates and the exact value barely matters.
+	ApplyWaterFogPremultiplied(uv, depthWorldPosition, result);
 
 	return result;
 }

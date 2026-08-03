@@ -1,4 +1,5 @@
 #include "imageHF.hlsli"
+#include "waterFogHF.hlsli"
 
 float4 main(VertextoPixel input) : SV_TARGET
 {
@@ -154,6 +155,29 @@ float4 main(VertextoPixel input) : SV_TARGET
 	}
 	
 	color.rgb = mul(saturationMatrix(saturation), color.rgb);
+
+	// The water between this sprite and the eye. Flagged rather than inferred,
+	// because this same shader draws every 2D UI element, every post-process
+	// blit and the final compose - none of which are in the world.
+	[branch]
+	if (image.flags & IMAGE_FLAG_UNDERWATER_FOG)
+	{
+		const float2 screenUV = input.uv_screen();
+		const float3 P =
+			reconstruct_position(screenUV, input.screen.z / input.screen.w);
+		half4 fogged = (half4)color;
+
+		if (image.flags & IMAGE_FLAG_UNDERWATER_FOG_ADDITIVE)
+		{
+			ApplyWaterFogAdditive(screenUV, P, fogged);
+		}
+		else
+		{
+			ApplyWaterFog(screenUV, P, fogged);
+		}
+
+		color = (float4)fogged;
+	}
 	
 	[branch]
 	if (image.flags & IMAGE_FLAG_OUTPUT_COLOR_SPACE_LINEAR)

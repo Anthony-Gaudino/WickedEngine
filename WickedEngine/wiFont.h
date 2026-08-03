@@ -70,10 +70,15 @@ namespace wi::font
 			DEPTH_TEST = 1 << 3,
 			FLIP_HORIZONTAL = 1 << 4,
 			FLIP_VERTICAL = 1 << 5,
+			UNDERWATER_FOG = 1 << 6,
 		};
 		uint32_t _flags = SDF_RENDERING;
 
 		constexpr bool isSDFRenderingEnabled() const { return _flags & SDF_RENDERING; }
+		constexpr bool isUnderwaterFogEnabled() const { return _flags & UNDERWATER_FOG; }
+		// Fog this draw with the ocean's water. Only meaningful for text drawn into
+		// the scene with a customProjection; never set it for UI.
+		constexpr void enableUnderwaterFog() { _flags |= UNDERWATER_FOG; }
 		constexpr bool isHDR10OutputMappingEnabled() const { return _flags & OUTPUT_COLOR_SPACE_HDR10_ST2084; }
 		constexpr bool isLinearOutputMappingEnabled() const { return _flags & OUTPUT_COLOR_SPACE_LINEAR; }
 		constexpr bool isDepthTestEnabled() const { return _flags & DEPTH_TEST; }

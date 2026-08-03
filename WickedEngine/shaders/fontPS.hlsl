@@ -1,5 +1,6 @@
 #include "globals.hlsli"
 #include "ShaderInterop_Font.h"
+#include "waterFogHF.hlsli"
 
 struct VertextoPixel
 {
@@ -37,6 +38,17 @@ float4 main(VertextoPixel input) : SV_TARGET
 	}
 
 	color.rgb *= color.a; // NOTE: premultiplied blending! This is important for blending in HDR linear space
+
+	// The water between this glyph and the eye. Premultiplied, matching the
+	// line above: the veiling light has to be scaled by the coverage too, or a
+	// glyph's antialiased edge would paint haze where it barely covers.
+	[branch]
+	if (flags & FONT_FLAG_UNDERWATER_FOG)
+	{
+		const float2 screenUV = input.pos.xy * GetCamera().internal_resolution_rcp;
+		ApplyWaterFogPremultiplied(
+			screenUV, reconstruct_position(screenUV, input.pos.z), color);
+	}
 
 	[branch]
 	if (flags & FONT_FLAG_OUTPUT_COLOR_SPACE_LINEAR)
