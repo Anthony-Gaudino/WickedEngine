@@ -54,5 +54,25 @@ float4 main(PixelInput input) : SV_TARGET
 
 	color *= noise;
 
-	return saturateMediump(color);
+	// The water between this fragment and the eye. Its own main(), so it never
+	// reached the fog that objectHF applies for every other object shader - a
+	// hologram is stylised, but it is still something placed in the scene
+	// rather than a diagnostic overlay, so the water reaches it like anything
+	// else.
+	// NOT the uv above: that one has had its y scaled by the aspect ratio for
+	// the grain, so it is no longer a screen coordinate.
+	const float2 screenUV = input.pos.xy * GetCamera().internal_resolution_rcp;
+
+	half4 fogged = (half4)color;
+	[branch]
+	if (material.IsAdditive())
+	{
+		ApplyWaterFogAdditive(screenUV, input.GetPos3D(), fogged);
+	}
+	else
+	{
+		ApplyWaterFog(screenUV, input.GetPos3D(), fogged);
+	}
+
+	return saturateMediump((float4)fogged);
 }
