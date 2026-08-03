@@ -19,6 +19,7 @@
 #include "raytracingHF.hlsli"
 #include "brdf.hlsli"
 #include "shadingHF.hlsli"
+#include "waterFogHF.hlsli"
 
 // This shader computes per-pixel lighting based on primitiveID
 
@@ -125,6 +126,7 @@ void main(uint Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
 #endif // UNLIT
 
 	ApplyFog(surface.hit_depth, surface.V, color);
+	ApplyWaterFog(surface.screenUV, surface.P, color);
 
 	color = saturateMediump(color);
 

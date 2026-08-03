@@ -78,6 +78,7 @@ float4 main(VertexToPixel input) : SV_Target
 #endif // TRANSPARENT
 	
 	ApplyFog(dist, V, color);
+	ApplyWaterFog(ScreenCoord, surface.P, color);
 
 	color.rgb = mul(saturationMatrix(material.GetSaturation()), color.rgb);
 	

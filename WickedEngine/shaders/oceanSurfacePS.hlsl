@@ -287,6 +287,16 @@ float4 main(PSIn input) : SV_TARGET
 	
 	ApplyFog(dist, V, color);
 
+	// Seen from below, this surface's refraction is the sky, which fogged
+	// itself over exactly this fragment's eye-to-surface path - so it is passed
+	// through rather than fogged again.
+	ApplyWaterFog(
+		ScreenCoord,
+		surface.P,
+		surface.refraction.rgb * (1 - surface.F) * surface.refraction.a,
+		color
+	);
+
 	return saturateMediump(color);
 
 #endif // SHADOWMAPRENDERING

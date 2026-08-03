@@ -67,6 +67,7 @@ float4 main(VSOut input) : SV_Target
 #endif // TRANSPARENT
 	
 	ApplyFog(dist, V, color);
+	ApplyWaterFog(ScreenCoord, surface.P, color);
 	
 	return color;
 }

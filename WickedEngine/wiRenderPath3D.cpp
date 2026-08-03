@@ -706,6 +706,30 @@ namespace wi
 		camera->scissor = GetScissorInternalResolution();
 		camera->sample_count = depthBuffer_Main.desc.sample_count;
 		camera->shadercamera_options = SHADERCAMERA_OPTION_NONE;
+
+		// Let the draw shaders fog themselves with the water when the eye is
+		// anywhere near the surface. A coarse cull only: which PIXELS are
+		// submerged is decided per pixel by ocean_underwater_factor, and above
+		// the waterline the medium comes back inactive and every call site is a
+		// no-op. The margin has to clear both the wave displacement and the
+		// span of the test plane the per-pixel check sits on, a metre ahead of
+		// the near plane, so it is deliberately loose - being generous costs
+		// one uniform branch, being tight would cut the fog off early.
+		//
+		// Deliberately NOT set on camera_reflection below: a planar
+		// reflection's eye is the mirror of the real one, so it sits below the
+		// surface exactly when the real camera is above it, and every
+		// above-water object in the reflection would be fogged.
+		if (scene->weather.IsOceanEnabled() &&
+			camera->Eye.y < scene->weather.oceanParameters.waterHeight + 10.0f)
+		{
+			camera->shadercamera_options |= SHADERCAMERA_OPTION_UNDERWATER_FOG;
+			if (getUnderwaterGodRaysProceduralEnabled())
+			{
+				camera->shadercamera_options |= SHADERCAMERA_OPTION_UNDERWATER_GODRAYS;
+			}
+		}
+
 		camera->texture_primitiveID_index = device->GetDescriptorIndex(&rtPrimitiveID, SubresourceType::SRV);
 		camera->texture_depth_index = device->GetDescriptorIndex(&depthBuffer_Copy, SubresourceType::SRV);
 		camera->texture_velocity_index = device->GetDescriptorIndex(&rtVelocity, SubresourceType::SRV);

@@ -46,6 +46,7 @@
 #include "ShaderInterop_SurfelGI.h"
 #include "ShaderInterop_DDGI.h"
 #include "shadingHF.hlsli"
+#include "waterFogHF.hlsli"
 
 // DEFINITIONS
 //////////////////
@@ -1101,6 +1102,16 @@ float4 main(PixelInput input, in bool is_frontface : SV_IsFrontFace APPEND_COVER
 
 
 	ApplyFog(dist, surface.V, color);
+
+	// The water between this fragment and the eye. The refraction is handed
+	// over untouched: it was sampled from the scene behind this surface, which
+	// had already fogged itself over its own longer path when it was drawn.
+	ApplyWaterFog(
+		ScreenCoord,
+		surface.P,
+		surface.refraction.rgb * (1 - surface.F) * surface.refraction.a,
+		color
+	);
 
 	color.rgb = mul(saturationMatrix(material.GetSaturation()), color.rgb);
 

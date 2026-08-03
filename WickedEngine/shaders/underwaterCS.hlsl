@@ -172,38 +172,37 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		// The medium is taken unfaded: this whole block is already masked to
 		// the submerged part of the screen by the waterline blend at the end.
 		const WaterVolumetrics medium = MakeWaterVolumetrics(1);
-		const WaterFog fog = MakeWaterFog(
-			medium,
-			fog_distance,
-			V,
-			camera_depth,
-			uv,
-			clipspace2.xy,
-			underwater_godrays_procedural != 0
-		);
-
-		const float3 transmittance = fog.transmittance;
 
 		color = input.SampleLevel(sampler_linear_mirror, uv, 0);
 
-		// Single-scattering composite: what survives the water plus what the
-		// water scatters back in.
-		color.rgb = color.rgb * transmittance + fog.inscatter;
-
-		// Fraction of the volumetric light already sitting in the input that
-		// survives this pass.
+		// Fraction of what this pass received that it goes on to keep.
 		//
-		// Volumetric lights are composited into the scene back in
-		// RenderTransparents, long before this runs, so everything below treats
-		// them as if they were surface radiance emitted at the far end of the
-		// water column - attenuating them all over again, when the volumetric
-		// march has already applied its own transmittance along the same ray.
-		// Rather than reorder the frame (the composite is a blended draw inside
-		// the transparent render pass, and the post chain has no render pass and
-		// targets without RTVs), track what each stage takes away and give the
-		// difference back at the end. That is exact, needs only additions, and
-		// leaves the above-water path untouched.
-		float3 volSurvival = transmittance;
+		// Every stage below that scales or replaces the input has to be
+		// multiplied in here, because the volumetric light already sitting in
+		// it was composited back in RenderTransparents with the march's own
+		// transmittance applied - so whatever this pass takes off it has to be
+		// given back at the end.
+		float3 volSurvival = 1;
+
+		[branch]
+		if (!WATER_FOG_PER_FRAGMENT)
+		{
+			// Every fragment now fogs itself as it is drawn, so this is dead
+			// unless the migration switch is turned back. Kept only so the two
+			// implementations can be compared in one scene.
+			const WaterFog fog = MakeWaterFog(
+				medium,
+				fog_distance,
+				V,
+				camera_depth,
+				uv,
+				clipspace2.xy,
+				underwater_godrays_procedural != 0
+			);
+
+			color.rgb = color.rgb * fog.transmittance + fog.inscatter;
+			volSurvival = fog.transmittance;
+		}
 
 		// Snell's window: looking up from under water, refraction gathers the
 		// whole above-water hemisphere into an overhead circular window of

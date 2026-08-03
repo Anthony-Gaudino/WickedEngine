@@ -248,4 +248,140 @@ WaterFog MakeWaterFog(
 	return fog;
 }
 
+/**
+ * Whether the fog is applied where a fragment is drawn or by the post pass.
+ *
+ * Temporary scaffold for the migration. Both implementations are live and this
+ * picks between them, so the two can be compared in one scene by flipping this
+ * and rebuilding the shaders. Setting it removes the post pass's fog and hands
+ * the job to every draw shader; clearing it does the reverse.
+ *
+ * @note Goes away once the per-fragment path has proven itself; the post pass
+ *       cannot fog a transparent correctly and is only kept here to compare
+ *       against.
+ */
+static const bool WATER_FOG_PER_FRAGMENT = true;
+
+/**
+ * The water's fog between the eye and a fragment.
+ *
+ * The whole point of applying this where a fragment is drawn rather than over
+ * the finished frame: a post pass reads one depth per pixel, so anything
+ * blended in front of geometry - a particle, a sprite, a light's visualizer -
+ * gets attenuated over the distance to whatever opaque surface is BEHIND it.
+ * A fragment knows how far away it actually is.
+ *
+ * The submerged share of the segment is closed form, and covers every case
+ * without a branch: both ends under water gives the whole distance, an eye
+ * under and a fragment above gives the stretch up to the crossing, an eye above
+ * and a fragment under gives the stretch down from it. Clipped against the
+ * still water plane, matching `SubmergedLightPath`, so the fog agrees with the
+ * lighting it fogs.
+ *
+ * Free above the waterline: the camera option is uniform across the draw, and
+ * the medium comes back inactive for a pixel whose eye is in air.
+ *
+ * @param[in] screenUV - Screen space UV coordinates (0-1) of the fragment.
+ * @param[in] fragmentPosition - World position of the fragment.
+ *
+ * @return The fog over that segment. Transparent and unlit when the water does
+ *         not apply, so callers need no test of their own.
+ */
+WaterFog GetWaterFog(float2 screenUV, float3 fragmentPosition)
+{
+	WaterFog fog;
+	fog.transmittance = 1;
+	fog.inscatter = 0;
+
+	[branch]
+	if (!WATER_FOG_PER_FRAGMENT || !GetCamera().IsUnderwaterFog())
+	{
+		return fog;
+	}
+
+	const WaterVolumetrics medium = GetWaterVolumetricsAtEye(screenUV);
+
+	[branch]
+	if (!medium.IsActive())
+	{
+		return fog;
+	}
+
+	const float3 eye = GetCamera().position;
+	const float3 towardsEye = eye - fragmentPosition;
+	const float segment = length(towardsEye);
+
+	const float submergedFraction = saturate(
+		(medium.waterHeight - min(eye.y, fragmentPosition.y))
+		/ max(abs(fragmentPosition.y - eye.y), 0.00001));
+
+	return MakeWaterFog(
+		medium,
+		segment * submergedFraction,
+		towardsEye / max(segment, 0.00001),
+		max(0, medium.waterHeight - eye.y),
+		screenUV,
+		uv_to_clipspace(screenUV),
+		GetCamera().IsUnderwaterGodRays()
+	);
+}
+
+/**
+ * Fogs a fragment by the water between it and the eye.
+ *
+ * The background overload excludes radiance that was sampled from the scene
+ * behind this fragment - a refraction, most often - because that was already
+ * fogged over its own longer path when it was drawn. Fogging it a second time
+ * would darken a pane of glass by the water on both sides of it.
+ *
+ * Example usage:
+ * @code
+ * const half3 background =
+ *     surface.refraction.rgb * (1 - surface.F) * surface.refraction.a;
+ * ApplyWaterFog(ScreenCoord, surface.P, background, color);
+ * @endcode
+ *
+ * @param[in] screenUV - Screen space UV coordinates (0-1) of the fragment.
+ * @param[in] fragmentPosition - World position of the fragment.
+ * @param[in] background - Radiance already fogged elsewhere, to pass through
+ *                         untouched.
+ * @param[in,out] color - Fragment colour, fogged in place.
+ */
+void ApplyWaterFog(
+	float2 screenUV,
+	float3 fragmentPosition,
+	half3 background,
+	inout half4 color
+)
+{
+	const WaterFog fog = GetWaterFog(screenUV, fragmentPosition);
+
+	// Never take out more than is there. A shader that overwrites its colour
+	// after the refraction was composited - UNLIT, interior mapping, forced
+	// unlit - would otherwise drive the fogged term negative.
+	const half3 alreadyFogged = min(background, color.rgb);
+
+	color.rgb = (half3)(
+		(color.rgb - alreadyFogged) * fog.transmittance
+		+ fog.inscatter
+		+ alreadyFogged
+	);
+}
+
+/**
+ * Fogs a fragment that carries no already-fogged background.
+ *
+ * @param[in] screenUV - Screen space UV coordinates (0-1) of the fragment.
+ * @param[in] fragmentPosition - World position of the fragment.
+ * @param[in,out] color - Fragment colour, fogged in place.
+ */
+void ApplyWaterFog(
+	float2 screenUV,
+	float3 fragmentPosition,
+	inout half4 color
+)
+{
+	ApplyWaterFog(screenUV, fragmentPosition, 0, color);
+}
+
 #endif // WI_WATERFOG_HF
