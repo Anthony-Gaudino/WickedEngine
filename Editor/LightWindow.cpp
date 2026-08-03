@@ -117,7 +117,7 @@ void LightWindow::Create(EditorComponent* _editor)
 	volumetricBoostSlider.OnSlide(forEachSelected([] (auto light, auto args) {
 		light->volumetric_boost = args.fValue;
 	}));
-	volumetricBoostSlider.SetTooltip("Adjust the volumetric fog effect's strength just for this light");
+	volumetricBoostSlider.SetTooltip("Adjust the volumetric fog effect's strength just for this light.\nBelow the water surface the scattering is computed from the water itself, so this becomes a gain over that: 0 is the physically correct result and higher exaggerates it. A light tuned above the water will not match itself below.");
 	AddWidget(&volumetricBoostSlider);
 
 	shadowCheckBox.Create("Shadow: ");
@@ -133,7 +133,7 @@ void LightWindow::Create(EditorComponent* _editor)
 		light->SetVolumetricsEnabled(args.bValue);
 	}));
 	volumetricsCheckBox.SetEnabled(false);
-	volumetricsCheckBox.SetTooltip("Compute volumetric light scattering effect. \nThe fog settings affect scattering (see Weather window). If there is no fog, there is no scattering.");
+	volumetricsCheckBox.SetTooltip("Compute volumetric light scattering effect. \nAbove the water the fog settings drive the scattering (see Weather window), so with no fog there is no scattering. Below the water surface the ocean's own medium scatters instead, and needs no fog at all.");
 	AddWidget(&volumetricsCheckBox);
 
 	haloCheckBox.Create("Visualizer: ");
