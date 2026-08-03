@@ -2391,10 +2391,6 @@ namespace wi
 					getUnderwaterMagnificationEnabled()
 					? getUnderwaterMagnification()
 					: 1.0f;
-				const float underwater_absorption =
-					getUnderwaterAbsorptionEnabled()
-					? getUnderwaterAbsorptionStrength()
-					: 0.0f;
 				const float underwater_snell =
 					getUnderwaterSnellEnabled()
 					? getUnderwaterSnellStrength()
@@ -2426,7 +2422,6 @@ namespace wi
 					*rt_write,
 					cmd,
 					underwater_magnification,
-					underwater_absorption,
 					underwater_snell,
 					getUnderwaterSnellFade(),
 					underwater_snell_rt,

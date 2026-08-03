@@ -48,7 +48,6 @@ namespace wi
 		float underwaterBlurStrength = 2.0f;
 		float underwaterChromaticAberrationAmount = 2.0f;
 		float underwaterMagnification = 1.33f;
-		float underwaterAbsorptionStrength = 1.0f;
 		float underwaterSnellStrength = 1.0f;
 		float underwaterSnellFade = 1.0f;
 		uint32_t screenSpaceShadowSampleCount = 16;
@@ -93,7 +92,6 @@ namespace wi
 		bool chromaticAberrationEnabled = false;
 		bool underwaterChromaticAberrationEnabled = true;
 		bool underwaterMagnificationEnabled = true;
-		bool underwaterAbsorptionEnabled = true;
 		bool underwaterSnellEnabled = true;
 		bool underwaterSnellRTEnabled = true;
 		bool underwaterGodRaysProceduralEnabled = true;
@@ -265,7 +263,6 @@ namespace wi
 		[[nodiscard]] constexpr float getUnderwaterBlurStrength() const { return underwaterBlurStrength; }
 		[[nodiscard]] constexpr float getUnderwaterChromaticAberrationAmount() const { return underwaterChromaticAberrationAmount; }
 		[[nodiscard]] constexpr float getUnderwaterMagnification() const { return underwaterMagnification; }
-		[[nodiscard]] constexpr float getUnderwaterAbsorptionStrength() const { return underwaterAbsorptionStrength; }
 		[[nodiscard]] constexpr float getUnderwaterSnellStrength() const { return underwaterSnellStrength; }
 		[[nodiscard]] constexpr float getUnderwaterSnellFade() const { return underwaterSnellFade; }
 		constexpr uint32_t getScreenSpaceShadowSampleCount() const { return screenSpaceShadowSampleCount; }
@@ -311,7 +308,6 @@ namespace wi
 		constexpr bool getChromaticAberrationEnabled() const { return chromaticAberrationEnabled; }
 		constexpr bool getUnderwaterChromaticAberrationEnabled() const { return underwaterChromaticAberrationEnabled; }
 		[[nodiscard]] constexpr bool getUnderwaterMagnificationEnabled() const { return underwaterMagnificationEnabled; }
-		[[nodiscard]] constexpr bool getUnderwaterAbsorptionEnabled() const { return underwaterAbsorptionEnabled; }
 		[[nodiscard]] constexpr bool getUnderwaterSnellEnabled() const { return underwaterSnellEnabled; }
 		[[nodiscard]] constexpr bool getUnderwaterSnellRTEnabled() const { return underwaterSnellRTEnabled; }
 		[[nodiscard]] constexpr bool getUnderwaterGodRaysProceduralEnabled() const { return underwaterGodRaysProceduralEnabled; }
@@ -342,7 +338,6 @@ namespace wi
 		constexpr void setUnderwaterBlurStrength(float value) { underwaterBlurStrength = value; }
 		constexpr void setUnderwaterChromaticAberrationAmount(float value) { underwaterChromaticAberrationAmount = value; }
 		constexpr void setUnderwaterMagnification(float value) { underwaterMagnification = value; }
-		constexpr void setUnderwaterAbsorptionStrength(float value) { underwaterAbsorptionStrength = value; }
 		constexpr void setUnderwaterSnellStrength(float value) { underwaterSnellStrength = value; }
 		constexpr void setUnderwaterSnellFade(float value) { underwaterSnellFade = value; }
 		constexpr void setScreenSpaceShadowSampleCount(uint32_t value) { screenSpaceShadowSampleCount = value; }
@@ -387,7 +382,6 @@ namespace wi
 		constexpr void setUnderwaterBlurEnabled(bool value) { underwaterBlurEnabled = value; }
 		constexpr void setUnderwaterChromaticAberrationEnabled(bool value) { underwaterChromaticAberrationEnabled = value; }
 		constexpr void setUnderwaterMagnificationEnabled(bool value) { underwaterMagnificationEnabled = value; }
-		constexpr void setUnderwaterAbsorptionEnabled(bool value) { underwaterAbsorptionEnabled = value; }
 		constexpr void setUnderwaterSnellEnabled(bool value) { underwaterSnellEnabled = value; }
 		constexpr void setUnderwaterSnellRTEnabled(bool value) { underwaterSnellRTEnabled = value; }
 		constexpr void setUnderwaterGodRaysProceduralEnabled(bool value) { underwaterGodRaysProceduralEnabled = value; }

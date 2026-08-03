@@ -94,8 +94,6 @@ public:
 	wi::gui::Slider underwaterBlurStrengthSlider;
 	wi::gui::CheckBox underwaterMagnificationCheckBox;
 	wi::gui::Slider underwaterMagnificationSlider;
-	wi::gui::CheckBox underwaterAbsorptionCheckBox;
-	wi::gui::Slider underwaterAbsorptionStrengthSlider;
 	wi::gui::CheckBox underwaterSnellCheckBox;
 	wi::gui::Slider underwaterSnellStrengthSlider;
 	wi::gui::Slider underwaterSnellFadeSlider;

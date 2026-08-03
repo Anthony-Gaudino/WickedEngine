@@ -498,40 +498,6 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			volSurvival *= 1 - windowBlend;
 		}
 
-		// Depth-based color absorption: everything down here is ultimately lit
-		// by daylight that had to come down through the water column, so the
-		// whole view dims and shifts blue-green as the camera descends.
-		//
-		// Diffuse downwelling light is not a beam, so it is attenuated by the
-		// REDUCED (transport) extinction sigma_t' = sigma_a + sigma_s * (1 - g)
-		// rather than the full sigma_t: forward-scattered light keeps heading
-		// down instead of being lost, which is why a strongly forward-peaked
-		// medium stays brighter at depth than its extinction alone suggests.
-		// This is the standard diffusion-approximation coefficient and it lands
-		// close to the measured K_d of the corresponding Jerlov water type. The
-		// strength param scales it (1 = physical, 0 disables the effect).
-		//
-		// Applied AFTER the Snell's window so the window's above-water light
-		// attenuates with the same water column - otherwise the surround
-		// darkens while the window keeps its color, leaving its shape visible
-		// at depth. That does slightly double-count against the window's own
-		// path attenuation above, which is deliberate: a uniform view matters
-		// more here than the last few percent of radiometric accuracy.
-		if (underwater_absorption > 0)
-		{
-			const float3 sigmaTReduced =
-				ocean.absorption.rgb + sigmaS * (1 - ocean.scattering.a);
-			const float3 absorb =
-				exp(-sigmaTReduced * underwater_absorption * camera_depth);
-
-			color.rgb *= absorb;
-
-			// This stands in for the daylight that had to reach the camera's
-			// depth, which says nothing about a lamp scattering right in front
-			// of the eye, so the volumetric light must not be dimmed by it.
-			volSurvival *= absorb;
-		}
-
 		// Give back the share of the volumetric light the stages above took
 		// away, restoring it in full. Addition only: the composited value was
 		// multiplied by exactly volSurvival, so adding the rest cannot drive

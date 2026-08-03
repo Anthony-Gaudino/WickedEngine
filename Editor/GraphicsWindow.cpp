@@ -1442,41 +1442,6 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 		});
 	AddWidget(&underwaterMagnificationSlider);
 
-	underwaterAbsorptionCheckBox.Create("Underwater Color Absorption: ");
-	underwaterAbsorptionCheckBox.SetTooltip("Filter the underwater view by depth, using physically based wavelength absorption of clear ocean water. Warm colors fade first and the view shifts blue-green the deeper the camera descends.");
-	underwaterAbsorptionCheckBox.SetSize(XMFLOAT2(hei, hei));
-	underwaterAbsorptionCheckBox.SetPos(XMFLOAT2(x, y += step));
-
-	if (editor->main->config.GetSection("graphics").Has("underwater_absorption"))
-	{
-		editor->renderPath->setUnderwaterAbsorptionEnabled(editor->main->config.GetSection("graphics").GetBool("underwater_absorption"));
-	}
-
-	underwaterAbsorptionCheckBox.OnClick([=](wi::gui::EventArgs args) {
-		editor->renderPath->setUnderwaterAbsorptionEnabled(args.bValue);
-		editor->main->config.GetSection("graphics").Set("underwater_absorption", args.bValue);
-		editor->main->config.Commit();
-		});
-	AddWidget(&underwaterAbsorptionCheckBox);
-
-	underwaterAbsorptionStrengthSlider.Create(0, 3, 1, 1000, "UnderwaterAbsorption.Strength: ");
-	underwaterAbsorptionStrengthSlider.SetText("Strength: ");
-	underwaterAbsorptionStrengthSlider.SetTooltip("Scale the color absorption coefficients (water clarity). 1 = physically based clear ocean values, lower keeps warm colors deeper (clearer water), higher fades them faster (murkier water).");
-	underwaterAbsorptionStrengthSlider.SetSize(XMFLOAT2(mod_wid, hei));
-	underwaterAbsorptionStrengthSlider.SetPos(XMFLOAT2(x + 100, y));
-
-	if (editor->main->config.GetSection("graphics").Has("underwater_absorption_strength"))
-	{
-		editor->renderPath->setUnderwaterAbsorptionStrength(editor->main->config.GetSection("graphics").GetFloat("underwater_absorption_strength"));
-	}
-
-	underwaterAbsorptionStrengthSlider.OnSlide([=](wi::gui::EventArgs args) {
-		editor->renderPath->setUnderwaterAbsorptionStrength(args.fValue);
-		editor->main->config.GetSection("graphics").Set("underwater_absorption_strength", args.fValue);
-		editor->main->config.Commit();
-		});
-	AddWidget(&underwaterAbsorptionStrengthSlider);
-
 	underwaterSnellCheckBox.Create("Underwater Snell's Window: ");
 	underwaterSnellCheckBox.SetTooltip("Simulate Snell's window: looking up from under water, refraction compresses the whole above-water view into an overhead circular window (critical angle ~48.6 degrees), while the surround falls to total internal reflection and reads as deep water.");
 	underwaterSnellCheckBox.SetSize(XMFLOAT2(hei, hei));
@@ -2063,8 +2028,6 @@ void GraphicsWindow::UpdateData()
 	underwaterBlurStrengthSlider.SetValue(editor->renderPath->getUnderwaterBlurStrength());
 	underwaterMagnificationCheckBox.SetCheck(editor->renderPath->getUnderwaterMagnificationEnabled());
 	underwaterMagnificationSlider.SetValue(editor->renderPath->getUnderwaterMagnification());
-	underwaterAbsorptionCheckBox.SetCheck(editor->renderPath->getUnderwaterAbsorptionEnabled());
-	underwaterAbsorptionStrengthSlider.SetValue(editor->renderPath->getUnderwaterAbsorptionStrength());
 	underwaterSnellCheckBox.SetCheck(editor->renderPath->getUnderwaterSnellEnabled());
 	underwaterSnellStrengthSlider.SetValue(editor->renderPath->getUnderwaterSnellStrength());
 	underwaterSnellFadeSlider.SetValue(editor->renderPath->getUnderwaterSnellFade());
@@ -2337,8 +2300,6 @@ void GraphicsWindow::ResizeLayout()
 	underwaterBlurCheckBox.SetPos(XMFLOAT2(underwaterBlurStrengthSlider.GetPos().x - underwaterBlurCheckBox.GetSize().x - 80, underwaterBlurStrengthSlider.GetPos().y));
 	layout.add_right(underwaterMagnificationSlider);
 	underwaterMagnificationCheckBox.SetPos(XMFLOAT2(underwaterMagnificationSlider.GetPos().x - underwaterMagnificationCheckBox.GetSize().x - 80, underwaterMagnificationSlider.GetPos().y));
-	layout.add_right(underwaterAbsorptionStrengthSlider);
-	underwaterAbsorptionCheckBox.SetPos(XMFLOAT2(underwaterAbsorptionStrengthSlider.GetPos().x - underwaterAbsorptionCheckBox.GetSize().x - 80, underwaterAbsorptionStrengthSlider.GetPos().y));
 	layout.add_right(underwaterSnellStrengthSlider);
 	underwaterSnellCheckBox.SetPos(XMFLOAT2(underwaterSnellStrengthSlider.GetPos().x - underwaterSnellCheckBox.GetSize().x - 80, underwaterSnellStrengthSlider.GetPos().y));
 	layout.add_right(underwaterSnellFadeSlider);

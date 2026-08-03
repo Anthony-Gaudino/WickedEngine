@@ -1079,9 +1079,6 @@ namespace wi::renderer
 	 * @param[in] cmd - Command list.
 	 * @param[in] magnification - Radial zoom factor for the submerged view
 	 *                            (1.0 = no magnification, ~1.33 = eye-accurate).
-	 * @param[in] absorption - Strength multiplier over the water's reduced
-	 *                         extinction, used for depth-based color absorption
-	 *                         (0 disables it, 1 = physically correct).
 	 * @param[in] snell - Snell's window opacity (0 disables it, 1 = full).
 	 * @param[in] snell_fade - Multiplier over the water's extinction along the
 	 *                         window's path to the surface, deciding how deep
@@ -1104,7 +1101,6 @@ namespace wi::renderer
 		const wi::graphics::Texture& output,
 		wi::graphics::CommandList cmd,
 		float magnification = 1.0f,
-		float absorption = 0.0f,
 		float snell = 0.0f,
 		float snell_fade = 1.0f,
 		bool snell_rt = false,
