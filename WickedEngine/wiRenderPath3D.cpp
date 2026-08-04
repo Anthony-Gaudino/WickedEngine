@@ -2249,18 +2249,102 @@ namespace wi
 			// the waterline be partly submerged rather than snapping between
 			// the two sides.
 			//
-			// Each of these no-ops itself when the scene has none of its own
-			// content, but the render pass around them does not - and with MSAA
-			// every pass end costs a resolve. Tightening this to "is any of it
-			// actually on the far side" is deferred work.
-			const bool farSideTransparents = visibility_main.IsTransparentsVisible();
+			// The far pass costs a scene mip chain, a render pass and a redraw
+			// of every content type, and in the common case - camera above the
+			// water, nothing below it - none of that draws a single pixel. So
+			// sweep the scene first and find out what is actually over there.
+			//
+			// Every bound below is conservative: anything that might straddle
+			// the surface counts as far side and is drawn in both passes, where
+			// the per-fragment clip sorts it out. So this can only ever skip
+			// work, never content.
+			//
+			// The band the surface sweeps is taken from the ocean's own bounds,
+			// so there is one assumption about how far the waves displace
+			// vertically rather than a second one here that could drift from
+			// it.
+			const wi::primitive::AABB oceanBounds = scene->ocean.GetAABB(camera->Eye);
+			const float waterTop = oceanBounds.getMax().y;
+			const float waterBottom = oceanBounds.getMin().y;
+			auto reachesFarSide = [&](const wi::primitive::AABB& aabb) {
+				return farSide == wi::renderer::WATERSIDE_SUBMERGED
+					? (aabb.getMin().y <= waterTop)   // any part low enough to be under water
+					: (aabb.getMax().y > waterBottom); // any part high enough to be above it
+			};
+
+			bool farSideTransparents = false;
+			if (visibility_main.IsTransparentsVisible())
+			{
+				for (uint32_t index : visibility_main.visibleObjects)
+				{
+					const ObjectComponent& object = scene->objects[index];
+					if (!object.IsRenderable())
+						continue;
+					// The far pass has no foreground draw, so a foreground
+					// object is never in it - matching that here rather than
+					// merely being conservative about it.
+					if (object.IsForeground())
+						continue;
+					if ((object.GetFilterMask() & wi::enums::FILTER_TRANSPARENT) == 0)
+						continue;
+					if (reachesFarSide(scene->aabb_objects[index]))
+					{
+						farSideTransparents = true;
+						break;
+					}
+				}
+			}
+
+			bool farSideLights = false;
+			for (uint32_t index : visibility_main.visibleLights)
+			{
+				// The light's whole influence volume, not its visualizer gizmo,
+				// and every visible light rather than only the visualized ones.
+				// Both make this wider than it needs to be, which is the safe
+				// direction.
+				if (reachesFarSide(scene->aabb_lights[index]))
+				{
+					farSideLights = true;
+					break;
+				}
+			}
+
+			bool farSideSplats = false;
+			for (size_t i = 0; i < scene->gaussian_splats.GetCount(); ++i)
+			{
+				if (reachesFarSide(scene->gaussian_splats[i].aabb))
+				{
+					farSideSplats = true;
+					break;
+				}
+			}
+
+			// Sprites have no world bounds to test, so any sprite at all counts
+			// as far side. Fonts do have bounds, which is worth using for the
+			// scenes that have text but no sprites.
+			bool farSideSpritesOrFonts = scene->sprites.GetCount() > 0;
+			if (!farSideSpritesOrFonts)
+			{
+				for (size_t i = 0; i < scene->aabb_fonts.size(); ++i)
+				{
+					if (reachesFarSide(scene->aabb_fonts[i]))
+					{
+						farSideSpritesOrFonts = true;
+						break;
+					}
+				}
+			}
+
+			// Particles leave their emitter and travel where they like, so the
+			// emitter's position bounds nothing. Any visible emitter counts.
+			const bool farSideEmitters = !visibility_main.visibleEmitters.empty();
+
 			const bool anyFarSideContent =
 				farSideTransparents ||
-				scene->sprites.GetCount() > 0 ||
-				scene->fonts.GetCount() > 0 ||
-				scene->gaussian_scene.IsValid() ||
-				!visibility_main.visibleEmitters.empty() ||
-				!visibility_main.visibleLights.empty();
+				farSideLights ||
+				farSideSplats ||
+				farSideSpritesOrFonts ||
+				farSideEmitters;
 
 			if (anyFarSideContent)
 			{
@@ -2296,10 +2380,22 @@ namespace wi
 					);
 				}
 
-				wi::renderer::DrawLightVisualizers(visibility_main, cmd);
-				wi::renderer::DrawSoftParticles(visibility_main, false, cmd);
-				wi::renderer::DrawGaussianSplats(*scene, *camera, cmd);
-				wi::renderer::DrawSpritesAndFonts(*scene, *camera, false, cmd, farSide);
+				if (farSideLights)
+				{
+					wi::renderer::DrawLightVisualizers(visibility_main, cmd);
+				}
+				if (farSideEmitters)
+				{
+					wi::renderer::DrawSoftParticles(visibility_main, false, cmd);
+				}
+				if (farSideSplats)
+				{
+					wi::renderer::DrawGaussianSplats(*scene, *camera, cmd);
+				}
+				if (farSideSpritesOrFonts)
+				{
+					wi::renderer::DrawSpritesAndFonts(*scene, *camera, false, cmd, farSide);
+				}
 
 				bindWaterSide(wi::renderer::WATERSIDE_ALL);
 				device->RenderPassEnd(cmd);
