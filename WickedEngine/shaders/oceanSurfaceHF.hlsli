@@ -32,8 +32,18 @@ float3 intersectPlaneClampInfinite(in float3 rayOrigin, in float3 rayDirection, 
 	float dist = intersectPlaneClampInfiniteDist(rayOrigin, rayDirection, planeNormal, planeHeight);
 	if (dist > 0.0)
 		return rayOrigin + rayDirection * dist;
-	else
-		return float3(rayOrigin.x, planeHeight, rayOrigin.z) + normalize(float3(rayDirection.x, 0, rayDirection.z)) * GetCamera().z_far;
+
+	// The ray points away from the plane, so push it out to the horizon along
+	// its horizontal heading instead. A ray aimed straight up or straight down
+	// has no horizontal heading to normalize - that is normalize(0), which is
+	// NaN, and a NaN vertex takes every triangle sharing it with it. Fall back
+	// to an arbitrary but finite heading; the point is z_far away either way,
+	// so which direction it leaves in is not observable.
+	const float2 horizontal = rayDirection.xz;
+	const float horizontalLength = length(horizontal);
+	const float2 heading = horizontalLength > 1e-6 ? horizontal / horizontalLength : float2(0, 1);
+
+	return float3(rayOrigin.x, planeHeight, rayOrigin.z) + float3(heading.x, 0, heading.y) * GetCamera().z_far;
 }
 
 #endif // WI_OCEAN_SURFACE_HF
