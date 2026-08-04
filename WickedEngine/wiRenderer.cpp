@@ -6126,7 +6126,33 @@ void DrawSpritesAndFonts(
 		device->EventBegin("Sprites and Fonts", cmd);
 	}
 	const XMMATRIX VP = camera.GetViewProjection();
-	const XMMATRIX R = XMLoadFloat3x3(&camera.rotationMatrix);
+	// A clip plane marks a planar reflection camera. Used twice below: to
+	// orient camera-facing billboards, and to clip them against the mirror.
+	const bool clipping =
+		XMVector4NotEqual(XMLoadFloat4(&camera.clipPlane), XMVectorZero());
+	// Orientation for camera-facing billboards.
+	//
+	// CameraComponent::Reflect mirrors Eye, At and Up, and UpdateCamera feeds
+	// those to XMMatrixLookToLH - which derives its axes by cross product and
+	// so always returns a PROPER basis. The mirroring cannot survive in it.
+	// What survives instead is a 180 degree ROLL: right comes out -X and up -Y.
+	//
+	// World space geometry never notices, because the reflection is sampled by
+	// projecting the world position through that same rolled camera
+	// (reflection_view_projection, objectHF.hlsli), so the roll cancels between
+	// rendering and lookup. A camera-facing billboard does notice, because its
+	// orientation is BUILT from this basis rather than living in world space:
+	// it was placed in the world rolled 180 degrees, and so appeared inverted
+	// in both axes at once.
+	//
+	// Undo the roll and leave the billboard upright in the world, exactly like
+	// a fixed orientation sprite. The reflection then mirrors it the same way
+	// it mirrors everything else.
+	XMMATRIX R = XMLoadFloat3x3(&camera.rotationMatrix);
+	if (clipping)
+	{
+		R = XMMatrixScaling(-1, -1, 1) * R;
+	}
 	enum TYPE // ordering of the enums is important, it is designed to prioritize font on top of sprite rendering if distance is the same
 	{
 		FONT,
@@ -6155,8 +6181,6 @@ void DrawSpritesAndFonts(
 	// rather than per entry here. A billboard is not a point: one crossing the
 	// waterline is partly reflected and partly not, and classifying it by its
 	// origin would snap the whole thing in or out as its centre crossed.
-	const bool clipping =
-		XMVector4NotEqual(XMLoadFloat4(&camera.clipPlane), XMVectorZero());
 	auto applyWorldClipping = [&](auto& params) {
 		if (clipping)
 		{
