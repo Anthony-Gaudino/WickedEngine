@@ -16,10 +16,18 @@
 float4 main(float4 pos : SV_Position, half4 col : COLOR) : SV_Target
 {
 	const float2 screenUV = pos.xy * GetCamera().internal_resolution_rcp;
+	const float3 P = reconstruct_position(screenUV, pos.z);
+
+	// Half of this visualizer may belong on the far side of the water surface,
+	// where the transparent pass issued it as a separate draw.
+	ClipToWaterSide(
+		P,
+		GetCamera().IsWaterSideSubmerged(),
+		GetCamera().IsWaterSideAbove()
+	);
 
 	half4 color = col;
-	ApplyWaterFogAdditive(
-		screenUV, reconstruct_position(screenUV, pos.z), color);
+	ApplyWaterFogAdditive(screenUV, P, color);
 
 	return color;
 }

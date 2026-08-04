@@ -2181,19 +2181,67 @@ namespace wi
 		const wi::renderer::WATERSIDE nearSide = !oceanVisible ? wi::renderer::WATERSIDE_ALL :
 			(eyeAboveWater ? wi::renderer::WATERSIDE_ABOVE : wi::renderer::WATERSIDE_SUBMERGED);
 
+		// Restricts every following draw to one side of the water, by putting the
+		// side on the camera instead of plumbing it through each draw call. The
+		// shaders that split read it straight out of the camera constant buffer.
+		//
+		// Bracket it tightly and always restore it: the diagnostic overlays,
+		// gaussian splats and the screen space effects share these passes and
+		// must not be clipped by it.
+		auto bindWaterSide = [&](wi::renderer::WATERSIDE side) {
+			CameraComponent sidedCamera = *camera;
+			if (side == wi::renderer::WATERSIDE_SUBMERGED)
+			{
+				sidedCamera.shadercamera_options |= SHADERCAMERA_OPTION_WATERSIDE_SUBMERGED;
+			}
+			else if (side == wi::renderer::WATERSIDE_ABOVE)
+			{
+				sidedCamera.shadercamera_options |= SHADERCAMERA_OPTION_WATERSIDE_ABOVE;
+			}
+			wi::renderer::BindCameraCB(
+				sidedCamera,
+				camera_previous,
+				camera_reflection,
+				cmd
+			);
+		};
+
 		// Draw only the ocean first, fog and lightshafts will be blended on top:
 		if (oceanVisible)
 		{
 			// The far side goes down before the copy, so that the ocean's
 			// screen space refraction shows it through the surface instead of
-			// the surface painting over it. Its own render pass, which is why
-			// it is worth checking there is anything at all to draw first: with
-			// MSAA every pass end costs a resolve.
-			if (scene->sprites.GetCount() > 0 || scene->fonts.GetCount() > 0)
+			// the surface painting over it, and so the surface's depth write
+			// cannot reject it outright the way it did before.
+			//
+			// Everything here is drawn a second time in the near pass below,
+			// where it keeps the other half. That is what lets a thing spanning
+			// the waterline be partly submerged rather than snapping between
+			// the two sides.
+			//
+			// Each of these no-ops itself when the scene has none of its own
+			// content, but the render pass around them does not - and with MSAA
+			// every pass end costs a resolve. Tightening this to "is any of it
+			// actually on the far side" is deferred work.
+			const bool anyFarSideContent =
+				scene->sprites.GetCount() > 0 ||
+				scene->fonts.GetCount() > 0 ||
+				!visibility_main.visibleEmitters.empty() ||
+				!visibility_main.visibleLights.empty();
+
+			if (anyFarSideContent)
 			{
+				device->EventBegin("Transparents beyond the water", cmd);
 				device->RenderPassBegin(rp, rp_count, cmd);
+				bindWaterSide(farSide);
+
+				wi::renderer::DrawLightVisualizers(visibility_main, cmd);
+				wi::renderer::DrawSoftParticles(visibility_main, false, cmd);
 				wi::renderer::DrawSpritesAndFonts(*scene, *camera, false, cmd, farSide);
+
+				bindWaterSide(wi::renderer::WATERSIDE_ALL);
 				device->RenderPassEnd(cmd);
+				device->EventEnd(cmd);
 			}
 
 			device->EventBegin("Copy scene tex only mip0 for ocean", cmd);
@@ -2265,12 +2313,22 @@ namespace wi
 
 		wi::renderer::DrawWireframeOverlay(visibility_main, wi::enums::RENDERPASS_MAIN, cmd);
 
+		// The near side only for these: the far side was drawn before the ocean
+		// above, so that the water refracts it rather than rejecting it. The
+		// bracket stops before the gaussian splats, which are not split and so
+		// must keep both halves.
+		if (oceanVisible)
+		{
+			bindWaterSide(nearSide);
+		}
 		wi::renderer::DrawLightVisualizers(visibility_main, cmd);
-
 		wi::renderer::DrawSoftParticles(visibility_main, false, cmd);
+		if (oceanVisible)
+		{
+			bindWaterSide(wi::renderer::WATERSIDE_ALL);
+		}
+
 		wi::renderer::DrawGaussianSplats(*scene, *camera, cmd);
-		// The near side only: the far side was drawn before the ocean above, so
-		// that the water refracts it rather than rejecting it.
 		wi::renderer::DrawSpritesAndFonts(*scene, *camera, false, cmd, nearSide);
 
 		if (getVolumeLightsEnabled() && visibility_main.IsRequestedVolumetricLights())

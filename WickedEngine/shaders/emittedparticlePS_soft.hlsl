@@ -16,7 +16,19 @@ static const uint SLOT = BASECOLORMAP;
 float4 main(VertextoPixel input) : SV_TARGET
 {
 	float3 pos3D = input.GetPos3D();
-	
+
+	// Half of this emitter may belong on the far side of the water surface,
+	// where the transparent pass issued it as a separate draw. Discard that
+	// half up front. Per fragment rather than per emitter: an emitter is a
+	// volume, so classifying the whole of it by its centre would put spray
+	// straddling the waterline entirely under the water or entirely clear of
+	// it.
+	ClipToWaterSide(
+		pos3D,
+		GetCamera().IsWaterSideSubmerged(),
+		GetCamera().IsWaterSideAbove()
+	);
+
 	// Blocker shadow map check:
 	[branch]
 	if ((xEmitterOptions & EMITTER_OPTION_BIT_USE_RAIN_BLOCKER) && rain_blocker_check(pos3D))

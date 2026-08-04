@@ -1312,6 +1312,22 @@ enum SHADERCAMERA_OPTIONS
 	SHADERCAMERA_OPTION_UNDERWATER_FOG = 1 << 3,
 	// Modulate that fog with the procedural god rays.
 	SHADERCAMERA_OPTION_UNDERWATER_GODRAYS = 1 << 4,
+	// Keep only the part of this draw on one side of the ocean surface.
+	//
+	// The transparent pass draws the two sides of the water around the ocean,
+	// because the ocean is the only transparent that writes depth: the far side
+	// goes first so the surface's refraction picks it up, the near side after
+	// so the surface's depth cannot reject it. Anything spanning the waterline
+	// is issued in both and keeps only its own half, which is what lets it be
+	// partly submerged instead of snapping between the two.
+	//
+	// Carried on the camera rather than per draw so that every shader in the
+	// pass - particles, light visualizers, transparent meshes - reads it the
+	// same way with no plumbing of its own. Bracketed tightly around the draws
+	// that should split: diagnostics, gaussian splats and screen space effects
+	// must NOT be clipped, so the option is cleared before they are drawn.
+	SHADERCAMERA_OPTION_WATERSIDE_SUBMERGED = 1 << 5,
+	SHADERCAMERA_OPTION_WATERSIDE_ABOVE = 1 << 6,
 };
 
 struct alignas(16) ShaderCamera
@@ -1510,6 +1526,8 @@ struct alignas(16) ShaderCamera
 	inline bool IsOrtho() { return options & SHADERCAMERA_OPTION_ORTHO; }
 	inline bool IsUnderwaterFog() { return options & SHADERCAMERA_OPTION_UNDERWATER_FOG; }
 	inline bool IsUnderwaterGodRays() { return options & SHADERCAMERA_OPTION_UNDERWATER_GODRAYS; }
+	inline bool IsWaterSideSubmerged() { return options & SHADERCAMERA_OPTION_WATERSIDE_SUBMERGED; }
+	inline bool IsWaterSideAbove() { return options & SHADERCAMERA_OPTION_WATERSIDE_ABOVE; }
 
 	inline float3 screen_to_nearplane(float4 svposition)
 	{
