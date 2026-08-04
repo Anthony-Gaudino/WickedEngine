@@ -6141,6 +6141,23 @@ void DrawSpritesAndFonts(
 		uint64_t raw;
 		static_assert(sizeof(bits) == sizeof(raw));
 	};
+	// A planar reflection camera carries a clip plane, and the reflected view
+	// must not show what is on the far side of it. Every other scene draw path
+	// gets that for free in its vertex shader - objectHF, impostorVS,
+	// hairparticleVS and emittedparticleVS all output dot(pos, clip_plane) as a
+	// clip distance - but imageVS and fontVS do not, and they are shared with
+	// the whole UI, so adding it there would cost a flag and a PSO permutation.
+	// Without it a submerged sprite or text appeared in the water's reflection,
+	// the only content type that did. Cull on the CPU instead: these are
+	// billboards, so testing the origin is enough, and CameraComponent::Reflect
+	// has already oriented the plane so that the eye side is the positive one.
+	const XMVECTOR clipPlane = XMLoadFloat4(&camera.clipPlane);
+	const bool clipping = XMVector4NotEqual(clipPlane, XMVectorZero());
+	auto isClipped = [&](const TransformComponent* transform) {
+		if (!clipping || transform == nullptr)
+			return false;
+		return XMVectorGetX(XMPlaneDotCoord(clipPlane, transform->GetPositionV())) < 0;
+	};
 	static thread_local wi::vector<uint64_t> distance_sorter;
 	distance_sorter.clear();
 	for (size_t i = 0; i < scene.sprites.GetCount(); ++i)
@@ -6155,6 +6172,8 @@ void DrawSpritesAndFonts(
 		sorter.bits.type = SPRITE;
 		Entity entity = scene.sprites.GetEntity(i);
 		const TransformComponent* transform = scene.transforms.GetComponent(entity);
+		if (isClipped(transform))
+			continue;
 		if (transform != nullptr)
 		{
 			sorter.bits.distance = XMConvertFloatToHalf(wi::math::DistanceEstimated(transform->GetPosition(), camera.Eye));
@@ -6171,6 +6190,8 @@ void DrawSpritesAndFonts(
 			AABB aabb = scene.aabb_fonts[i];
 			Entity entity = scene.fonts.GetEntity(i);
 			const TransformComponent* transform = scene.transforms.GetComponent(entity);
+			if (isClipped(transform))
+				continue;
 			float scale = 1;
 			if (font.IsCameraScaling())
 			{
