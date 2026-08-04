@@ -6111,7 +6111,8 @@ void DrawSpritesAndFonts(
 	const Scene& scene,
 	const CameraComponent& camera,
 	bool distortion,
-	CommandList cmd
+	CommandList cmd,
+	WATERSIDE waterSide
 )
 {
 	if (scene.sprites.GetCount() == 0 && scene.fonts.GetCount() == 0)
@@ -6142,21 +6143,33 @@ void DrawSpritesAndFonts(
 		static_assert(sizeof(bits) == sizeof(raw));
 	};
 	// A planar reflection camera carries a clip plane, and the reflected view
-	// must not show what is on the far side of it. Every other scene draw path
-	// gets that for free in its vertex shader - objectHF, impostorVS,
-	// hairparticleVS and emittedparticleVS all output dot(pos, clip_plane) as a
-	// clip distance - but imageVS and fontVS do not, and they are shared with
-	// the whole UI, so adding it there would cost a flag and a PSO permutation.
-	// Without it a submerged sprite or text appeared in the water's reflection,
-	// the only content type that did. Cull on the CPU instead: these are
-	// billboards, so testing the origin is enough, and CameraComponent::Reflect
-	// has already oriented the plane so that the eye side is the positive one.
-	const XMVECTOR clipPlane = XMLoadFloat4(&camera.clipPlane);
-	const bool clipping = XMVector4NotEqual(clipPlane, XMVectorZero());
-	auto isClipped = [&](const TransformComponent* transform) {
-		if (!clipping || transform == nullptr)
-			return false;
-		return XMVectorGetX(XMPlaneDotCoord(clipPlane, transform->GetPositionV())) < 0;
+	// must not show what is behind the mirror. Every other scene draw path gets
+	// that for free in its vertex shader - objectHF, impostorVS, hairparticleVS
+	// and emittedparticleVS all output dot(pos, clip_plane) as a clip distance -
+	// but imageVS and fontVS cannot: their vertices arrive already in clip
+	// space, with no world position left to test. Without it a submerged sprite
+	// or text appeared in the water's reflection, the only content type that
+	// did.
+	//
+	// Both this and the water side below are resolved per pixel in the shader
+	// rather than per entry here. A billboard is not a point: one crossing the
+	// waterline is partly reflected and partly not, and classifying it by its
+	// origin would snap the whole thing in or out as its centre crossed.
+	const bool clipping =
+		XMVector4NotEqual(XMLoadFloat4(&camera.clipPlane), XMVectorZero());
+	auto applyWorldClipping = [&](auto& params) {
+		if (clipping)
+		{
+			params.enableClipPlane();
+		}
+		if (waterSide == WATERSIDE_SUBMERGED)
+		{
+			params.enableWaterSideSubmerged();
+		}
+		else if (waterSide == WATERSIDE_ABOVE)
+		{
+			params.enableWaterSideAbove();
+		}
 	};
 	static thread_local wi::vector<uint64_t> distance_sorter;
 	distance_sorter.clear();
@@ -6172,8 +6185,6 @@ void DrawSpritesAndFonts(
 		sorter.bits.type = SPRITE;
 		Entity entity = scene.sprites.GetEntity(i);
 		const TransformComponent* transform = scene.transforms.GetComponent(entity);
-		if (isClipped(transform))
-			continue;
 		if (transform != nullptr)
 		{
 			sorter.bits.distance = XMConvertFloatToHalf(wi::math::DistanceEstimated(transform->GetPosition(), camera.Eye));
@@ -6190,8 +6201,6 @@ void DrawSpritesAndFonts(
 			AABB aabb = scene.aabb_fonts[i];
 			Entity entity = scene.fonts.GetEntity(i);
 			const TransformComponent* transform = scene.transforms.GetComponent(entity);
-			if (isClipped(transform))
-				continue;
 			float scale = 1;
 			if (font.IsCameraScaling())
 			{
@@ -6262,6 +6271,7 @@ void DrawSpritesAndFonts(
 				// anything else. Never on the distortion pass, which targets the
 				// distortion buffer rather than the scene.
 				params.enableUnderwaterFog();
+				applyWorldClipping(params);
 			}
 			if (sprite.maskResource.IsValid())
 			{
@@ -6298,6 +6308,7 @@ void DrawSpritesAndFonts(
 			{
 				// Scene text is in the world, so the water fogs it too.
 				params.enableUnderwaterFog();
+				applyWorldClipping(params);
 			}
 			wi::font::Draw(font.GetText().c_str(), font.GetCurrentTextLength(), params, cmd);
 		}

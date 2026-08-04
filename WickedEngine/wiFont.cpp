@@ -662,6 +662,18 @@ namespace wi::font
 			flags |= FONT_FLAG_UNDERWATER_FOG;
 			hdr_scaling = params.hdr_scaling;
 		}
+		if (params.isWaterSideSubmerged())
+		{
+			flags |= FONT_FLAG_WATERSIDE_SUBMERGED;
+		}
+		if (params.isWaterSideAbove())
+		{
+			flags |= FONT_FLAG_WATERSIDE_ABOVE;
+		}
+		if (params.isClipPlaneEnabled())
+		{
+			flags |= FONT_FLAG_CLIP_PLANE;
+		}
 
 		device->EventBegin("Font", cmd);
 

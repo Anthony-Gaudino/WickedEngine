@@ -2163,9 +2163,39 @@ namespace wi
 			);
 		}
 
+		// The ocean is the only transparent that writes depth, so whatever is
+		// drawn after it and lies beyond it is rejected outright, and whatever
+		// is not yet in the scene copy taken just below can never be seen
+		// through the water. Both halves of the transparent pass therefore have
+		// to be placed relative to the ocean by which side of the water plane
+		// they are on - and which side is which flips with the camera, since
+		// from below the surface the submerged content is the near side.
+		const bool oceanVisible =
+			scene->weather.IsOceanEnabled() &&
+			scene->ocean.IsValid() &&
+			(!scene->ocean.IsOccluded() || !wi::renderer::GetOcclusionCullingEnabled());
+		const bool eyeAboveWater =
+			camera->Eye.y > scene->weather.oceanParameters.waterHeight;
+		const wi::renderer::WATERSIDE farSide = !oceanVisible ? wi::renderer::WATERSIDE_ALL :
+			(eyeAboveWater ? wi::renderer::WATERSIDE_SUBMERGED : wi::renderer::WATERSIDE_ABOVE);
+		const wi::renderer::WATERSIDE nearSide = !oceanVisible ? wi::renderer::WATERSIDE_ALL :
+			(eyeAboveWater ? wi::renderer::WATERSIDE_ABOVE : wi::renderer::WATERSIDE_SUBMERGED);
+
 		// Draw only the ocean first, fog and lightshafts will be blended on top:
-		if (scene->weather.IsOceanEnabled() && scene->ocean.IsValid() && (!scene->ocean.IsOccluded() || !wi::renderer::GetOcclusionCullingEnabled()))
+		if (oceanVisible)
 		{
+			// The far side goes down before the copy, so that the ocean's
+			// screen space refraction shows it through the surface instead of
+			// the surface painting over it. Its own render pass, which is why
+			// it is worth checking there is anything at all to draw first: with
+			// MSAA every pass end costs a resolve.
+			if (scene->sprites.GetCount() > 0 || scene->fonts.GetCount() > 0)
+			{
+				device->RenderPassBegin(rp, rp_count, cmd);
+				wi::renderer::DrawSpritesAndFonts(*scene, *camera, false, cmd, farSide);
+				device->RenderPassEnd(cmd);
+			}
+
 			device->EventBegin("Copy scene tex only mip0 for ocean", cmd);
 			wi::renderer::Postprocess_Downsample4x(rtMain, rtSceneCopy, cmd);
 			device->EventEnd(cmd);
@@ -2239,7 +2269,9 @@ namespace wi
 
 		wi::renderer::DrawSoftParticles(visibility_main, false, cmd);
 		wi::renderer::DrawGaussianSplats(*scene, *camera, cmd);
-		wi::renderer::DrawSpritesAndFonts(*scene, *camera, false, cmd);
+		// The near side only: the far side was drawn before the ocean above, so
+		// that the water refracts it rather than rejecting it.
+		wi::renderer::DrawSpritesAndFonts(*scene, *camera, false, cmd, nearSide);
 
 		if (getVolumeLightsEnabled() && visibility_main.IsRequestedVolumetricLights())
 		{

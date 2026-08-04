@@ -21,6 +21,36 @@ float4 main(VertextoPixel input) : SV_TARGET
 	const half hdr_scaling = softness_bolden_hdrscaling.z;
 	const min16uint flags = font.softness_bolden_hdrscaling.y >> 16u;
 
+	// Per pixel clipping, for the cases where this shader is drawing text that
+	// lives in the world. Both share one world position.
+	[branch]
+	if (flags & (
+		FONT_FLAG_CLIP_PLANE |
+		FONT_FLAG_WATERSIDE_SUBMERGED |
+		FONT_FLAG_WATERSIDE_ABOVE))
+	{
+		const float2 screenUV = input.pos.xy * GetCamera().internal_resolution_rcp;
+		const float3 P = reconstruct_position(screenUV, input.pos.z);
+
+		// A planar reflection camera carries a clip plane, and its view must
+		// not show what is behind the mirror. fontVS has no world position to
+		// output a clip distance from, so it is tested here - which also means
+		// text crossing the water has exactly its dry part reflected.
+		[branch]
+		if (flags & FONT_FLAG_CLIP_PLANE)
+		{
+			clip(dot(float4(P, 1), GetCamera().clip_plane));
+		}
+
+		// ...and half of it may belong on the far side of the water surface,
+		// where the transparent pass issued it as a separate draw.
+		ClipToWaterSide(
+			P,
+			(flags & FONT_FLAG_WATERSIDE_SUBMERGED) != 0,
+			(flags & FONT_FLAG_WATERSIDE_ABOVE) != 0
+		);
+	}
+
 	[branch]
 	if (flags & FONT_FLAG_SDF_RENDERING)
 	{

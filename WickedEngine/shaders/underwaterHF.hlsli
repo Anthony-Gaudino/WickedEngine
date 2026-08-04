@@ -55,6 +55,53 @@ inline float ocean_surface_height(in float2 worldXZ)
 }
 
 /**
+ * Discards a fragment lying on the far side of the ocean surface.
+ *
+ * The ocean is the only transparent that writes depth, so the transparent pass
+ * draws the two sides of the water around it: the far side first, where the
+ * surface's screen space refraction can pick it up, and the near side after,
+ * where the surface's depth cannot reject it. A billboard straddling the
+ * waterline belongs to **both**, so it is issued in both passes and each keeps
+ * only its own half. That is why the test is per fragment rather than a
+ * per-object classification - classifying by origin makes a sprite snap between
+ * fully wet and fully dry as it crosses, and it can never be partly submerged.
+ *
+ * The two sides are strictly complementary, so a fragment exactly on the
+ * surface is kept by one pass and dropped by the other, never by both (which
+ * would blend it twice along the waterline) and never by neither (which would
+ * leave a transparent seam).
+ *
+ * Example usage:
+ * @code
+ * ClipToWaterSide(P, flags & FLAG_SUBMERGED, flags & FLAG_ABOVE);
+ * @endcode
+ *
+ * @param[in] position - World space position of the fragment.
+ * @param[in] keepSubmerged - Keep only what is at or below the surface.
+ * @param[in] keepAbove - Keep only what is strictly above the surface.
+ *
+ * @note Does nothing unless exactly one side is selected, so a draw that is not
+ *       split pays only the flag test.
+ */
+inline void ClipToWaterSide(
+	in float3 position,
+	in bool keepSubmerged,
+	in bool keepAbove
+)
+{
+	[branch]
+	if (keepSubmerged != keepAbove)
+	{
+		const float side = position.y - ocean_surface_height(position.xz);
+
+		if (keepSubmerged ? (side > 0) : (side <= 0))
+		{
+			discard;
+		}
+	}
+}
+
+/**
  * Computes the fraction of a pixel submerged below the ocean surface.
  *
  * Used to mask screen-space effects - depth of field, chromatic aberration,

@@ -277,6 +277,21 @@ namespace wi::renderer
 		DRAWSCENE_WIREFRAME_OVERLAY = 1 << 10, // draw wireframe overlay
 	};
 
+	// Which side of the ocean surface a transparent draw belongs to. The ocean
+	// is the only transparent that writes depth, and it is drawn at one fixed
+	// point in the transparent pass, so it occludes everything drawn after it
+	// and can only refract what was already in the scene copy taken before it.
+	// Splitting the transparents by which side of the water plane they are on
+	// lets the ones behind the surface be drawn first, so the water refracts
+	// them, and the ones in front of it last, so the water cannot reject them.
+	// Which side is which flips with the camera.
+	enum WATERSIDE
+	{
+		WATERSIDE_ALL, // no split: draw everything (no ocean, or no split wanted)
+		WATERSIDE_SUBMERGED, // only what is below the water plane
+		WATERSIDE_ABOVE, // only what is above the water plane
+	};
+
 	// Draw the world from a camera. You must call BindCameraCB() at least once in this command list prior to this
 	void DrawScene(
 		const Visibility& vis,
@@ -342,12 +357,16 @@ namespace wi::renderer
 		const wi::scene::CameraComponent& camera,
 		wi::graphics::CommandList cmd
 	);
-	// Draw the sprites and fonts from the scene
+	// Draw the sprites and fonts from the scene waterSide restricts the draw to
+	// one side of the ocean surface, so that the transparent pass can put the
+	// far side into the scene copy the water refracts and the near side after
+	// the water's depth write
 	void DrawSpritesAndFonts(
 		const wi::scene::Scene& scene,
 		const wi::scene::CameraComponent& camera,
 		bool distortion,
-		wi::graphics::CommandList cmd
+		wi::graphics::CommandList cmd,
+		WATERSIDE waterSide = WATERSIDE_ALL
 	);
 	// Draw simple light visualizer geometries
 	//	instance_replication is used to render them into multiple texture slices

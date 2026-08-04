@@ -9,6 +9,16 @@ static const uint FONT_FLAG_OUTPUT_COLOR_SPACE_LINEAR = 1u << 2u;
 // scene: this same shader draws all UI text and the debug overlay, whose
 // transform is a 2D canvas projection with no world position behind it.
 static const uint FONT_FLAG_UNDERWATER_FOG = 1u << 3u;
+// Keep only the half of this draw on one side of the ocean surface. The
+// transparent pass issues scene text twice, once on each side of the water, so
+// that text crossing the waterline is refracted below it and dry above it.
+// Exactly one of the two is set, or neither.
+static const uint FONT_FLAG_WATERSIDE_SUBMERGED = 1u << 4u;
+static const uint FONT_FLAG_WATERSIDE_ABOVE = 1u << 5u;
+// Clip this draw against the camera's clip plane, for a planar reflection. Set
+// only for text drawn into the scene, which is the only text with a world
+// position behind its transform.
+static const uint FONT_FLAG_CLIP_PLANE = 1u << 6u;
 
 struct FontVertex
 {

@@ -3,6 +3,41 @@
 
 float4 main(VertextoPixel input) : SV_TARGET
 {
+	// Per pixel clipping, for the cases where this shader is drawing something
+	// that lives in the world. Both share one world position, and both come
+	// first so that a discarded fragment samples nothing.
+	[branch]
+	if (image.flags & (
+		IMAGE_FLAG_CLIP_PLANE |
+		IMAGE_FLAG_WATERSIDE_SUBMERGED |
+		IMAGE_FLAG_WATERSIDE_ABOVE))
+	{
+		const float3 P = reconstruct_position(
+			input.uv_screen(), input.screen.z / input.screen.w
+		);
+
+		// A planar reflection camera carries a clip plane, and its view must
+		// not show what is behind the mirror. Every other scene draw path
+		// outputs this as a clip distance from its vertex shader, but imageVS
+		// cannot: its vertices arrive already in clip space, with no world
+		// position left to test. Per pixel here instead, so that a sprite
+		// crossing the water has exactly its dry part reflected rather than all
+		// or none of it.
+		[branch]
+		if (image.flags & IMAGE_FLAG_CLIP_PLANE)
+		{
+			clip(dot(float4(P, 1), GetCamera().clip_plane));
+		}
+
+		// ...and half of it may belong on the far side of the water surface,
+		// where the transparent pass issued it as a separate draw.
+		ClipToWaterSide(
+			P,
+			(image.flags & IMAGE_FLAG_WATERSIDE_SUBMERGED) != 0,
+			(image.flags & IMAGE_FLAG_WATERSIDE_ABOVE) != 0
+		);
+	}
+
 	SamplerState sam = bindless_samplers[descriptor_index(image.sampler_index)];
 
 	const half hdr_scaling = unpack_half2(image.hdr_scaling_aspect).x;

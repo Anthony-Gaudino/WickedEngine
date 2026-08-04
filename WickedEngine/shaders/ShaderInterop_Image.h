@@ -25,6 +25,16 @@ enum IMAGE_FLAGS
 	IMAGE_FLAG_UNDERWATER_FOG = 1u << 15u,
 	// ...and this draw is additive, so it takes the extinction only.
 	IMAGE_FLAG_UNDERWATER_FOG_ADDITIVE = 1u << 16u,
+	// Keep only the half of this draw on one side of the ocean surface. The
+	// transparent pass issues a scene sprite twice, once on each side of the
+	// water, so that a sprite crossing the waterline is refracted below it and
+	// dry above it. Exactly one of the two is set, or neither.
+	IMAGE_FLAG_WATERSIDE_SUBMERGED = 1u << 17u,
+	IMAGE_FLAG_WATERSIDE_ABOVE = 1u << 18u,
+	// Clip this draw against the camera's clip plane, for a planar reflection.
+	// Set only for sprites drawn into the scene: a full screen blit issued
+	// during the same pass has no world position to test.
+	IMAGE_FLAG_CLIP_PLANE = 1u << 19u,
 };
 
 struct alignas(16) ImageConstants
