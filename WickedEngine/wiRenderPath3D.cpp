@@ -50,6 +50,7 @@ namespace wi
 		rtPostprocess = {};
 
 		depthBuffer_Main = {};
+		depthBuffer_Ocean = {};
 		depthBuffer_Copy = {};
 		depthBuffer_Copy1 = {};
 		depthBuffer_Reflection = {};
@@ -505,6 +506,35 @@ namespace wi
 		else
 		{
 			rtWaterRipple = {};
+		}
+
+		// The ocean surface draws into a depth buffer of its own rather than
+		// the main one. It has to write depth: its displaced grid folds over
+		// itself wherever choppy waves overhang, so two water fragments land on
+		// one pixel and only depth picks the nearer. But the transparent pass
+		// is now ordered by water side, so nothing drawn after the ocean should
+		// be depth-tested against it - that is what used to erase the editor
+		// overlays and the gaussian splats across the waterline. Handing it a
+		// copy of the opaque depth satisfies both: the water is still occluded
+		// by geometry in front of it and by itself, and its writes are thrown
+		// away with the copy.
+		//
+		// Allocated only while there is an ocean, because it is a full
+		// resolution depth buffer and matches the main one sample for sample.
+		if (scene->weather.IsOceanEnabled() && depthBuffer_Main.IsValid())
+		{
+			if (depthBuffer_Ocean.desc.width != depthBuffer_Main.desc.width ||
+				depthBuffer_Ocean.desc.height != depthBuffer_Main.desc.height ||
+				depthBuffer_Ocean.desc.sample_count != depthBuffer_Main.desc.sample_count)
+			{
+				TextureDesc desc = depthBuffer_Main.desc;
+				device->CreateTexture(&desc, nullptr, &depthBuffer_Ocean);
+				device->SetName(&depthBuffer_Ocean, "renderpath3D.depthBuffer_Ocean");
+			}
+		}
+		else
+		{
+			depthBuffer_Ocean = {};
 		}
 
 		if (wi::renderer::GetSurfelGIEnabled())
@@ -2278,7 +2308,54 @@ namespace wi
 			wi::renderer::Postprocess_Downsample4x(rtMain, rtSceneCopy, cmd);
 			device->EventEnd(cmd);
 
-			device->RenderPassBegin(rp, rp_count, cmd);
+			// The ocean writes depth so that its own displaced grid can occlude
+			// itself, but nothing drawn after it may be depth-tested against
+			// the water - the transparent pass is ordered by water side
+			// instead, and the editor overlays that come later are not ordered
+			// at all. So it draws against a scratch copy of the opaque depth,
+			// taken here: the water is still occluded by geometry in front of
+			// it and by itself, and its writes leave with the copy.
+			//
+			// If the scratch buffer is missing the ocean falls back to the main
+			// depth buffer, which is the old behaviour: correct water, but its
+			// depth then erases whatever is drawn behind it afterwards.
+			const bool oceanScratchDepth = depthBuffer_Ocean.IsValid();
+			if (oceanScratchDepth)
+			{
+				device->EventBegin("Copy depth for ocean", cmd);
+				GPUBarrier barriers[] = {
+					GPUBarrier::Image(&depthBuffer_Main, depthBuffer_Main.desc.layout, ResourceState::COPY_SRC),
+					GPUBarrier::Image(&depthBuffer_Ocean, depthBuffer_Ocean.desc.layout, ResourceState::COPY_DST),
+				};
+				device->Barrier(barriers, arraysize(barriers), cmd);
+				device->CopyResource(&depthBuffer_Ocean, &depthBuffer_Main, cmd);
+				for (int i = 0; i < arraysize(barriers); ++i)
+				{
+					std::swap(barriers[i].image.layout_before, barriers[i].image.layout_after);
+				}
+				device->Barrier(barriers, arraysize(barriers), cmd);
+				device->EventEnd(cmd);
+			}
+
+			RenderPassImage rp_ocean[3];
+			uint32_t rp_ocean_count = 0;
+			rp_ocean[rp_ocean_count++] = RenderPassImage::RenderTarget(&rtMain_render, RenderPassImage::LoadOp::LOAD);
+			if (getMSAASampleCount() > 1)
+			{
+				rp_ocean[rp_ocean_count++] = RenderPassImage::Resolve(&rtMain);
+			}
+			rp_ocean[rp_ocean_count++] = RenderPassImage::DepthStencil(
+				oceanScratchDepth ? &depthBuffer_Ocean : &depthBuffer_Main,
+				RenderPassImage::LoadOp::LOAD,
+				// Nothing reads the scratch depth afterwards, so let a tiler
+				// skip writing it back. The main buffer must still be kept.
+				oceanScratchDepth ? RenderPassImage::StoreOp::DONTCARE : RenderPassImage::StoreOp::STORE,
+				ResourceState::DEPTHSTENCIL,
+				ResourceState::DEPTHSTENCIL,
+				ResourceState::DEPTHSTENCIL
+			);
+
+			device->RenderPassBegin(rp_ocean, rp_ocean_count, cmd);
 
 			wi::renderer::DrawScene(
 				visibility_main,
