@@ -136,6 +136,12 @@ static const uint DEPTHOFFIELD_TILESIZE = 32;
 // the eye/mask interface makes submerged objects appear larger. Applied as a
 // radial zoom toward the screen center. A value of 1 leaves the view unscaled.
 #define underwater_magnification postprocess.params0.x
+// Underwater lens distortion strength: barrel-warps the whole underwater view
+// (Brown-Conrady), for the look of seeing through a dive mask. 1 is the amount
+// the engine has always applied, 0 disables it. Runtime rather than a compile
+// time #define so it can be turned off to read the scene undistorted, which
+// matters for anything that needs straight lines - wireframe views especially.
+#define underwater_lens_distortion postprocess.params0.y
 // Snell's window strength for the underwater post pass: when > 0 the view is
 // modulated by refraction at the surface, so the above-water hemisphere is
 // compressed into an overhead circular window (critical angle ~48.6 deg for

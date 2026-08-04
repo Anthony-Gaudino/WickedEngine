@@ -18800,7 +18800,8 @@ void Postprocess_Underwater(
 	float snell,
 	float snell_fade,
 	bool snell_rt,
-	int volumetrics_texture
+	int volumetrics_texture,
+	float lens_distortion
 )
 {
 	device->EventBegin("Postprocess_Underwater", cmd);
@@ -18818,6 +18819,7 @@ void Postprocess_Underwater(
 	postprocess.resolution_rcp.x = 1.0f / postprocess.resolution.x;
 	postprocess.resolution_rcp.y = 1.0f / postprocess.resolution.y;
 	postprocess.params0.x = std::max(1.0f, magnification); // underwater_magnification
+	postprocess.params0.y = std::max(0.0f, lens_distortion); // underwater_lens_distortion
 	postprocess.params0.z = std::max(0.0f, snell); // underwater_snell
 	postprocess.params0.w = std::max(0.0f, snell_fade); // underwater_snell_fade
 	postprocess.params1.x = snell_rt ? 1.0f : 0.0f; // underwater_snell_rt

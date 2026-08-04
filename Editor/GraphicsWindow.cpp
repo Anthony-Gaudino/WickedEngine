@@ -1408,6 +1408,23 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 		});
 	AddWidget(&underwaterBlurStrengthSlider);
 
+	underwaterLensDistortionCheckBox.Create("Underwater Lens Distortion: ");
+	underwaterLensDistortionCheckBox.SetTooltip("Toggle the barrel distortion applied to the whole underwater view, for the look of seeing through a dive mask.");
+	underwaterLensDistortionCheckBox.SetSize(XMFLOAT2(hei, hei));
+	underwaterLensDistortionCheckBox.SetPos(XMFLOAT2(x, y += step));
+
+	if (editor->main->config.GetSection("graphics").Has("underwater_lens_distortion"))
+	{
+		editor->renderPath->setUnderwaterLensDistortionEnabled(editor->main->config.GetSection("graphics").GetBool("underwater_lens_distortion"));
+	}
+
+	underwaterLensDistortionCheckBox.OnClick([=](wi::gui::EventArgs args) {
+		editor->renderPath->setUnderwaterLensDistortionEnabled(args.bValue);
+		editor->main->config.GetSection("graphics").Set("underwater_lens_distortion", args.bValue);
+		editor->main->config.Commit();
+		});
+	AddWidget(&underwaterLensDistortionCheckBox);
+
 	underwaterMagnificationCheckBox.Create("Underwater Magnification: ");
 	underwaterMagnificationCheckBox.SetTooltip("Magnify the view while under water, to mimic how refraction at the eye makes submerged objects appear larger (and nearer). Only affects the submerged part of the screen.");
 	underwaterMagnificationCheckBox.SetSize(XMFLOAT2(hei, hei));
@@ -2048,6 +2065,7 @@ void GraphicsWindow::UpdateData()
 	chromaticaberrationSlider.SetValue(editor->renderPath->getChromaticAberrationAmount());
 	underwaterChromaticaberrationCheckBox.SetCheck(editor->renderPath->getUnderwaterChromaticAberrationEnabled());
 	underwaterChromaticaberrationSlider.SetValue(editor->renderPath->getUnderwaterChromaticAberrationAmount());
+	underwaterLensDistortionCheckBox.SetCheck(editor->renderPath->getUnderwaterLensDistortionEnabled());
 	fsrCheckBox.SetCheck(editor->renderPath->getFSREnabled());
 	fsr2CheckBox.SetCheck(editor->renderPath->getFSR2Enabled());
 	fsrSlider.SetValue(editor->renderPath->getFSRSharpness());
@@ -2298,6 +2316,7 @@ void GraphicsWindow::ResizeLayout()
 	depthOfFieldCheckBox.SetPos(XMFLOAT2(depthOfFieldScaleSlider.GetPos().x - depthOfFieldCheckBox.GetSize().x - 80, depthOfFieldScaleSlider.GetPos().y));
 	layout.add_right(underwaterBlurStrengthSlider);
 	underwaterBlurCheckBox.SetPos(XMFLOAT2(underwaterBlurStrengthSlider.GetPos().x - underwaterBlurCheckBox.GetSize().x - 80, underwaterBlurStrengthSlider.GetPos().y));
+	layout.add_right(underwaterLensDistortionCheckBox);
 	layout.add_right(underwaterMagnificationSlider);
 	underwaterMagnificationCheckBox.SetPos(XMFLOAT2(underwaterMagnificationSlider.GetPos().x - underwaterMagnificationCheckBox.GetSize().x - 80, underwaterMagnificationSlider.GetPos().y));
 	layout.add_right(underwaterSnellStrengthSlider);

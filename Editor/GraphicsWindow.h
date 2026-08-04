@@ -114,6 +114,7 @@ public:
 	wi::gui::Slider chromaticaberrationSlider;
 	wi::gui::CheckBox underwaterChromaticaberrationCheckBox;
 	wi::gui::Slider underwaterChromaticaberrationSlider;
+	wi::gui::CheckBox underwaterLensDistortionCheckBox;
 	wi::gui::CheckBox fsrCheckBox;
 	wi::gui::Slider fsrSlider;
 	wi::gui::CheckBox fsr2CheckBox;

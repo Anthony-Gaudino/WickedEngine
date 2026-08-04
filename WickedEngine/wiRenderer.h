@@ -1120,7 +1120,8 @@ namespace wi::renderer
 		float snell = 0.0f,
 		float snell_fade = 1.0f,
 		bool snell_rt = false,
-		int volumetrics_texture = -1
+		int volumetrics_texture = -1,
+		float lens_distortion = 1.0f
 	);
 	struct MeshBlendResources
 	{

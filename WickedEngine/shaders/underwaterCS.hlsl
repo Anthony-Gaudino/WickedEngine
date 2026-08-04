@@ -14,7 +14,6 @@
 #endif // RTAPI
 
 #define INTERSECTION_DISTORT
-#define LENS_DISTORT
 //#define ANIMATED_DISTORT
 
 PUSHCONSTANT(postprocess, PostProcess);
@@ -91,10 +90,17 @@ void main(uint3 DTid : SV_DispatchThreadID)
 	// Apply effects on full screen:
 	{
 
-#ifdef LENS_DISTORT
-		// Some lens distortion uv modulation:
-		uv = clipspace_to_uv(brownConradyDistortion(uv_to_clipspace(uv) * 0.9));
-#endif // LENS_DISTORT
+		// Some lens distortion uv modulation, as if seen through a dive mask.
+		// Scaled rather than switched, so the setting can dial it back as well
+		// as turn it off, and so 1 reproduces the engine's long-standing look
+		// exactly.
+		[branch]
+		if (underwater_lens_distortion > 0)
+		{
+			const float2 distorted =
+				clipspace_to_uv(brownConradyDistortion(uv_to_clipspace(uv) * 0.9));
+			uv = lerp(uv, distorted, saturate(underwater_lens_distortion));
+		}
 
 #ifdef ANIMATED_DISTORT
 		// It's not realistic to apply much refraction underwater to camera, but looks cool:

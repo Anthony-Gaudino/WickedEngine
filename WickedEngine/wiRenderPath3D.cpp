@@ -2759,7 +2759,8 @@ namespace wi
 					underwater_snell,
 					getUnderwaterSnellFade(),
 					underwater_snell_rt,
-					underwater_volumetrics_texture
+					underwater_volumetrics_texture,
+					getUnderwaterLensDistortionEnabled() ? 1.0f : 0.0f
 				);
 
 				rt_first = nullptr;

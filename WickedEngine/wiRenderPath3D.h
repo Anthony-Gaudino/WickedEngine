@@ -91,6 +91,9 @@ namespace wi
 		bool outlineEnabled = false;
 		bool chromaticAberrationEnabled = false;
 		bool underwaterChromaticAberrationEnabled = true;
+		// The engine has always barrel-warped the underwater view; default on
+		// to keep that, but it can be turned off to read the scene undistorted.
+		bool underwaterLensDistortionEnabled = true;
 		bool underwaterMagnificationEnabled = true;
 		bool underwaterSnellEnabled = true;
 		bool underwaterSnellRTEnabled = true;
@@ -308,6 +311,7 @@ namespace wi
 		constexpr bool getOutlineEnabled() const { return outlineEnabled; }
 		constexpr bool getChromaticAberrationEnabled() const { return chromaticAberrationEnabled; }
 		constexpr bool getUnderwaterChromaticAberrationEnabled() const { return underwaterChromaticAberrationEnabled; }
+		[[nodiscard]] constexpr bool getUnderwaterLensDistortionEnabled() const { return underwaterLensDistortionEnabled; }
 		[[nodiscard]] constexpr bool getUnderwaterMagnificationEnabled() const { return underwaterMagnificationEnabled; }
 		[[nodiscard]] constexpr bool getUnderwaterSnellEnabled() const { return underwaterSnellEnabled; }
 		[[nodiscard]] constexpr bool getUnderwaterSnellRTEnabled() const { return underwaterSnellRTEnabled; }
@@ -382,6 +386,7 @@ namespace wi
 		constexpr void setChromaticAberrationEnabled(bool value) { chromaticAberrationEnabled = value; }
 		constexpr void setUnderwaterBlurEnabled(bool value) { underwaterBlurEnabled = value; }
 		constexpr void setUnderwaterChromaticAberrationEnabled(bool value) { underwaterChromaticAberrationEnabled = value; }
+		constexpr void setUnderwaterLensDistortionEnabled(bool value) { underwaterLensDistortionEnabled = value; }
 		constexpr void setUnderwaterMagnificationEnabled(bool value) { underwaterMagnificationEnabled = value; }
 		constexpr void setUnderwaterSnellEnabled(bool value) { underwaterSnellEnabled = value; }
 		constexpr void setUnderwaterSnellRTEnabled(bool value) { underwaterSnellRTEnabled = value; }
