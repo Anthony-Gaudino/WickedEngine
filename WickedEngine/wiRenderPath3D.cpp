@@ -2258,6 +2258,7 @@ namespace wi
 				farSideTransparents ||
 				scene->sprites.GetCount() > 0 ||
 				scene->fonts.GetCount() > 0 ||
+				scene->gaussian_scene.IsValid() ||
 				!visibility_main.visibleEmitters.empty() ||
 				!visibility_main.visibleLights.empty();
 
@@ -2297,6 +2298,7 @@ namespace wi
 
 				wi::renderer::DrawLightVisualizers(visibility_main, cmd);
 				wi::renderer::DrawSoftParticles(visibility_main, false, cmd);
+				wi::renderer::DrawGaussianSplats(*scene, *camera, cmd);
 				wi::renderer::DrawSpritesAndFonts(*scene, *camera, false, cmd, farSide);
 
 				bindWaterSide(wi::renderer::WATERSIDE_ALL);
@@ -2431,21 +2433,23 @@ namespace wi
 		wi::renderer::DrawWireframeOverlay(visibility_main, wi::enums::RENDERPASS_MAIN, cmd);
 
 		// The near side only for these: the far side was drawn before the ocean
-		// above, so that the water refracts it rather than rejecting it. The
-		// bracket stops before the gaussian splats, which are not split and so
-		// must keep both halves.
+		// above, so that the water refracts it rather than rejecting it.
+		//
+		// The splats are sorted once per frame, for the main camera, and both
+		// passes draw that same sorted set - they differ only in which half
+		// each keeps, so back to front order still holds within either half.
 		if (oceanVisible)
 		{
 			bindWaterSide(nearSide);
 		}
 		wi::renderer::DrawLightVisualizers(visibility_main, cmd);
 		wi::renderer::DrawSoftParticles(visibility_main, false, cmd);
+		wi::renderer::DrawGaussianSplats(*scene, *camera, cmd);
 		if (oceanVisible)
 		{
 			bindWaterSide(wi::renderer::WATERSIDE_ALL);
 		}
 
-		wi::renderer::DrawGaussianSplats(*scene, *camera, cmd);
 		wi::renderer::DrawSpritesAndFonts(*scene, *camera, false, cmd, nearSide);
 
 		if (getVolumeLightsEnabled() && visibility_main.IsRequestedVolumetricLights())
