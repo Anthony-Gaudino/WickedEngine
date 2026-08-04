@@ -2223,7 +2223,9 @@ namespace wi
 			// content, but the render pass around them does not - and with MSAA
 			// every pass end costs a resolve. Tightening this to "is any of it
 			// actually on the far side" is deferred work.
+			const bool farSideTransparents = visibility_main.IsTransparentsVisible();
 			const bool anyFarSideContent =
+				farSideTransparents ||
 				scene->sprites.GetCount() > 0 ||
 				scene->fonts.GetCount() > 0 ||
 				!visibility_main.visibleEmitters.empty() ||
@@ -2231,9 +2233,37 @@ namespace wi
 
 			if (anyFarSideContent)
 			{
+				// A refractive mesh on the far side samples the scene copy, and
+				// at this point it still holds the previous frame's image - the
+				// only fill so far is the one taken at the end of the last
+				// RenderTransparents for SSR. Refresh it, or a submerged glass
+				// panel refracts a frame-old scene. The chain is built again
+				// after the ocean below, for the near side, which is the price
+				// of drawing the two sides in two places.
+				if (farSideTransparents)
+				{
+					RenderSceneMIPChain(cmd);
+				}
+
 				device->EventBegin("Transparents beyond the water", cmd);
 				device->RenderPassBegin(rp, rp_count, cmd);
 				bindWaterSide(farSide);
+
+				if (farSideTransparents)
+				{
+					// No foreground pass: a foreground object is drawn in a
+					// compressed depth range right against the camera, so it is
+					// always in front of the water and never on the far side.
+					wi::renderer::DrawScene(
+						visibility_main,
+						RENDERPASS_MAIN,
+						cmd,
+						wi::renderer::DRAWSCENE_TRANSPARENT |
+						wi::renderer::DRAWSCENE_TESSELLATION |
+						wi::renderer::DRAWSCENE_OCCLUSIONCULLING |
+						wi::renderer::DRAWSCENE_MAINCAMERA
+					);
+				}
 
 				wi::renderer::DrawLightVisualizers(visibility_main, cmd);
 				wi::renderer::DrawSoftParticles(visibility_main, false, cmd);
@@ -2273,10 +2303,16 @@ namespace wi
 			auto range = wi::profiler::BeginRangeGPU("Transparent Scene", cmd);
 			device->EventBegin("Transparent Scene", cmd);
 
-			// Regular:
+			// Regular: the near side only, its far half having been drawn
+			// before the ocean above. Restored immediately after, because the
+			// foreground pass below is always in front of the water.
 			vp.min_depth = 0;
 			vp.max_depth = 1;
 			device->BindViewports(1, &vp, cmd);
+			if (oceanVisible)
+			{
+				bindWaterSide(nearSide);
+			}
 			wi::renderer::DrawScene(
 				visibility_main,
 				RENDERPASS_MAIN,
@@ -2286,6 +2322,10 @@ namespace wi
 				wi::renderer::DRAWSCENE_OCCLUSIONCULLING |
 				wi::renderer::DRAWSCENE_MAINCAMERA
 			);
+			if (oceanVisible)
+			{
+				bindWaterSide(wi::renderer::WATERSIDE_ALL);
+			}
 
 			// Foreground:
 			vp.min_depth = 1 - foreground_depth_range;

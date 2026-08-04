@@ -564,6 +564,20 @@ float4 main(PixelInput input, in bool is_frontface : SV_IsFrontFace APPEND_COVER
 	surface.V = input.GetViewVector();
 	float dist = length(surface.V);
 	surface.V /= dist;
+
+	// Half of this surface may belong on the far side of the water, where the
+	// transparent pass issued it as a separate draw. Discard that half before
+	// anything is sampled.
+	//
+	// A no-op everywhere else: the option is only ever set on the camera around
+	// the transparent draws that split, so opaque geometry - which is drawn
+	// before the ocean and can never be rejected by it - is untouched, as are
+	// the shadow and prepass permutations.
+	ClipToWaterSide(
+		surface.P,
+		camera.IsWaterSideSubmerged(),
+		camera.IsWaterSideAbove()
+	);
 	
 #ifdef OBJECTSHADER_USE_UVSETS
 	float4 uvsets = input.GetUVSets();
