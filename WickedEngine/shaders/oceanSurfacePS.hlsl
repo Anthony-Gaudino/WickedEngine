@@ -137,10 +137,40 @@ float4 main(PSIn input) : SV_TARGET
 			float water_depth = -dot(float4(reflectivePosition, 1), water_plane);
 			water_depth += texture_ocean_displacementmap.SampleLevel(sampler_linear_wrap, reflectivePosition.xz * xOceanPatchSizeRecip, 0).z; // texture contains xzy!
 			// Same medium as the refraction below: what the planar reflection
-			// shows has crossed water_depth of water too.
-			const float3 reflectionTransmittance = saturate(exp(
-				-water_depth * MakeWaterVolumetrics(1).sigmaT));
-			reflectiveColor.rgb = lerp(color.rgb, reflectiveColor.rgb, reflectionTransmittance);
+			// shows has crossed water_depth of water too. Composited through
+			// MakeWaterFog rather than faded towards a flat colour, so the
+			// water a dying reflection leaves behind is the same water
+			// everything else scatters in - lit, and carrying the sky and the
+			// sun, instead of the authored base colour on its own.
+			//
+			// The segment runs from the reflected point up to the surface, so
+			// its own direction is the mirror of the view vector. The column
+			// between the surface and the eye is deliberately NOT part of it -
+			// that one is applied to the whole fragment by ApplyWaterFog at the
+			// end - which is why the entry depth passed here is zero.
+			//
+			// Clamped at zero because a reflected point can land ABOVE the
+			// water plane, and a negative path would drive the transmittance
+			// past one and the in-scatter negative.
+			//
+			// God rays deliberately off: they are a screen space pattern swept
+			// around where the sun projects, and a mirrored view has no such
+			// point - switching them on paints the real sun's screen position
+			// onto the reflection. underwaterCS.hlsl leaves them out of
+			// Snell's window for the same reason.
+			const WaterFog reflectionFog = MakeWaterFog(
+				MakeWaterVolumetrics(1),
+				max(0, water_depth),
+				-reflect(V, float3(0, 1, 0)),
+				0,
+				ScreenCoord,
+				uv_to_clipspace(ScreenCoord),
+				false
+			);
+
+			reflectiveColor.rgb = (half3)(
+				reflectiveColor.rgb * reflectionFog.transmittance
+				+ reflectionFog.inscatter);
 		}
 
 		// remove planar reflection at high perturbation where it gets too inaccurate
