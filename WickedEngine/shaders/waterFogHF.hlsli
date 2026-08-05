@@ -118,10 +118,12 @@ struct WaterFog
  * already has one - a march, or a fragment that has decided how submerged it
  * is - cannot end up with a second, subtly different set of coefficients.
  *
- * The inscattered colour is the water's authored base plus the sun, and the sun
- * is put through everything that happened to it on the way: the atmosphere it
- * crossed, the share the surface reflected away instead of admitting, the water
- * column above the eye, the phase function, and the god rays.
+ * The inscattered colour is the water's authored base plus the daylight that
+ * reached this depth, from the sun and from the sky. Each is put through
+ * everything that happened to it on the way down: the atmosphere it crossed,
+ * the share the surface reflected away instead of admitting, and the water
+ * column above the eye. The sun additionally carries the phase function and the
+ * god rays, both of which need a direction the sky has not got.
  *
  * Example usage:
  * @code
@@ -188,8 +190,12 @@ WaterFog MakeWaterFog(
 	// Sunlight has already crossed the water column above the eye before it can
 	// scatter towards it, so it arrives filtered by the same medium. Red goes
 	// first, which is what tints the scatter green-blue with depth without any
-	// authored colour:
-	inscatteringColor *= exp(-eyeDepth * medium.sigmaT);
+	// authored colour.
+	//
+	// Over the sun's own slant path, not the vertical drop: the sun enters at
+	// whatever angle Snell's law bends it to and crosses more water than the
+	// depth alone, which is the same reciprocity the view path uses.
+	inscatteringColor *= exp(-SubmergedViewPath(eyeDepth, L) * medium.sigmaT);
 
 	// And some of it never got in: the surface reflects a share away instead of
 	// refracting it down, nearly all of it once the sun is low. The same term
@@ -222,7 +228,33 @@ WaterFog MakeWaterFog(
 		inscatteringColor *= 1 - godray;
 	}
 
-	const half3 fogColor = ocean.water_color.rgb + inscatteringColor;
+	// The sky scatters in the water as well as the sun does, and unlike the sun
+	// it is still there when the sun is not. Without this the water is lit by a
+	// single directional source: it goes black at night, black under overcast,
+	// and black in the shadow of anything - while the surfaces inside it stay
+	// visibly lit, because they get the same daylight through
+	// WaterAmbientTransmittance.
+	//
+	// Isotropic, so no phase function. A uniform field integrates the phase
+	// over the whole sphere, and any phase function integrates to one - the
+	// directionality the sun gets from HgPhase has nothing to weight here.
+	half3 ambientColor = (GetFrame().options & OPTION_BIT_REALISTIC_SKY)
+		? texture_skyluminancelut.SampleLevel(
+			sampler_point_clamp, float2(0.5, 0.5), 0).rgb
+		: (GetHorizonColor() + GetZenithColor()) * 0.5;
+
+	// The same two losses the sun takes, in the forms a hemispherical source
+	// takes them: the mean Fresnel transmittance over the sky rather than the
+	// angle-dependent one, and the cosine-weighted mean slant through Snell's
+	// window rather than one refracted direction. Matches
+	// WaterAmbientTransmittance exactly, so the haze and the surfaces lit
+	// through it agree about how much daylight got down here.
+	ambientColor *= WATER_FRESNEL_DIFFUSE_TRANSMITTANCE;
+	ambientColor *= (half3)exp(
+		-eyeDepth * WATER_DOWNWELLING_SLANT * medium.sigmaT);
+
+	const half3 fogColor =
+		ocean.water_color.rgb + ambientColor + inscatteringColor;
 	fog.inscatter = fogColor * inscatterAmount;
 
 	return fog;
