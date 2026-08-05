@@ -1839,6 +1839,13 @@ struct StencilBitPush
 	uint bit;
 };
 
+// How trailPS should apply the water fog. Selected on the CPU from the trail's
+// blend mode, because one pixel shader serves every blend state.
+static const int TRAIL_WATERFOG_NONE = 0;			// leave the colour alone
+static const int TRAIL_WATERFOG_STANDARD = 1;		// transmittance + inscatter
+static const int TRAIL_WATERFOG_PREMULTIPLIED = 2;	// inscatter scaled by coverage
+static const int TRAIL_WATERFOG_ADDITIVE = 3;		// transmittance only
+
 CBUFFER(TrailRendererCB, CBSLOT_TRAILRENDERER)
 {
 	float4x4	g_xTrailTransform;
@@ -1849,7 +1856,14 @@ CBUFFER(TrailRendererCB, CBSLOT_TRAILRENDERER)
 	int			g_xTrailTextureIndex2;
 	int			g_xTrailDepthTextureIndex;
 	float		g_xTrailDepthSoften;
-	float3		g_xTrailPadding;
+	// One of TRAIL_WATERFOG_*, decided on the CPU from the trail's blend mode.
+	// One pixel shader serves every blend state, so it cannot know at compile
+	// time how its output will be combined, and the water fog has to be applied
+	// differently depending on that. The mapping is made where
+	// `wi::enums::BLENDMODE` is visible rather than duplicating that enum's
+	// ordering into HLSL, where a reorder would break it silently.
+	int			g_xTrailWaterFogMode;
+	float2		g_xTrailPadding;
 	float		g_xTrailCameraFar;
 };
 

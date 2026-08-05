@@ -103,6 +103,28 @@ namespace wi
 		sb.g_xTrailTextureIndex1 = device->GetDescriptorIndex(texture.IsValid() ? &texture : wi::texturehelper::getWhite(), SubresourceType::SRV);
 		sb.g_xTrailTextureIndex2 = device->GetDescriptorIndex(texture2.IsValid() ? &texture2 : wi::texturehelper::getWhite(), SubresourceType::SRV);
 		sb.g_xTrailDepthTextureIndex = camera.texture_depth_index;
+		// How the water between the trail and the eye has to be applied depends
+		// on how this draw is combined with what is already on screen. MULTIPLY
+		// and INVERSE are left unfogged on purpose: their neutral element is
+		// white, not black, so attenuating toward zero would darken the
+		// destination rather than veil the trail, and there is no inscatter
+		// term that means anything for them.
+		switch (blendMode)
+		{
+		case BLENDMODE_ADDITIVE:
+			sb.g_xTrailWaterFogMode = TRAIL_WATERFOG_ADDITIVE;
+			break;
+		case BLENDMODE_PREMULTIPLIED:
+			sb.g_xTrailWaterFogMode = TRAIL_WATERFOG_PREMULTIPLIED;
+			break;
+		case BLENDMODE_OPAQUE:
+		case BLENDMODE_ALPHA:
+			sb.g_xTrailWaterFogMode = TRAIL_WATERFOG_STANDARD;
+			break;
+		default:
+			sb.g_xTrailWaterFogMode = TRAIL_WATERFOG_NONE;
+			break;
+		}
 		sb.g_xTrailCameraFar = camera.zFarP;
 		device->BindDynamicConstantBuffer(sb, CBSLOT_TRAILRENDERER, cmd);
 
