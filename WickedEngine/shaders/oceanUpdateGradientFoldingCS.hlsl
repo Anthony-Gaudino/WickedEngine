@@ -36,6 +36,21 @@ void main( uint3 DTid : SV_DispatchThreadID )
 	// Practical subsurface scale calculation: max[0, (1 - J) + Amplitude * (2 * Coverage - 1)].
 	float fold = max(1.0f - J, 0);
 
+	// Second moment of the slope, for the surface shader's specular
+	// anti-aliasing. The mip chain averages this the same way it averages the
+	// gradient, so mip m carries E[|s|^2] beside E[s] and the consumer recovers
+	// the variance of the waves that mip swallowed as E[|s|^2] - |E[s]|^2.
+	//
+	// In WORLD slope units, unlike the gradient beside it: the gradient spans
+	// two texels, so a true slope is half of it over the texel length, and
+	// squaring the raw texel-unit value would sink a calm sea into half-float
+	// subnormals.
+	//
+	// NOTE this only holds while the mip chain is a plain box average.
+	// generateMIPChain2DCS has a preserve_coverage path that weights rgb by
+	// ALPHA - which here is the fold - and would silently corrupt this.
+	const float2 slope = gradient * xOceanGridLen * 0.5f;
+
 	// Output
-	output[DTid.xy] = float4(gradient, 0, fold);
+	output[DTid.xy] = float4(gradient, dot(slope, slope), fold);
 }
