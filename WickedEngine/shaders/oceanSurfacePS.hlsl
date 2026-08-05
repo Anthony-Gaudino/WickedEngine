@@ -219,36 +219,29 @@ float4 main(PSIn input) : SV_TARGET
 		water_depth += texture_ocean_displacementmap.SampleLevel(sampler_linear_wrap, refraction_position.xz * xOceanPatchSizeRecip, 0).z; // texture contains xzy!
 		if (camera_below_water && V.y < 0)
 			water_depth = -water_depth;
-		// Water fog computation, using the same medium the underwater pass
-		// uses, so what the water looks like from above agrees with what it
-		// looks like from inside it.
-		const float3 sigmaT = MakeWaterVolumetrics(1).sigmaT;
-
-		// What the refraction crossed is the SLANT path through the water, not
-		// the vertical drop to it - taking the depth alone lets a grazing view
-		// keep up to half the light it should have lost.
+		// The refraction is handed on WHOLE - no absorption is applied to it
+		// here, and this is the point of the whole design.
 		//
-		// Only for an eye in the air. Looking out from beneath the surface the
-		// refraction shows the world above, which crossed no water to get here,
-		// and the column between this point and the eye belongs to the
-		// underwater pass.
-		const float water_path = camera_below_water
-			? water_depth
-			: SubmergedViewPath(water_depth, surface.V);
-
-		const float3 transmittance = saturate(exp(-water_path * sigmaT));
-		// ApplyLighting() blends the water body's own lit color against the
-		// refraction with a scalar weight, so the channel that survives
-		// furthest sets how much shows through and the rest of the tint rides
-		// on the refraction color. Their product is the full spectral
-		// transmittance again.
-		// Deep enough water underflows every channel to zero, so guard the
-		// divide - otherwise the tint becomes 0/0 and NaN leaks into the frame.
-		const float scalarTransmittance =
-			max(transmittance.r, max(transmittance.g, transmittance.b));
-		surface.refraction.a = scalarTransmittance;
-		surface.refraction.rgb *=
-			transmittance / max(scalarTransmittance, 0.00001);
+		// It used to be attenuated by exp(-water_path * sigmaT), with
+		// water_path derived from texture_depth. That buffer is the opaque
+		// prepass: transparents are not in it, and neither is the sky. So a
+		// submerged particle, trail or sprite with nothing solid behind it was
+		// measured against the far plane, the transmittance underflowed, and it
+		// was extinguished - even though it WAS in the scene copy being sampled
+		// and would otherwise have shown through. A transmissive mesh went the
+		// same way, which is why it read as far too clear from above the water
+		// and correct from below.
+		//
+		// There is no fixing that from here: one screen depth cannot describe
+		// what a stack of transparents is at. So everything in the scene copy
+		// now carries its own absorption instead, applied over its own path as
+		// it was drawn - GetWaterFog does that for opaque geometry, for every
+		// transparent, and for the sky, which is what supplies the "infinitely
+		// deep water" backdrop that the far-plane depth used to fake.
+		//
+		// Fresnel still applies: ApplyLighting composites this as
+		// refraction * (1 - F), so the surface still reflects its share away.
+		surface.refraction.a = 1;
 		color.a = 1;
 	}
 	
@@ -307,7 +300,11 @@ float4 main(PSIn input) : SV_TARGET
 
 	ApplyFog(dist, V, background, color);
 
-	ApplyWaterFog(ScreenCoord, surface.P, background, color);
+	// AtSurface: this fragment IS the interface, so what lies between it and
+	// the eye is water exactly when the eye is under it. Classifying it by
+	// height instead would have it fog itself in every wave trough, where the
+	// displaced surface dips below the still plane.
+	ApplyWaterFogAtSurface(ScreenCoord, surface.P, background, color);
 
 	return saturateMediump(color);
 

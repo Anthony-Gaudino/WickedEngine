@@ -269,12 +269,16 @@ WaterFog MakeWaterFog(
  * gets attenuated over the distance to whatever opaque surface is BEHIND it.
  * A fragment knows how far away it actually is.
  *
- * The submerged share of the segment is closed form, and covers every case
- * without a branch: both ends under water gives the whole distance, an eye
- * under and a fragment above gives the stretch up to the crossing, an eye above
- * and a fragment under gives the stretch down from it. Clipped against the
- * still water plane, matching `SubmergedLightPath`, so the fog agrees with the
- * lighting it fogs.
+ * **Both sides of the surface**, which is what makes the water absorb
+ * consistently. An eye in the air looking down gets the refracted leg, bounded
+ * by Snell's window; an eye in the water gets the straight segment clipped at
+ * the plane; and the two are faded across as the camera crosses. Because every
+ * fragment carries its own, nothing downstream has to reconstruct how much
+ * water is in front of it from a depth buffer - which is impossible to do for
+ * a transparent, since transparents are not in one.
+ *
+ * Clipped against the still water plane, matching `SubmergedLightPath`, so the
+ * fog agrees with the lighting it fogs.
  *
  * **Rejected cheapest first**, because this is called from every draw shader in
  * the frame. The camera option is uniform across the draw; the still plane
@@ -289,7 +293,9 @@ WaterFog MakeWaterFog(
  * @return The fog over that segment. Transparent and unlit when the water does
  *         not apply, so callers need no test of their own.
  */
-WaterFog GetWaterFog(float2 screenUV, float3 fragmentPosition)
+WaterFog GetWaterFog(
+	float2 screenUV, float3 fragmentPosition, half fragmentSubmersion
+)
 {
 	WaterFog fog;
 	fog.transmittance = 1;
@@ -313,18 +319,22 @@ WaterFog GetWaterFog(float2 screenUV, float3 fragmentPosition)
 		return fog;
 	}
 
-	// The fragment is under water, but the eye is clear of the surface by more
-	// than any wave could reach, so the fog this function returns is the fog
-	// between one point in the water and one in the air. That belongs to the
-	// ocean surface, which composites what it refracts, and this is where the
-	// two hand over.
-	[branch]
-	if (eye.y >= waterHeight + WATER_EYE_SUBMERSION_MARGIN)
-	{
-		return fog;
-	}
+	// How submerged the EYE is at this pixel: 0 in the air, 1 under water, and
+	// graded in between so the waterline sweeps the screen instead of snapping
+	// as the camera crosses. This is the expensive question - it unprojects the
+	// pixel and samples the displacement map - so it is only asked when the eye
+	// is near enough to the surface for the answer to be in doubt.
+	const half eyeSubmersion =
+		eye.y < waterHeight + WATER_EYE_SUBMERSION_MARGIN
+			? (half)ocean_underwater_factor(screenUV)
+			: (half)0;
 
-	const WaterVolumetrics medium = GetWaterVolumetricsAtEye(screenUV);
+	// The water is there if EITHER end of the segment is in it. Taking the
+	// larger is what admits the case this whole function used to miss: an eye
+	// in the air looking at something under water. The medium is fully present
+	// along that segment even though the eye is not in it.
+	const WaterVolumetrics medium =
+		MakeWaterVolumetrics(max(eyeSubmersion, fragmentSubmersion));
 
 	[branch]
 	if (!medium.IsActive())
@@ -334,29 +344,98 @@ WaterFog GetWaterFog(float2 screenUV, float3 fragmentPosition)
 
 	const float3 towardsEye = eye - fragmentPosition;
 	const float segment = length(towardsEye);
+	const float3 toEye = towardsEye / max(segment, 0.00001);
 
-	const float submergedFraction = saturate(
-		(medium.waterHeight - min(eye.y, fragmentPosition.y))
+	// The straight segment, clipped at the still plane. Right whenever the eye
+	// is in the water: between two points in one medium nothing bends.
+	const float straightPath = segment * saturate(
+		(waterHeight - min(eye.y, fragmentPosition.y))
 		/ max(abs(fragmentPosition.y - eye.y), 0.00001));
+
+	// The refracted leg, for an eye in the air. This is not a refinement of the
+	// straight path, it REPLACES it - light leaving the water bends towards the
+	// horizontal, so a grazing view crosses far less water than the line of
+	// sight suggests. An eye two metres up looking at a sea bed one metre down
+	// three hundred metres out has a hundred metres of straight segment below
+	// the plane and about one and a half metres of actual water. Using the
+	// segment would extinguish water you can plainly see through.
+	const float refractedPath =
+		SubmergedViewPath(max(0, waterHeight - fragmentPosition.y), toEye);
+
+	// Blend on the EYE's submersion, not the medium's: the medium is fully
+	// present in both cases and cannot tell them apart. The two formulas differ
+	// by a lot at the crossing - which is genuine, and why the surface is a
+	// mirror from just above and a window from just below - so they are faded
+	// across rather than switched, on the same graded test that sweeps the
+	// waterline down the screen.
+	const float path = lerp(refractedPath, straightPath, eyeSubmersion);
 
 	return MakeWaterFog(
 		medium,
-		segment * submergedFraction,
-		towardsEye / max(segment, 0.00001),
-		max(0, medium.waterHeight - eye.y),
+		path,
+		toEye,
+		max(0, waterHeight - eye.y),
 		screenUV,
 		uv_to_clipspace(screenUV),
-		GetCamera().IsUnderwaterGodRays()
+		// Screen space stripes swept around where the sun projects. They read
+		// as shafts seen from inside the water and as stripes painted over the
+		// sea seen from a boat, so they need the eye to be under, not merely
+		// the water to be present.
+		GetCamera().IsUnderwaterGodRays() && eyeSubmersion > 0
+	);
+}
+
+/**
+ * The water's fog between the eye and a fragment somewhere in the scene.
+ *
+ * Takes the fragment to be in the water whenever it is below the still plane,
+ * which is what every ordinary draw wants.
+ *
+ * @param[in] screenUV - Screen space UV coordinates (0-1) of the fragment.
+ * @param[in] fragmentPosition - World position of the fragment.
+ *
+ * @return The fog over that segment.
+ */
+WaterFog GetWaterFog(float2 screenUV, float3 fragmentPosition)
+{
+	return GetWaterFog(
+		screenUV,
+		fragmentPosition,
+		fragmentPosition.y < GetWeather().ocean.water_height
+			? (half)1
+			: (half)0
+	);
+}
+
+/**
+ * Applies an already-built fog to a fragment, passing a background through.
+ *
+ * The background excludes radiance that was sampled from the scene behind this
+ * fragment - a refraction, most often - because that was already fogged over
+ * its own longer path when it was drawn. Fogging it a second time would darken
+ * a pane of glass by the water on both sides of it.
+ *
+ * @param[in] fog - The fog over the segment.
+ * @param[in] background - Radiance already fogged elsewhere, to pass through
+ *                         untouched.
+ * @param[in,out] color - Fragment colour, fogged in place.
+ */
+void ApplyWaterFog(WaterFog fog, half3 background, inout half4 color)
+{
+	// Never take out more than is there. A shader that overwrites its colour
+	// after the refraction was composited - UNLIT, interior mapping, forced
+	// unlit - would otherwise drive the fogged term negative.
+	const half3 alreadyFogged = min(background, color.rgb);
+
+	color.rgb = (half3)(
+		(color.rgb - alreadyFogged) * fog.transmittance
+		+ fog.inscatter
+		+ alreadyFogged
 	);
 }
 
 /**
  * Fogs a fragment by the water between it and the eye.
- *
- * The background overload excludes radiance that was sampled from the scene
- * behind this fragment - a refraction, most often - because that was already
- * fogged over its own longer path when it was drawn. Fogging it a second time
- * would darken a pane of glass by the water on both sides of it.
  *
  * Example usage:
  * @code
@@ -378,17 +457,34 @@ void ApplyWaterFog(
 	inout half4 color
 )
 {
-	const WaterFog fog = GetWaterFog(screenUV, fragmentPosition);
+	ApplyWaterFog(GetWaterFog(screenUV, fragmentPosition), background, color);
+}
 
-	// Never take out more than is there. A shader that overwrites its colour
-	// after the refraction was composited - UNLIT, interior mapping, forced
-	// unlit - would otherwise drive the fogged term negative.
-	const half3 alreadyFogged = min(background, color.rgb);
-
-	color.rgb = (half3)(
-		(color.rgb - alreadyFogged) * fog.transmittance
-		+ fog.inscatter
-		+ alreadyFogged
+/**
+ * Fogs a fragment that lies ON the water surface.
+ *
+ * The interface is never submerged with respect to itself: what separates it
+ * from the eye is water exactly when the eye is under, and air when the eye is
+ * not. Every other fragment can be classified by its height, but this one sits
+ * on the **displaced** surface, which dips below the still plane in a trough -
+ * so the ordinary test would have it fog itself over a sliver of water that is
+ * not there, trough by trough, as banding along the wave shape.
+ *
+ * @param[in] screenUV - Screen space UV coordinates (0-1) of the fragment.
+ * @param[in] fragmentPosition - World position of the fragment.
+ * @param[in] background - Radiance already fogged elsewhere, to pass through
+ *                         untouched.
+ * @param[in,out] color - Fragment colour, fogged in place.
+ */
+void ApplyWaterFogAtSurface(
+	float2 screenUV,
+	float3 fragmentPosition,
+	half3 background,
+	inout half4 color
+)
+{
+	ApplyWaterFog(
+		GetWaterFog(screenUV, fragmentPosition, 0), background, color
 	);
 }
 
