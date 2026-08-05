@@ -195,33 +195,16 @@ float4 main(PSIn input) : SV_TARGET
 		const float3 sigmaT = MakeWaterVolumetrics(1).sigmaT;
 
 		// What the refraction crossed is the SLANT path through the water, not
-		// the vertical drop to it. Refraction bends the view ray towards the
-		// vertical on the way in, so the path stays between 1.0 and about 1.512
-		// times the depth - it cannot grow with how far away the camera stands,
-		// which is why a lamp that has faded at thirty metres underwater is
-		// still legitimately visible from the surface. Taking the depth alone
-		// nonetheless lets a grazing view keep up to half the light it should
-		// have lost.
+		// the vertical drop to it - taking the depth alone lets a grazing view
+		// keep up to half the light it should have lost.
 		//
 		// Only for an eye in the air. Looking out from beneath the surface the
 		// refraction shows the world above, which crossed no water to get here,
 		// and the column between this point and the eye belongs to the
 		// underwater pass.
-		float water_path = water_depth;
-		[branch]
-		if (!camera_below_water)
-		{
-			// Reciprocity: the refraction of the direction back towards the eye
-			// is the direction the light travelled up through the water. Taken
-			// against the flat plane rather than the wave normal, so the slant
-			// stays steady instead of chattering with the surface detail.
-			//
-			// Floored at cos of the critical angle, which is the steepest the
-			// refracted ray can be. That is the analytic bound, so the clamp
-			// only ever catches a degenerate direction.
-			const float cosBelow = RefractIntoWater(surface.V).y;
-			water_path = water_depth / max(cosBelow, 0.6612);
-		}
+		const float water_path = camera_below_water
+			? water_depth
+			: SubmergedViewPath(water_depth, surface.V);
 
 		const float3 transmittance = saturate(exp(-water_path * sigmaT));
 		// ApplyLighting() blends the water body's own lit color against the

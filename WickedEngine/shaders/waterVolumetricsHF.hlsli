@@ -58,6 +58,20 @@ static const float WATER_VOLUMETRICS_FADE_DEPTH = 1.0;
 static const float WATER_REFRACTIVE_INDEX = 1.333;
 
 /**
+ * Cosine of the critical angle, measured from the vertical.
+ *
+ * \[
+ * \sin\theta_c = \frac{1}{n}, \qquad
+ * \cos\theta_c = \sqrt{1 - \frac{1}{n^2}} \approx 0.6612
+ * \]
+ * for \( n = 1.333 \), so about 48.6 degrees. Nothing that came through the
+ * surface travels further from the vertical than this, in either direction: it
+ * is the edge of Snell's window seen from below, and the steepest a ray leaving
+ * the water can have been seen from above.
+ */
+static const float WATER_CRITICAL_ANGLE_COSINE = 0.6612;
+
+/**
  * Optical path of downwelling daylight, as a multiple of depth.
  *
  * Refraction packs the whole sky into Snell's window, so light from above
@@ -204,6 +218,48 @@ float3 RefractIntoWater(float3 toLight)
 	// the ray is flipped to head downwards and flipped back on the way out.
 	// This enters the denser medium, so there is no internal reflection case.
 	return -refract(-toLight, float3(0, 1, 0), 1.0 / WATER_REFRACTIVE_INDEX);
+}
+
+/**
+ * Length of the in-water leg of a view ray that left the water for the eye.
+ *
+ * Light reaching an eye in the air bent at the surface on its way out, so the
+ * water it crossed is not the straight line the eye looks along. Reciprocity
+ * gives that leg without tracing anything: the direction back towards the eye,
+ * bent into the water, is the direction the light travelled up through it, and
+ * the leg is the depth over that direction's vertical cosine:
+ * \[
+ * s = \frac{d}{\cos\theta_{water}}
+ * \]
+ * Taken against the flat plane rather than the wave normal, so the slant stays
+ * steady instead of chattering with the surface detail.
+ *
+ * **The result is bounded**, which is the whole reason to prefer it to the
+ * geometric segment. Refraction confines the leg to Snell's window, so it lies
+ * between 1.0 and about 1.512 times the depth however far away the eye stands,
+ * while the straight segment grows without limit at a grazing angle and would
+ * extinguish water that is plainly see-through. Flooring the cosine at the
+ * critical angle is that same analytic bound, so the clamp only ever catches a
+ * degenerate direction.
+ *
+ * Example usage:
+ * @code
+ * const float path = SubmergedViewPath(waterDepth, surface.V);
+ * const float3 transmittance = exp(-path * medium.sigmaT);
+ * @endcode
+ *
+ * @param[in] depth - Depth of the far end below the surface (in metres).
+ * @param[in] toEye - Normalized direction from the far end towards the eye.
+ *
+ * @return Length of the segment lying in water (in metres).
+ *
+ * @note For an eye **in the air** only. Looking out from beneath the surface
+ *       nothing refracts on the way to the eye, and the straight segment is
+ *       already the right answer.
+ */
+float SubmergedViewPath(float depth, float3 toEye)
+{
+	return depth / max(RefractIntoWater(toEye).y, WATER_CRITICAL_ANGLE_COSINE);
 }
 
 /**
