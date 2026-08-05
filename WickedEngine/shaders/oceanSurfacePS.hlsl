@@ -40,6 +40,18 @@ float4 main(PSIn input) : SV_TARGET
 
 	half4 gradient = texture_gradientmap.Sample(sampler_aniso_wrap, input.uv);
 
+	// Waves smaller than this pixel are gone from the sample above: the mip
+	// chain averaged their SLOPES, which tends to zero and leaves a mirror
+	// where there should be a rough sea. What they contributed comes back as
+	// roughness instead, and the variance the mip swallowed is exactly that -
+	// E[|s|^2] - |E[s]|^2, the two moments stored side by side by the folding
+	// pass.
+	//
+	// Taken from the RAW sample: gradient.rg is replaced by perlin at distance
+	// just below, after which the mean and the second moment describe
+	// different surfaces and their difference means nothing.
+	const float2 meanSlope = gradient.rg * xOceanGridLen * 0.5;
+	float slopeVariance = max(0, gradient.b - dot(meanSlope, meanSlope));
 
 	const float g_PerlinSize = 1;
 	const float2 g_UVBase = 0;
@@ -95,7 +107,21 @@ float4 main(PSIn input) : SV_TARGET
 	float depth = input.pos.z;
 	surface.albedo = color.rgb;
 	surface.f0 = 0.02;
-	surface.roughness = 0.1;
+
+	// Specular anti-aliasing: the waves too small to draw are folded into the
+	// GGX lobe rather than left to alias. The rule is alpha'^2 = alpha^2 +
+	// 2*sigma^2 for a per-axis slope variance sigma^2, and the stored moment
+	// already sums both axes, so the 2 is in it. alpha is roughness SQUARED
+	// here - BRDF_GetSpecular squares before calling D_GGX - hence the fourth
+	// root.
+	//
+	// Collapses to the base roughness wherever the variance is zero, which is
+	// the whole near field. Widening this also blurs the reflected sky, for
+	// free: EnvironmentReflection_Global picks its mip from roughness.
+	const float oceanBaseRoughness = 0.1;
+	const float oceanAlphaSq =
+		sqr(sqr(oceanBaseRoughness)) + slopeVariance;
+	surface.roughness = (half)sqrt(sqrt(oceanAlphaSq));
 	surface.P = input.GetPos3D();
 	surface.N = normalize(float3(gradient.x, xOceanTexelLength * 2, gradient.y));
 	surface.V = V;
