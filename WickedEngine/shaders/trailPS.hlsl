@@ -19,6 +19,14 @@ float4 main(float4 pos : SV_Position, float4 screen : SCREEN, float4 uv : TEXCOO
 	const float2 fogUV = pos.xy * GetCamera().internal_resolution_rcp;
 	const float3 P = reconstruct_position(fogUV, pos.z);
 
+	// A planar reflection camera carries a clip plane, and its view must not
+	// show what is behind the mirror. Every other scene draw path outputs this
+	// as a clip distance from its vertex shader, but trailVS cannot: it builds
+	// its vertices straight into clip space with no world position left to
+	// test. Per pixel here instead, so a trail crossing the water has exactly
+	// its dry part reflected rather than all or none of it.
+	clip(dot(float4(P, 1), GetCamera().clip_plane));
+
 	// Half of this trail may belong on the far side of the water surface, where
 	// the transparent pass issued it as a separate draw.
 	ClipToWaterSide(

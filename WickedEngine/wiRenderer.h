@@ -333,13 +333,19 @@ namespace wi::renderer
 	// queue. A trail is a gameplay effect, not a diagnostic, so unlike
 	// DrawDebugWorld this is never gated on IsDebugDrawEnabled().
 	// Pass clearQueue = false when the same trails have to be drawn more than
-	// once in a frame - split around the water, for instance - and let only the
-	// last call consume them.
+	// once in a frame - split around the water, or into a planar reflection -
+	// and call ClearTrails() once instead. Drawing passes are recorded on
+	// parallel jobs, so a clear inside one of them would race the others
+	// reading the queue.
 	void DrawTrails(
 		const wi::scene::CameraComponent& camera,
 		wi::graphics::CommandList cmd,
 		bool clearQueue = true
 	);
+	// Discard the trails submitted this frame.
+	// For callers that draw them from more than one pass, with clearQueue =
+	// false. Must run where no drawing job is still recording.
+	void ClearTrails();
 	// Draw debug world. You must also enable what parts to draw, eg. SetToDrawGridHelper, etc, see implementation for details what can be enabled.
 	void DrawDebugWorld(
 		const wi::scene::Scene& scene,

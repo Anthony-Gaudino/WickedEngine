@@ -1455,6 +1455,10 @@ namespace wi
 
 				wi::renderer::DrawSoftParticles(visibility_reflection, false, cmd);
 				wi::renderer::DrawSpritesAndFonts(*scene, camera_reflection, false, cmd);
+				// Keep the queue: the main camera draws these same trails, on a
+				// job that may still be recording. RenderPath3D::Render clears
+				// them once every pass is done with them.
+				wi::renderer::DrawTrails(camera_reflection, cmd, false);
 
 				device->RenderPassEnd(cmd);
 
@@ -1809,6 +1813,12 @@ namespace wi
 		RenderPath2D::Render();
 
 		wi::jobsystem::Wait(ctx);
+
+		// Every pass that draws trails leaves the queue alone, because they are
+		// recorded on parallel jobs and the reflection and the main camera both
+		// read it. This is the first point where they have all joined, so it is
+		// the only safe place to discard them.
+		wi::renderer::ClearTrails();
 
 		first_frame = false;
 	}
@@ -2546,8 +2556,9 @@ namespace wi
 		// passes draw that same sorted set - they differ only in which half
 		// each keeps, so back to front order still holds within either half.
 		//
-		// The trails are consumed here rather than in the far pass, because
-		// this is the one of the two that always runs.
+		// No pass consumes the trails, this one included: the planar reflection
+		// draws them too, on a job that records in parallel with this one, so
+		// clearing here would race it. Render() clears once the jobs join.
 		if (oceanVisible)
 		{
 			bindWaterSide(nearSide);
@@ -2555,7 +2566,7 @@ namespace wi
 		wi::renderer::DrawLightVisualizers(visibility_main, cmd);
 		wi::renderer::DrawSoftParticles(visibility_main, false, cmd);
 		wi::renderer::DrawGaussianSplats(*scene, *camera, cmd);
-		wi::renderer::DrawTrails(*camera, cmd);
+		wi::renderer::DrawTrails(*camera, cmd, false);
 		if (oceanVisible)
 		{
 			bindWaterSide(wi::renderer::WATERSIDE_ALL);

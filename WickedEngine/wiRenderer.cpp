@@ -7629,6 +7629,10 @@ void DrawTrails(const CameraComponent& camera, CommandList cmd, bool clearQueue)
 
 	device->EventEnd(cmd);
 }
+void ClearTrails()
+{
+	renderableTrails.clear();
+}
 
 void DrawDebugWorld(
 	const Scene& scene,
