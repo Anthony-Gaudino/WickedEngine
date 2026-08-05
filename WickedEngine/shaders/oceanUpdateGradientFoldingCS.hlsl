@@ -25,10 +25,13 @@ void main( uint3 DTid : SV_DispatchThreadID )
 	// Do not store the actual normal value. Using gradient instead, which preserves two differential values.
 	float2 gradient = { -(displace_right.z - displace_left.z), -(displace_front.z - displace_back.z) };
 
-	// Calculate Jacobian corelation from the partial differential of height field
-	float2 Dx = (displace_right.xy - displace_left.xy) * xOceanChoppyScale * xOceanGridLen;
-	float2 Dy = (displace_front.xy - displace_back.xy) * xOceanChoppyScale * xOceanGridLen;
-	float J = (1.0f + Dx.x) * (1.0f + Dy.y) - Dx.y * Dy.x;
+	// Calculate Jacobian corelation from the partial differential of height
+	// field.
+	const float2 Dx =
+		(displace_right.xy - displace_left.xy) * xOceanGridLen * 0.5f;
+	const float2 Dy =
+		(displace_front.xy - displace_back.xy) * xOceanGridLen * 0.5f;
+	const float J = (1.0f + Dx.x) * (1.0f + Dy.y) - Dx.y * Dy.x;
 
 	// Practical subsurface scale calculation: max[0, (1 - J) + Amplitude * (2 * Coverage - 1)].
 	float fold = max(1.0f - J, 0);
