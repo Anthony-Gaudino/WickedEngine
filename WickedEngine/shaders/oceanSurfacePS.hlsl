@@ -88,12 +88,27 @@ float4 main(PSIn input) : SV_TARGET
 	// Add some small scale detail waves to make it look less uniform:
 	const uint detail_count = 3;
 	half2 gradient_detail = 0;
+	float detail_variance = 0;
 	for (uint i = 0; i < detail_count; ++i)
 	{
-		gradient_detail += texture_gradientmap.Sample(sampler_aniso_wrap, input.uv * pow(2.0, half(i + 1))).rg;
+		const float4 detail = texture_gradientmap.Sample(sampler_aniso_wrap, input.uv * pow(2.0, half(i + 1)));
+		gradient_detail += (half2)detail.rg;
+
+		const float2 detailMean = detail.rg * xOceanGridLen * 0.5;
+		detail_variance += max(0, detail.b - dot(detailMean, detailMean));
 	}
 	gradient_detail /= half(detail_count);
 	gradient.rg += gradient_detail;
+
+	// Each of those taps is the same map at twice the frequency of the last, so
+	// they go sub-pixel long before the base does - and being added after the
+	// distance fade, nothing else ever damps them. Left alone they are the
+	// sharpest aliasing on the water.
+	//
+	// Their variance scales the way their mean does: averaging n taps divides
+	// the mean by n and the variance by n squared.
+	slopeVariance +=
+		detail_variance / float(detail_count * detail_count);
 
 	const float bump_strength = 0.1;
 	
