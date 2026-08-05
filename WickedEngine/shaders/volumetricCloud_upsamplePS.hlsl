@@ -97,10 +97,16 @@ float4 main(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
 	// after the sky, so without this they overwrite the sky's fog and leave a
 	// bright unfogged band at the horizon when seen from under water.
 	//
-	// Fogged at the cloud's own distance where there is one, and at the depth
-	// buffer's otherwise - clouds sit at the far field either way, so the path
-	// saturates and the exact value barely matters.
-	ApplyWaterFogPremultiplied(uv, depthWorldPosition, result);
+	// **A cloud is in the air**, which is what the zero submersion says. With
+	// the eye above the water there is no water in front of it and this is a
+	// no-op; with the eye below there is exactly the column up to the surface,
+	// which is what the position below - clipped at the plane - works out to.
+	//
+	// It must be said explicitly, because the position handed over is the DEPTH
+	// BUFFER's, not the cloud's. Letting that be classified by height puts the
+	// cloud wherever the sea bed is, and flying over the ocean absorbed every
+	// cloud in front of the water away to nothing.
+	ApplyWaterFogPremultiplied(GetWaterFog(uv, depthWorldPosition, 0), result);
 
 	return result;
 }

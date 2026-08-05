@@ -505,12 +505,25 @@ void ApplyWaterFog(
 }
 
 /**
- * Fogs a fragment whose colour is already multiplied by its own coverage.
+ * Applies an already-built fog to a premultiplied fragment.
  *
  * Fonts, gaussian splats and clouds output premultiplied radiance, so the
  * veiling light has to be scaled the same way. Adding the full inscatter to a
  * fragment that only covers a tenth of the pixel would paint haze into the nine
  * tenths it never touched.
+ *
+ * @param[in] fog - The fog over the segment.
+ * @param[in,out] color - Premultiplied fragment colour, fogged in place.
+ */
+void ApplyWaterFogPremultiplied(WaterFog fog, inout half4 color)
+{
+	color.rgb = (half3)(
+		color.rgb * fog.transmittance + fog.inscatter * color.a
+	);
+}
+
+/**
+ * Fogs a premultiplied fragment by the water between it and the eye.
  *
  * @param[in] screenUV - Screen space UV coordinates (0-1) of the fragment.
  * @param[in] fragmentPosition - World position of the fragment.
@@ -522,11 +535,7 @@ void ApplyWaterFogPremultiplied(
 	inout half4 color
 )
 {
-	const WaterFog fog = GetWaterFog(screenUV, fragmentPosition);
-
-	color.rgb = (half3)(
-		color.rgb * fog.transmittance + fog.inscatter * color.a
-	);
+	ApplyWaterFogPremultiplied(GetWaterFog(screenUV, fragmentPosition), color);
 }
 
 /**
