@@ -71,7 +71,7 @@ VertexOut main(uint vertexID : SV_VertexID)
 	Out.waterTransmittance = 1;
 
 	[branch]
-	if (GetCamera().IsUnderwaterFog())
+	if (GetCamera().IsWaterFog())
 	{
 		// The same submersion test the rest of the frame uses, taken where the
 		// light appears on screen. Saturated because a directional light

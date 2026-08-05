@@ -1304,12 +1304,16 @@ enum SHADERCAMERA_OPTIONS
 	SHADERCAMERA_OPTION_USE_SHADOW_MASK = 1 << 0,
 	SHADERCAMERA_OPTION_ORTHO = 1 << 1,
 	SHADERCAMERA_OPTION_DEDICATED_SHADOW_LODBIAS = 1 << 2,
-	// The eye is at or below the ocean surface, so draw shaders apply the
-	// water's fog over their own view path. Off for cameras that must never
-	// see it: a planar reflection's eye is mirrored BELOW the surface whenever
-	// the real one is above it, and probe and impostor captures are reused from
-	// arbitrary directions, where a view-ray quantity has no meaning.
-	SHADERCAMERA_OPTION_UNDERWATER_FOG = 1 << 3,
+	// The scene has an ocean, so draw shaders apply the water's fog over their
+	// own view path. Purely "is there water at all" - where the eye sits
+	// relative to the surface is decided in the shader, which has the fragment
+	// to hand and can answer it exactly.
+	//
+	// Off for cameras that must never see it: a planar reflection's eye is
+	// mirrored BELOW the surface whenever the real one is above it, and probe
+	// and impostor captures are reused from arbitrary directions, where a
+	// view-ray quantity has no meaning.
+	SHADERCAMERA_OPTION_WATER_FOG = 1 << 3,
 	// Modulate that fog with the procedural god rays.
 	SHADERCAMERA_OPTION_UNDERWATER_GODRAYS = 1 << 4,
 	// Keep only the part of this draw on one side of the ocean surface.
@@ -1524,7 +1528,7 @@ struct alignas(16) ShaderCamera
 	}
 
 	inline bool IsOrtho() { return options & SHADERCAMERA_OPTION_ORTHO; }
-	inline bool IsUnderwaterFog() { return options & SHADERCAMERA_OPTION_UNDERWATER_FOG; }
+	inline bool IsWaterFog() { return options & SHADERCAMERA_OPTION_WATER_FOG; }
 	inline bool IsUnderwaterGodRays() { return options & SHADERCAMERA_OPTION_UNDERWATER_GODRAYS; }
 	inline bool IsWaterSideSubmerged() { return options & SHADERCAMERA_OPTION_WATERSIDE_SUBMERGED; }
 	inline bool IsWaterSideAbove() { return options & SHADERCAMERA_OPTION_WATERSIDE_ABOVE; }

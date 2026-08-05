@@ -58,6 +58,20 @@ static const float WATER_VOLUMETRICS_FADE_DEPTH = 1.0;
 static const float WATER_REFRACTIVE_INDEX = 1.333;
 
 /**
+ * Height above the still plane within which the eye may still be submerged.
+ *
+ * A crest reaches above the still water plane, so an eye a little above it can
+ * be inside the water even though the plane says otherwise. Only
+ * `ocean_underwater_factor` can settle that, and it costs an unprojection and a
+ * displacement map sample - so this is the threshold for bothering to ask.
+ *
+ * Deliberately loose. It has to clear both the wave displacement and the span
+ * of the test plane that check sits on, a metre ahead of the near plane; being
+ * generous costs one scalar compare, being tight would cut the fog off early.
+ */
+static const float WATER_EYE_SUBMERSION_MARGIN = 10.0;
+
+/**
  * Cosine of the critical angle, measured from the vertical.
  *
  * \[

@@ -244,8 +244,12 @@ WaterFog MakeWaterFog(
  * still water plane, matching `SubmergedLightPath`, so the fog agrees with the
  * lighting it fogs.
  *
- * Free above the waterline: the camera option is uniform across the draw, and
- * the medium comes back inactive for a pixel whose eye is in air.
+ * **Rejected cheapest first**, because this is called from every draw shader in
+ * the frame. The camera option is uniform across the draw; the still plane
+ * test after it is two scalar compares and is exact, since a segment with both
+ * ends above the plane has no submerged share to fog whatever the waves are
+ * doing; and only past those does anything unproject a pixel or sample the
+ * displacement map to find out where the eye sits.
  *
  * @param[in] screenUV - Screen space UV coordinates (0-1) of the fragment.
  * @param[in] fragmentPosition - World position of the fragment.
@@ -260,7 +264,30 @@ WaterFog GetWaterFog(float2 screenUV, float3 fragmentPosition)
 	fog.inscatter = 0;
 
 	[branch]
-	if (!GetCamera().IsUnderwaterFog())
+	if (!GetCamera().IsWaterFog())
+	{
+		return fog;
+	}
+
+	const float3 eye = GetCamera().position;
+	const float waterHeight = GetWeather().ocean.water_height;
+
+	// Nothing on this segment is under water, so there is nothing to fog. Exact
+	// rather than conservative: the submerged share below is clipped against
+	// this same plane, so this is the case where it would come out zero.
+	[branch]
+	if (min(eye.y, fragmentPosition.y) >= waterHeight)
+	{
+		return fog;
+	}
+
+	// The fragment is under water, but the eye is clear of the surface by more
+	// than any wave could reach, so the fog this function returns is the fog
+	// between one point in the water and one in the air. That belongs to the
+	// ocean surface, which composites what it refracts, and this is where the
+	// two hand over.
+	[branch]
+	if (eye.y >= waterHeight + WATER_EYE_SUBMERSION_MARGIN)
 	{
 		return fog;
 	}
@@ -273,7 +300,6 @@ WaterFog GetWaterFog(float2 screenUV, float3 fragmentPosition)
 		return fog;
 	}
 
-	const float3 eye = GetCamera().position;
 	const float3 towardsEye = eye - fragmentPosition;
 	const float segment = length(towardsEye);
 

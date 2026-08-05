@@ -737,23 +737,20 @@ namespace wi
 		camera->sample_count = depthBuffer_Main.desc.sample_count;
 		camera->shadercamera_options = SHADERCAMERA_OPTION_NONE;
 
-		// Let the draw shaders fog themselves with the water when the eye is
-		// anywhere near the surface. A coarse cull only: which PIXELS are
-		// submerged is decided per pixel by ocean_underwater_factor, and above
-		// the waterline the medium comes back inactive and every call site is a
-		// no-op. The margin has to clear both the wave displacement and the
-		// span of the test plane the per-pixel check sits on, a metre ahead of
-		// the near plane, so it is deliberately loose - being generous costs
-		// one uniform branch, being tight would cut the fog off early.
+		// Let the draw shaders fog themselves with the water. Nothing more than
+		// "does this scene have an ocean": GetWaterFog rejects a segment that
+		// cannot touch the water with two scalar compares against the still
+		// plane, which is cheaper than anything that could be decided here and
+		// is exact, whereas a test on the eye alone has to be loose enough to
+		// clear the wave displacement.
 		//
 		// Deliberately NOT set on camera_reflection below: a planar
 		// reflection's eye is the mirror of the real one, so it sits below the
 		// surface exactly when the real camera is above it, and every
 		// above-water object in the reflection would be fogged.
-		if (scene->weather.IsOceanEnabled() &&
-			camera->Eye.y < scene->weather.oceanParameters.waterHeight + 10.0f)
+		if (scene->weather.IsOceanEnabled())
 		{
-			camera->shadercamera_options |= SHADERCAMERA_OPTION_UNDERWATER_FOG;
+			camera->shadercamera_options |= SHADERCAMERA_OPTION_WATER_FOG;
 			if (getUnderwaterGodRaysProceduralEnabled())
 			{
 				camera->shadercamera_options |= SHADERCAMERA_OPTION_UNDERWATER_GODRAYS;
