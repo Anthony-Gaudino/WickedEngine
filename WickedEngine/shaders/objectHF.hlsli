@@ -1108,24 +1108,24 @@ float4 main(PixelInput input, in bool is_frontface : SV_IsFrontFace APPEND_COVER
 #endif // INTERIORMAPPING
 
 
+	// What ApplyLighting blended in from behind this surface. It was sampled
+	// from the scene copy, which had already fogged itself over its own longer
+	// path when it was drawn - by the air, and by any water it crossed - so
+	// every applier below is handed it untouched rather than fogging the same
+	// stretch twice. Zero for an opaque draw, which has no refraction.
+	const half3 background = (half3)(
+		surface.refraction.rgb * (1 - surface.F) * surface.refraction.a);
+
 // Transparent objects has been rendered separately from opaque, so let's apply it now.
 // Must also be applied before fog since fog is layered over.
 #if defined(TRANSPARENT) || defined(ENVMAPRENDERING)
-	ApplyAerialPerspective(ScreenCoord, surface.P, color);
+	ApplyAerialPerspective(ScreenCoord, surface.P, background, color);
 #endif // defined(TRANSPARENT) || defined(ENVMAPRENDERING)
 
 
-	ApplyFog(dist, surface.V, color);
+	ApplyFog(dist, surface.V, background, color);
 
-	// The water between this fragment and the eye. The refraction is handed
-	// over untouched: it was sampled from the scene behind this surface, which
-	// had already fogged itself over its own longer path when it was drawn.
-	ApplyWaterFog(
-		ScreenCoord,
-		surface.P,
-		surface.refraction.rgb * (1 - surface.F) * surface.refraction.a,
-		color
-	);
+	ApplyWaterFog(ScreenCoord, surface.P, background, color);
 
 	color.rgb = mul(saturationMatrix(material.GetSaturation()), color.rgb);
 

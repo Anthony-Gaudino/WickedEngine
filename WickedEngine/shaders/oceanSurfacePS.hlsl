@@ -263,19 +263,21 @@ float4 main(PSIn input) : SV_TARGET
 	float far_fade = saturate(1 - saturate(dist / camera.z_far - 0.8) * 5.0); // fade will be on edge and inwards 20%
 	color.a = far_fade;
 
-	ApplyAerialPerspective(ScreenCoord, surface.P, color);
-	
-	ApplyFog(dist, V, color);
+	// What ApplyLighting just blended in from behind the surface. It reached
+	// this fragment already fogged over its own, longer path - by the air when
+	// it was drawn, and by the water it crossed to get out - so every applier
+	// below is told to leave it alone rather than fog the same stretch twice.
+	//
+	// Seen from below that background is the sky; seen from above it is
+	// whatever is under the water.
+	const half3 background = (half3)(
+		surface.refraction.rgb * (1 - surface.F) * surface.refraction.a);
 
-	// Seen from below, this surface's refraction is the sky, which fogged
-	// itself over exactly this fragment's eye-to-surface path - so it is passed
-	// through rather than fogged again.
-	ApplyWaterFog(
-		ScreenCoord,
-		surface.P,
-		surface.refraction.rgb * (1 - surface.F) * surface.refraction.a,
-		color
-	);
+	ApplyAerialPerspective(ScreenCoord, surface.P, background, color);
+
+	ApplyFog(dist, V, background, color);
+
+	ApplyWaterFog(ScreenCoord, surface.P, background, color);
 
 	return saturateMediump(color);
 

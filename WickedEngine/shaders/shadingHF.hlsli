@@ -499,20 +499,97 @@ inline void TiledDecals(inout Surface surface, inout half4 surfaceMap, SamplerSt
 #endif // DISABLE_DECALS
 }
 
-inline void ApplyFog(in float distance, float3 V, inout half4 color)
+/**
+ * Fogs a fragment by the air between it and the eye, passing a background
+ * through.
+ *
+ * The background overload excludes radiance that was sampled from the scene
+ * behind this fragment - a refraction, most often - because that was already
+ * fogged over its own longer path when it was drawn. Fogging it a second time
+ * fogs the air on both sides of the interface, and a refractive surface then
+ * hazes over long before anything solid at the same distance does.
+ *
+ * The same contract as the water's `ApplyWaterFog`, deliberately, so a shader
+ * that composites a refraction hands the same term to both.
+ *
+ * Example usage:
+ * @code
+ * const half3 background =
+ *     surface.refraction.rgb * (1 - surface.F) * surface.refraction.a;
+ * ApplyFog(dist, surface.V, background, color);
+ * @endcode
+ *
+ * @param[in] distance - Distance from the eye to the fragment (in metres).
+ * @param[in] V - Normalized direction from the fragment towards the eye.
+ * @param[in] background - Radiance already fogged elsewhere, to pass through
+ *                         untouched.
+ * @param[in,out] color - Fragment colour, fogged in place.
+ */
+inline void ApplyFog(
+	in float distance, float3 V, half3 background, inout half4 color
+)
 {
 	const half4 fog = GetFog(distance, GetCamera().position, -V);
-	//color.rgb = (1.0 - fog.a) * color.rgb + fog.rgb; // premultiplied fog
-	color.rgb = lerp(color.rgb, fog.rgb, fog.a); // non-premultiplied fog
+
+	// Never take out more than is there, matching ApplyWaterFog: a shader that
+	// overwrites its colour after the refraction was composited would otherwise
+	// drive the fogged term negative.
+	const half3 alreadyFogged = min(background, color.rgb);
+
+	// Non-premultiplied fog, over the fragment's own contribution only.
+	color.rgb = lerp(color.rgb - alreadyFogged, fog.rgb, fog.a) + alreadyFogged;
 }
 
-inline void ApplyAerialPerspective(float2 uv, float3 P, inout half4 color)
+/**
+ * Fogs a fragment that carries no already-fogged background.
+ *
+ * @param[in] distance - Distance from the eye to the fragment (in metres).
+ * @param[in] V - Normalized direction from the fragment towards the eye.
+ * @param[in,out] color - Fragment colour, fogged in place.
+ */
+inline void ApplyFog(in float distance, float3 V, inout half4 color)
+{
+	ApplyFog(distance, V, 0, color);
+}
+
+/**
+ * Applies aerial perspective to a fragment, passing a background through.
+ *
+ * Same reasoning as the `ApplyFog` overload above: what was sampled from the
+ * scene behind this fragment already crossed that air when it was drawn.
+ *
+ * @param[in] uv - Screen space UV coordinates (0-1) of the fragment.
+ * @param[in] P - World position of the fragment.
+ * @param[in] background - Radiance already fogged elsewhere, to pass through
+ *                         untouched.
+ * @param[in,out] color - Fragment colour, modified in place.
+ */
+inline void ApplyAerialPerspective(
+	float2 uv, float3 P, half3 background, inout half4 color
+)
 {
 	if (GetFrame().options & OPTION_BIT_REALISTIC_SKY_AERIAL_PERSPECTIVE)
 	{
-		const half4 AP = GetAerialPerspectiveTransmittance(uv, P, GetCamera().position, texture_cameravolumelut);
-		color.rgb = color.rgb * (1.0 - AP.a) + AP.rgb;
+		const half4 AP = GetAerialPerspectiveTransmittance(
+			uv, P, GetCamera().position, texture_cameravolumelut);
+
+		const half3 alreadyFogged = min(background, color.rgb);
+
+		color.rgb =
+			(color.rgb - alreadyFogged) * (1.0 - AP.a) + AP.rgb + alreadyFogged;
 	}
+}
+
+/**
+ * Applies aerial perspective to a fragment with no already-fogged background.
+ *
+ * @param[in] uv - Screen space UV coordinates (0-1) of the fragment.
+ * @param[in] P - World position of the fragment.
+ * @param[in,out] color - Fragment colour, modified in place.
+ */
+inline void ApplyAerialPerspective(float2 uv, float3 P, inout half4 color)
+{
+	ApplyAerialPerspective(uv, P, 0, color);
 }
 
 // Handle transparency effects in opaque render pass:
