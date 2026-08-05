@@ -296,6 +296,35 @@ float4 main(PSIn input) : SV_TARGET
 		float foam_wave = pow(saturate(gradient.a), 4) * saturate(exp(-water_depth * 0.1));
 		float foam_combined = saturate(foam_shore + foam_wave);
 		float foam = smoothstep(0.5, 0.6, saturate(foam_combined + 0.1));
+
+		// How much world the pixel covers. These noises are analytic, so unlike
+		// the gradient map they have no mip to fall back on and the variance
+		// above cannot reach them - once an octave's features are finer than
+		// this, it is sampled at random and reads as per-pixel sparkle.
+		//
+		// MUST be computed here, not inside the branch below: that branch is
+		// not uniform across a quad, and derivatives taken under divergent flow
+		// are undefined.
+		const float2 footprintDelta =
+			max(abs(ddx(surface.P.xz)), abs(ddy(surface.P.xz)));
+		const float footprint = max(footprintDelta.x, footprintDelta.y);
+
+		// Weight per octave, dropping each as it passes Nyquist for this pixel.
+		// The coarsest is never dropped - it has metre-scale features, so it
+		// outlives any sensible view distance, and keeping it means the sum
+		// below always has something in it.
+		const float3 foam_octave_weight = float3(
+			1,
+			saturate(1 - footprint * 4),
+			saturate(1 - footprint * 8));
+
+		// Renormalise by the weight that survived, so losing an octave costs
+		// detail rather than brightness. Every octave is the same function at a
+		// different scale and so has the same mean, which is what makes
+		// rescaling the sum preserve it.
+		const float foam_octave_norm = 3.0 /
+			(foam_octave_weight.x + foam_octave_weight.y + foam_octave_weight.z);
+
 		// The procedural noise below is multiplied by foam_combined, so it only
 		// contributes where there is actually foam (shorelines and wave crests).
 		// Skip the 6 noise evaluations for the open-water majority where
@@ -304,13 +333,15 @@ float4 main(PSIn input) : SV_TARGET
 		if (foam_combined > 0.002)
 		{
 			float foam_simplex = 0;
-			foam_simplex += smoothstep(0, 0.8, noise_simplex_2D(surface.P.xz * 1 + GetTime()));
-			foam_simplex += smoothstep(0, 0.8, noise_simplex_2D(surface.P.xz * 2 + GetTime()));
-			foam_simplex += smoothstep(0, 0.8, noise_simplex_2D(surface.P.zx * 4 - GetTime() * 2));
+			foam_simplex += foam_octave_weight.x * smoothstep(0, 0.8, noise_simplex_2D(surface.P.xz * 1 + GetTime()));
+			foam_simplex += foam_octave_weight.y * smoothstep(0, 0.8, noise_simplex_2D(surface.P.xz * 2 + GetTime()));
+			foam_simplex += foam_octave_weight.z * smoothstep(0, 0.8, noise_simplex_2D(surface.P.zx * 4 - GetTime() * 2));
+			foam_simplex *= foam_octave_norm;
 			float foam_voronoi = 0;
-			foam_voronoi += smoothstep(0.5, 0.8, noise_voronoi(surface.P.xz * 1, GetTime()).x);
-			foam_voronoi += smoothstep(0.5, 0.8, noise_voronoi(surface.P.xz * 2, GetTime()).x);
-			foam_voronoi += smoothstep(0.5, 0.8, noise_voronoi(surface.P.xz * 4, GetTime()).x);
+			foam_voronoi += foam_octave_weight.x * smoothstep(0.5, 0.8, noise_voronoi(surface.P.xz * 1, GetTime()).x);
+			foam_voronoi += foam_octave_weight.y * smoothstep(0.5, 0.8, noise_voronoi(surface.P.xz * 2, GetTime()).x);
+			foam_voronoi += foam_octave_weight.z * smoothstep(0.5, 0.8, noise_voronoi(surface.P.xz * 4, GetTime()).x);
+			foam_voronoi *= foam_octave_norm;
 			foam += foam_voronoi * foam_simplex * foam_combined;
 		}
 		foam *= 2;
