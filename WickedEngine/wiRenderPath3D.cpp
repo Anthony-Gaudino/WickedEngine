@@ -2339,12 +2339,17 @@ namespace wi
 			// emitter's position bounds nothing. Any visible emitter counts.
 			const bool farSideEmitters = !visibility_main.visibleEmitters.empty();
 
+			// Trails are a per-frame queue with no bounds to test, so any trail
+			// at all counts, as with sprites and emitters above.
+			const bool farSideTrails = wi::renderer::AreTrailsQueued();
+
 			const bool anyFarSideContent =
 				farSideTransparents ||
 				farSideLights ||
 				farSideSplats ||
 				farSideSpritesOrFonts ||
-				farSideEmitters;
+				farSideEmitters ||
+				farSideTrails;
 
 			if (anyFarSideContent)
 			{
@@ -2391,6 +2396,12 @@ namespace wi
 				if (farSideSplats)
 				{
 					wi::renderer::DrawGaussianSplats(*scene, *camera, cmd);
+				}
+				if (farSideTrails)
+				{
+					// Keep the queue: the near pass below draws the same trails
+					// again for its own half, and consumes them then.
+					wi::renderer::DrawTrails(*camera, cmd, false);
 				}
 				if (farSideSpritesOrFonts)
 				{
@@ -2526,10 +2537,6 @@ namespace wi
 
 		wi::renderer::DrawDebugWorld(*scene, *camera, *this, cmd);
 
-		// Trails used to be drawn inside DrawDebugWorld, which meant a gameplay
-		// effect disappeared whenever the debug renderer was switched off.
-		wi::renderer::DrawTrails(*camera, cmd);
-
 		wi::renderer::DrawWireframeOverlay(visibility_main, wi::enums::RENDERPASS_MAIN, cmd);
 
 		// The near side only for these: the far side was drawn before the ocean
@@ -2538,6 +2545,9 @@ namespace wi
 		// The splats are sorted once per frame, for the main camera, and both
 		// passes draw that same sorted set - they differ only in which half
 		// each keeps, so back to front order still holds within either half.
+		//
+		// The trails are consumed here rather than in the far pass, because
+		// this is the one of the two that always runs.
 		if (oceanVisible)
 		{
 			bindWaterSide(nearSide);
@@ -2545,6 +2555,7 @@ namespace wi
 		wi::renderer::DrawLightVisualizers(visibility_main, cmd);
 		wi::renderer::DrawSoftParticles(visibility_main, false, cmd);
 		wi::renderer::DrawGaussianSplats(*scene, *camera, cmd);
+		wi::renderer::DrawTrails(*camera, cmd);
 		if (oceanVisible)
 		{
 			bindWaterSide(wi::renderer::WATERSIDE_ALL);

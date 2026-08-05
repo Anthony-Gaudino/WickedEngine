@@ -326,12 +326,19 @@ namespace wi::renderer
 		const Visibility& vis,
 		wi::graphics::CommandList cmd
 	);
+	// True if any trail was submitted with DrawTrail() this frame. Lets a
+	// caller decide whether a pass is worth opening before it draws.
+	[[nodiscard]] bool AreTrailsQueued();
 	// Draw the trails submitted with DrawTrail() this frame, and clear the
 	// queue. A trail is a gameplay effect, not a diagnostic, so unlike
 	// DrawDebugWorld this is never gated on IsDebugDrawEnabled().
+	// Pass clearQueue = false when the same trails have to be drawn more than
+	// once in a frame - split around the water, for instance - and let only the
+	// last call consume them.
 	void DrawTrails(
 		const wi::scene::CameraComponent& camera,
-		wi::graphics::CommandList cmd
+		wi::graphics::CommandList cmd,
+		bool clearQueue = true
 	);
 	// Draw debug world. You must also enable what parts to draw, eg. SetToDrawGridHelper, etc, see implementation for details what can be enabled.
 	void DrawDebugWorld(

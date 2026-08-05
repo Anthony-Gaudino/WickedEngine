@@ -16,6 +16,17 @@ float4 main(float4 pos : SV_Position, float4 screen : SCREEN, float4 uv : TEXCOO
 		color.a *= saturate(g_xTrailDepthSoften * (depthScene - depthFragment)); // soft depth fade
 	}
 
+	const float2 fogUV = pos.xy * GetCamera().internal_resolution_rcp;
+	const float3 P = reconstruct_position(fogUV, pos.z);
+
+	// Half of this trail may belong on the far side of the water surface, where
+	// the transparent pass issued it as a separate draw.
+	ClipToWaterSide(
+		P,
+		GetCamera().IsWaterSideSubmerged(),
+		GetCamera().IsWaterSideAbove()
+	);
+
 	// The water between this trail and the eye. Without it a submerged trail
 	// stays at full brightness however far away it is, and a trail crossing the
 	// waterline shows no change at all as it goes under.
@@ -26,9 +37,6 @@ float4 main(float4 pos : SV_Position, float4 screen : SCREEN, float4 uv : TEXCOO
 	[branch]
 	if (g_xTrailWaterFogMode != TRAIL_WATERFOG_NONE)
 	{
-		const float2 fogUV = pos.xy * GetCamera().internal_resolution_rcp;
-		const float3 P = reconstruct_position(fogUV, pos.z);
-
 		half4 fogged = (half4)color;
 
 		if (g_xTrailWaterFogMode == TRAIL_WATERFOG_ADDITIVE)

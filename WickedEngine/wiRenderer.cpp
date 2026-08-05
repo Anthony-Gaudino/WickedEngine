@@ -7607,7 +7607,11 @@ void DrawScene(
 
 }
 
-void DrawTrails(const CameraComponent& camera, CommandList cmd)
+bool AreTrailsQueued()
+{
+	return !renderableTrails.empty();
+}
+void DrawTrails(const CameraComponent& camera, CommandList cmd, bool clearQueue)
 {
 	if (renderableTrails.empty())
 		return;
@@ -7618,7 +7622,10 @@ void DrawTrails(const CameraComponent& camera, CommandList cmd)
 	{
 		x->Draw(camera, cmd);
 	}
-	renderableTrails.clear();
+	if (clearQueue)
+	{
+		renderableTrails.clear();
+	}
 
 	device->EventEnd(cmd);
 }
