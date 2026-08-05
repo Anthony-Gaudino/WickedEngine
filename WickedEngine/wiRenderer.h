@@ -326,6 +326,13 @@ namespace wi::renderer
 		const Visibility& vis,
 		wi::graphics::CommandList cmd
 	);
+	// Draw the trails submitted with DrawTrail() this frame, and clear the
+	// queue. A trail is a gameplay effect, not a diagnostic, so unlike
+	// DrawDebugWorld this is never gated on IsDebugDrawEnabled().
+	void DrawTrails(
+		const wi::scene::CameraComponent& camera,
+		wi::graphics::CommandList cmd
+	);
 	// Draw debug world. You must also enable what parts to draw, eg. SetToDrawGridHelper, etc, see implementation for details what can be enabled.
 	void DrawDebugWorld(
 		const wi::scene::Scene& scene,

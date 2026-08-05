@@ -535,6 +535,7 @@ namespace wi
 				}
 
 				wi::renderer::DrawDebugWorld(*scene, *camera, *this, cmd);
+				wi::renderer::DrawTrails(*camera, cmd);
 				wi::renderer::DrawLightVisualizers(visibility_main, cmd);
 				wi::renderer::DrawSpritesAndFonts(*scene, *camera, false, cmd);
 

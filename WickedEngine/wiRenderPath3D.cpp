@@ -2526,6 +2526,10 @@ namespace wi
 
 		wi::renderer::DrawDebugWorld(*scene, *camera, *this, cmd);
 
+		// Trails used to be drawn inside DrawDebugWorld, which meant a gameplay
+		// effect disappeared whenever the debug renderer was switched off.
+		wi::renderer::DrawTrails(*camera, cmd);
+
 		wi::renderer::DrawWireframeOverlay(visibility_main, wi::enums::RENDERPASS_MAIN, cmd);
 
 		// The near side only for these: the far side was drawn before the ocean

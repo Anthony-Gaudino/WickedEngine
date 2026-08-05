@@ -7607,6 +7607,22 @@ void DrawScene(
 
 }
 
+void DrawTrails(const CameraComponent& camera, CommandList cmd)
+{
+	if (renderableTrails.empty())
+		return;
+
+	device->EventBegin("Trails", cmd);
+
+	for (auto& x : renderableTrails)
+	{
+		x->Draw(camera, cmd);
+	}
+	renderableTrails.clear();
+
+	device->EventEnd(cmd);
+}
+
 void DrawDebugWorld(
 	const Scene& scene,
 	const CameraComponent& camera,
@@ -7637,7 +7653,6 @@ void DrawDebugWorld(
 		paintdecals.clear();
 		renderableVoxelgrids.clear();
 		renderablePathqueries.clear();
-		renderableTrails.clear();
 		return;
 	}
 	static GPUBuffer wirecubeVB;
@@ -7690,12 +7705,6 @@ void DrawDebugWorld(
 		x->debugdraw(camera.VP, cmd);
 	}
 	renderablePathqueries.clear();
-
-	for (auto& x : renderableTrails)
-	{
-		x->Draw(camera, cmd);
-	}
-	renderableTrails.clear();
 
 	if (debugCameras)
 	{
