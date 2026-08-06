@@ -358,7 +358,8 @@ float4 main(PSIn input) : SV_TARGET
 		//
 		// Still taken from the DISPLACED surface rather than the still plane,
 		// which is what the original note here was protecting: a crest standing
-		// over the sea bed really does have less water beneath it.
+		// over the sea bed really does have less water beneath it. What
+		// changed is only WHERE that displaced height is read - see below.
 		const float shore_device_depth = texture_depth[pixel];
 
 		// Is there anything solid under this pixel at all? Reverse-Z clears to
@@ -377,9 +378,26 @@ float4 main(PSIn input) : SV_TARGET
 
 		const float3 shore_position =
 			reconstruct_position(ScreenCoord, shore_device_depth);
-		const float shore_depth = max(0, surface.P.y - shore_position.y);
+
+		// Measured between the sea bed and the surface standing OVER THE SEA
+		// BED, not the surface at this fragment. Those are two different
+		// places: the fragment is wherever this pixel's piece of water surface
+		// happens to sit, and at a grazing angle - or on a crest raised
+		// between the eye and the shore - it can be a long way horizontally
+		// from the ground the pixel is actually looking at. Subtracting two
+		// heights sampled at different XZ is not a water column at all, and a
+		// tall crest in front of dry sand reports metres of water standing
+		// over ground the sea never reaches.
+		//
+		// Signed on purpose. Where the surface over the ground sits BELOW it
+		// the ground is dry, and dry ground has no shoreline foam however much
+		// water stands somewhere else along the view ray.
+		const float shore_depth =
+			ocean_drawn_surface_height(shore_position) - shore_position.y;
+		const bool shore_is_submerged = shore_has_geometry && shore_depth > 0;
+
 		float foam_shore =
-			shore_has_geometry ? saturate(exp(-shore_depth * 2)) : 0;
+			shore_is_submerged ? saturate(exp(-shore_depth * 2)) : 0;
 		float foam_wave = pow(saturate(gradient.a), 4) * saturate(exp(-water_depth * 0.1));
 		float foam_combined = saturate(foam_shore + foam_wave);
 		float foam = smoothstep(0.5, 0.6, saturate(foam_combined + 0.1));
@@ -435,10 +453,10 @@ float4 main(PSIn input) : SV_TARGET
 		foam = saturate(foam);
 		surface.albedo = lerp(surface.albedo, 0.6, foam);
 		surface.refraction.a *= 1 - foam;
-		// Same guard: with no sea bed there is no shoreline to restore the
-		// refraction over.
+		// Same guard: with no sea bed under water there is no shoreline to
+		// restore the refraction over.
 		surface.refraction.a = saturate(surface.refraction.a +
-			(shore_has_geometry ? saturate(exp(-shore_depth * 4)) : 0));
+			(shore_is_submerged ? saturate(exp(-shore_depth * 4)) : 0));
 	}
 #endif
 
