@@ -39,8 +39,9 @@ PSIn main(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID, out uint
 		float3 displacement = texture_displacementmap.SampleLevel(sampler_linear_wrap, uv, 0).xzy;
 
 		const float dist = length(worldPos - unprojNEAR.xyz);
-		const half gradient_fade = smoothstep(0.08, 0.8, saturate(dist * 0.005));
-		displacement = lerp(displacement, 0, gradient_fade);
+		const float displacement_fade = smoothstep(
+			OCEAN_DISPLACEMENT_FADE.x, OCEAN_DISPLACEMENT_FADE.y, dist);
+		displacement = lerp(displacement, 0, displacement_fade);
 
 		worldPos += displacement;
 	}

@@ -72,8 +72,9 @@ float4 main(PSIn input) : SV_TARGET
 	//perlin = normalize(perlin);
 	perlin = perlin * 0.000005 * xOceanWaveAmplitude;
 
-	const half gradient_fade = smoothstep(0.08, 0.8, saturate(dist * 0.005));
-	gradient.rg = lerp(gradient.rg, perlin, gradient_fade);
+	const float gradient_fade = smoothstep(
+		OCEAN_GRADIENT_FADE.x, OCEAN_GRADIENT_FADE.y, dist);
+	gradient.rg = lerp(gradient.rg, (half2)perlin, (half)gradient_fade);
 	//gradient.rg = perlin;
 	//return float4(gradient_fade.xxx,1);
 	//return float4(gradient.rg, 0, 1);
