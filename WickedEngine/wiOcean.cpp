@@ -66,11 +66,48 @@ namespace wi
 		 */
 		constexpr uint32_t MESH_CELLS_PER_SIDE_COARSE = 16;
 
-		/** Cell size of the innermost level at `MESH_CELLS_PER_SIDE`, in metres. */
+		/**
+		 * `OceanParameters::surfaceDetail` the two constants below describe.
+		 *
+		 * Detail steps the near field by powers of two around this reference:
+		 * one step up halves the innermost cell size and adds a level to keep
+		 * the outer extent where it was, one step down does the reverse.
+		 */
+		constexpr uint32_t MESH_REFERENCE_DETAIL = 4;
+
+		/**
+		 * Cell size of the innermost level at `MESH_CELLS_PER_SIDE` and
+		 * `MESH_REFERENCE_DETAIL`, in metres.
+		 */
 		constexpr float MESH_BASE_CELL_SIZE = 0.25F;
 
-		/** Number of clipmap levels, counting the solid centre patch. */
+		/**
+		 * Number of clipmap levels at `MESH_REFERENCE_DETAIL`, counting the
+		 * solid centre patch.
+		 */
 		constexpr uint32_t MESH_LEVEL_COUNT = 10;
+
+		/**
+		 * Highest `surfaceDetail` the mesh will honour.
+		 *
+		 * The ceiling is about diminishing returns, not cost. Cell size at a
+		 * given distance is fixed by the cells per side - both a level's cell
+		 * size and its extent double per level, so their ratio is constant -
+		 * and what detail actually changes is the size of the innermost level.
+		 * Each step therefore refines an ever smaller bubble around the
+		 * viewer: by 6 that bubble is 4 m across at 6 cm cells, and further
+		 * steps refine water already under the camera.
+		 *
+		 * **Making distant water finer means more cells per side**, which is a
+		 * different change: the index buffers are built once at startup and
+		 * shared, so a runtime resolution would need a set of them. Worth
+		 * doing alongside the cascaded FFT, which is what would give distant
+		 * water something finer to carry.
+		 *
+		 * Values above this are clamped rather than rejected, so scenes saved
+		 * against the old screen space slider (which ran to 10) still load.
+		 */
+		constexpr uint32_t MESH_MAX_DETAIL = 6;
 
 		/** Width of the morph band at the outer edge of a level, in cells. */
 		constexpr uint32_t MESH_MORPH_CELLS = MESH_CELLS_PER_SIDE / 8;
@@ -98,27 +135,89 @@ namespace wi
 		constexpr float MESH_FADE_END_CELLS_PER_PATCH = 8.0F;
 
 		/**
-		 * Grid the shared mesh centre is snapped to, in metres.
+		 * Clipmap geometry for one draw, resolved from the ocean parameters.
 		 *
-		 * Snapping is what stops the waves swimming: vertices land on a fixed
-		 * world lattice and jump by whole cells as the viewer moves, instead
-		 * of sliding across the displacement map.
-		 *
-		 * One quantum is shared by **every** level, which is what makes each
-		 * level's hole coincide exactly with the extent of the level inside it
-		 * - the alternative, snapping each level to its own cell size, leaves
-		 * the two disagreeing by up to a cell and needs trim geometry to
-		 * close. Levels whose cell size exceeds this quantum can slide by at
-		 * most one quantum, which is under half their cell and is out where
-		 * the displacement has faded to nothing anyway.
-		 *
-		 * The bound that matters: half of this is how far the viewer can drift
-		 * from the mesh centre, and it must stay well inside level 0's half
-		 * extent (`MESH_CELLS_PER_SIDE / 2 * MESH_BASE_CELL_SIZE`, 16 m) or
-		 * the viewer ends up near the edge of the finest ring.
+		 * Held together in one place because the three values are not
+		 * independent: the level count has to track the base cell size or the
+		 * mesh's outer extent moves with the detail setting, and the snap
+		 * quantum has to track both or the viewer ends up near the edge of the
+		 * finest level.
 		 */
-		constexpr float MESH_SNAP_QUANTUM =
-			MESH_BASE_CELL_SIZE * float(1u << 5); // 8 m
+		struct MeshConfig
+		{
+			/** Cell size of the innermost level, in metres. */
+			float baseCellSize;
+
+			/** Levels, counting the solid centre patch. */
+			uint32_t levelCount;
+
+			/** Grid the shared mesh centre is snapped to, in metres. */
+			float snapQuantum;
+		};
+
+		/**
+		 * Resolves the clipmap geometry for a draw.
+		 *
+		 * **Detail changes the near field only.** A level's cell size and its
+		 * extent both double per level, so the cells at any given distance
+		 * depend on the cells per side and not on the base cell size - what a
+		 * finer base buys is a smaller innermost level, and therefore finer
+		 * cells close to the viewer. The added level puts the outer extent
+		 * back where it was, so coverage does not move with the setting.
+		 *
+		 * **The snap quantum is derived, not chosen.** Snapping is what stops
+		 * the waves swimming - vertices land on a fixed world lattice and jump
+		 * by whole cells as the viewer moves instead of sliding across the
+		 * displacement map. One quantum is shared by every level, which is
+		 * what makes each level's hole coincide exactly with the extent of the
+		 * level inside it; snapping each level to its own cell size instead
+		 * leaves the two disagreeing by up to a cell and needs trim geometry
+		 * to close. Half the quantum is how far the viewer drifts from centre,
+		 * so it is tied to the innermost level's extent: a quarter of that
+		 * half extent, at every detail setting and at both resolutions.
+		 *
+		 * @param[in] params - Ocean parameters, for `surfaceDetail`.
+		 * @param[in] cellsPerSide - Cells along one side of a level.
+		 *
+		 * @return Base cell size, level count and snap quantum.
+		 */
+		MeshConfig GetMeshConfig(
+			const Ocean::OceanParameters& params,
+			const uint32_t cellsPerSide
+		)
+		{
+			const uint32_t detail = std::clamp(
+				params.surfaceDetail, 1u, MESH_MAX_DETAIL);
+
+			MeshConfig config = {};
+
+			// Scaled by the resolution as well, so that a level covers the
+			// same ground however many cells span it. That is what lets the
+			// coarse mesh share a snap quantum with the main one.
+			config.baseCellSize = MESH_BASE_CELL_SIZE
+				* float(MESH_CELLS_PER_SIDE) / float(cellsPerSide);
+
+			if (detail >= MESH_REFERENCE_DETAIL)
+			{
+				const uint32_t steps = detail - MESH_REFERENCE_DETAIL;
+				config.baseCellSize /= float(1u << steps);
+				config.levelCount = MESH_LEVEL_COUNT + steps;
+			}
+			else
+			{
+				const uint32_t steps = MESH_REFERENCE_DETAIL - detail;
+				config.baseCellSize *= float(1u << steps);
+				config.levelCount =
+					std::max(1u, MESH_LEVEL_COUNT - std::min(steps,
+						MESH_LEVEL_COUNT - 1));
+			}
+
+			const float innerHalfExtent =
+				float(cellsPerSide) * 0.5F * config.baseCellSize;
+			config.snapQuantum = innerHalfExtent * 0.5F;
+
+			return config;
+		}
 
 		GPUBuffer indexBuffer_patch;
 		GPUBuffer indexBuffer_ring;
@@ -245,7 +344,10 @@ namespace wi
 			device->DrawIndexedInstanced(
 				GetIndexCount(patch), cameraCount, 0, 0, 0, cmd);
 
-			if constexpr (MESH_LEVEL_COUNT > 1)
+			// Level count comes from the constants rather than a compile time
+			// value: it moves with the detail setting, and the vertex shader
+			// unpacks the instance index against the same field.
+			if (constants.xOceanMeshLevelCount > 1)
 			{
 				constants.xOceanMeshLevelBase = 1;
 				device->BindDynamicConstantBuffer(
@@ -254,7 +356,7 @@ namespace wi
 					&ring, IndexBufferFormat::UINT16, 0, cmd);
 				device->DrawIndexedInstanced(
 					GetIndexCount(ring),
-					(MESH_LEVEL_COUNT - 1) * cameraCount,
+					(constants.xOceanMeshLevelCount - 1) * cameraCount,
 					0, 0, 0, cmd);
 			}
 		}
@@ -559,19 +661,20 @@ namespace wi
 	{
 		OceanCB cb = {};
 
+		const MeshConfig mesh = GetMeshConfig(params, cellsPerSide);
+
 		cb.xOceanMeshCenter = XMFLOAT2(
-			std::round(viewerPosition.x / MESH_SNAP_QUANTUM)
-				* MESH_SNAP_QUANTUM,
-			std::round(viewerPosition.z / MESH_SNAP_QUANTUM)
-				* MESH_SNAP_QUANTUM
+			std::round(viewerPosition.x / mesh.snapQuantum)
+				* mesh.snapQuantum,
+			std::round(viewerPosition.z / mesh.snapQuantum)
+				* mesh.snapQuantum
 		);
-		cb.xOceanMeshCellSize = MESH_BASE_CELL_SIZE
-			* float(MESH_CELLS_PER_SIDE) / float(cellsPerSide);
+		cb.xOceanMeshCellSize = mesh.baseCellSize;
 		cb.xOceanMeshVertsPerSide = cellsPerSide + 1;
 		cb.xOceanMeshMorphCells = std::max(1u,
 			MESH_MORPH_CELLS * cellsPerSide / MESH_CELLS_PER_SIDE);
 		cb.xOceanMeshLevelBase = 0;
-		cb.xOceanMeshLevelCount = MESH_LEVEL_COUNT;
+		cb.xOceanMeshLevelCount = mesh.levelCount;
 		// Cells reach a given size this much sooner than on the main mesh, so
 		// the waves have to flatten this much sooner too. Exactly 1 for the
 		// main mesh, which is what keeps the surface and the tests against it
@@ -920,8 +1023,28 @@ namespace wi
 
 	const wi::primitive::AABB Ocean::GetAABB(const XMFLOAT3& camera_pos) const
 	{
+		const MeshConfig mesh = GetMeshConfig(params, MESH_CELLS_PER_SIDE);
+
+		// Outer extent of the clipmap: the levels double, so the last one
+		// reaches this far. The horizon skirt goes further still, but it is
+		// flat water at the far plane and contributes nothing worth culling
+		// against.
+		const float halfExtent = float(MESH_CELLS_PER_SIDE) * 0.5F
+			* mesh.baseCellSize * float(1u << (mesh.levelCount - 1));
+
+		// Wave height has no authored bound to read, but it does have a
+		// physical one: a deep water wave breaks at a height of roughly a
+		// seventh of its length, and the longest wave the patch carries is one
+		// patch long. Using the whole patch length leaves a wide margin over
+		// that limit, which is the right way to be wrong here - this box only
+		// decides whether the ocean is worth drawing into a shadow cascade, so
+		// too large costs a little work and too small makes the ocean vanish.
+		const float halfHeight = std::max(1.0F, params.patch_length);
+
 		wi::primitive::AABB aabb;
-		aabb.createFromHalfWidth(XMFLOAT3(camera_pos.x, params.waterHeight, camera_pos.z), XMFLOAT3(1000, 10, 1000));
+		aabb.createFromHalfWidth(
+			XMFLOAT3(camera_pos.x, params.waterHeight, camera_pos.z),
+			XMFLOAT3(halfExtent, halfHeight, halfExtent));
 		return aabb;
 	}
 

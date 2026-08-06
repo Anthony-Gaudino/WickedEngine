@@ -42,7 +42,28 @@ namespace wi
 			wi::scene::environment::WaterMedium waterMedium;
 
 			float waterHeight = 0.0f;
+
+			/**
+			 * Resolution of the surface mesh near the viewer.
+			 *
+			 * Each step halves the innermost clipmap cell, so the surface can
+			 * carry finer waves close in, and adds a level so that the ocean
+			 * still reaches exactly as far. Detail therefore costs one ring of
+			 * triangles per step and does not change coverage.
+			 */
 			uint32_t surfaceDetail = 4;
+
+			/**
+			 * **Unused. Retained only so existing scenes still load.**
+			 *
+			 * This extruded the old screen space projected grid to cope with
+			 * vertices that displacement pushed outside the view. The surface
+			 * is a camera-centred clipmap now, built in world space, so there
+			 * is no screen rectangle to overshoot and nothing for this to do.
+			 * It stays in the struct, the serializer and the Lua binding
+			 * because removing it would break the scene format; the editor no
+			 * longer shows it.
+			 */
 			float surfaceDisplacementTolerance = 2;
 		};
 		void Create(const OceanParameters& params);

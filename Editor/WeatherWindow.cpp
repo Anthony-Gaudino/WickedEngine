@@ -878,27 +878,16 @@ void WeatherWindow::Create(EditorComponent* _editor)
 		});
 	AddWidget(&ocean_heightSlider);
 
-	ocean_detailSlider.Create(1, 10, 0, 9, "Surface Detail: ");
+	ocean_detailSlider.Create(1, 6, 0, 5, "Surface Detail: ");
 	ocean_detailSlider.SetSize(XMFLOAT2(wid, hei));
 	ocean_detailSlider.SetPos(XMFLOAT2(x, y += step));
 	ocean_detailSlider.SetValue(4);
-	ocean_detailSlider.SetTooltip("Adjust surface tessellation resolution. High values can decrease performance.");
+	ocean_detailSlider.SetTooltip("Resolution of the water surface near the camera. Each step halves the size of the smallest wave the surface can carry, and adds one ring of triangles to keep the ocean reaching just as far.");
 	ocean_detailSlider.OnSlide([this](wi::gui::EventArgs args) {
 		auto& weather = GetWeather();
 		weather.oceanParameters.surfaceDetail = (uint32_t)args.iValue;
 		});
 	AddWidget(&ocean_detailSlider);
-
-	ocean_toleranceSlider.Create(1, 10, 0, 1000, "Tolerance: ");
-	ocean_toleranceSlider.SetSize(XMFLOAT2(wid, hei));
-	ocean_toleranceSlider.SetPos(XMFLOAT2(x, y += step));
-	ocean_toleranceSlider.SetValue(2);
-	ocean_toleranceSlider.SetTooltip("Big waves can introduce glitches on screen borders, this can fix that but surface detail will decrease.");
-	ocean_toleranceSlider.OnSlide([this](wi::gui::EventArgs args) {
-		auto& weather = GetWeather();
-		weather.oceanParameters.surfaceDisplacementTolerance = args.fValue;
-		});
-	AddWidget(&ocean_toleranceSlider);
 
 
 	ocean_windDrivenCheckBox.Create("Ocean follows wind: ");
@@ -1255,7 +1244,6 @@ void WeatherWindow::UpdateData()
 		ocean_timeScaleSlider.SetValue(weather.oceanParameters.time_scale);
 		ocean_heightSlider.SetValue(weather.oceanParameters.waterHeight);
 		ocean_detailSlider.SetValue((float)weather.oceanParameters.surfaceDetail);
-		ocean_toleranceSlider.SetValue(weather.oceanParameters.surfaceDisplacementTolerance);
 		ocean_windDrivenCheckBox.SetCheck(weather.IsOceanWindDriven());
 		ocean_windInfluenceSlider.SetValue(weather.oceanWindInfluence);
 		ocean_windDriftCheckBox.SetCheck(weather.IsOceanWindDrift());
@@ -1505,7 +1493,6 @@ void WeatherWindow::ResizeLayout()
 	layout.add(ocean_timeScaleSlider);
 	layout.add(ocean_heightSlider);
 	layout.add(ocean_detailSlider);
-	layout.add(ocean_toleranceSlider);
 	layout.add_right(ocean_windDrivenCheckBox);
 	layout.add(ocean_windInfluenceSlider);
 	layout.add_right(ocean_windDriftCheckBox);
