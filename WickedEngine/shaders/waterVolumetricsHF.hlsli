@@ -58,16 +58,35 @@ static const float WATER_VOLUMETRICS_FADE_DEPTH = 1.0;
 static const float WATER_REFRACTIVE_INDEX = 1.333;
 
 /**
- * Height above the still plane within which the eye may still be submerged.
+ * Height a wave crest is assumed never to reach above the still plane, in
+ * metres.
  *
- * A crest reaches above the still water plane, so an eye a little above it can
- * be inside the water even though the plane says otherwise. Only
- * `ocean_underwater_factor` can settle that, and it costs an unprojection and a
- * displacement map sample - so this is the threshold for bothering to ask.
+ * The cheap rejection every water test opens with. Asking where the wave
+ * surface actually is costs a displacement map sample, so a segment is first
+ * measured against the still plane raised by this much; only what survives is
+ * asked the exact question.
  *
- * Deliberately loose. It has to clear both the wave displacement and the span
- * of the test plane that check sits on, a metre ahead of the near plane; being
- * generous costs one scalar compare, being tight would cut the fog off early.
+ * **A sea whose crests exceed this is not broken, it is merely classified
+ * against the flat plane again** - which is what every one of these tests did
+ * before the surface was consulted at all. It degrades to the old behaviour
+ * rather than to a wrong one. The engine has no bound on the wave amplitude to
+ * offer here: it is authored, the displacement is produced by an FFT on the
+ * GPU, and nothing reads its extent back.
+ */
+static const float WATER_WAVE_HEIGHT_MARGIN = 10.0;
+
+/**
+ * Height above the wave surface within which the eye may still be submerged.
+ *
+ * The eye's own height settles which side of the surface its CENTRE is on, but
+ * not which side each PIXEL is on: `ocean_underwater_factor` judges that on a
+ * plane a metre ahead of the near plane, which spans a good deal of world at a
+ * wide field of view, and that sweep across the screen is the whole point of
+ * it. So this is the threshold for bothering to ask - the span of that test
+ * plane, not the waves, which the surface height has already accounted for.
+ *
+ * Deliberately loose: being generous costs one scalar compare, being tight
+ * would cut the fog off while part of the frame is still under.
  */
 static const float WATER_EYE_SUBMERSION_MARGIN = 10.0;
 
