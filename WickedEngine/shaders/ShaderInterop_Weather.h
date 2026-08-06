@@ -341,6 +341,12 @@ struct alignas(16) ShaderWind
 	float padding1;
 };
 
+/**
+ * Sunlight transmits through the thin part of a wave and scatters towards the
+ * eye - the glow through a crest that is lit from behind.
+ */
+static const uint OCEAN_FLAG_SUBSURFACE_SCATTERING = 1u << 0u;
+
 struct alignas(16) ShaderOcean
 {
 	float4 water_color;
@@ -353,8 +359,15 @@ struct alignas(16) ShaderOcean
 	// Vertical scale (patch_length / dmap_dim) used to rebuild the wave surface
 	// normal from the gradient map, matching the ocean surface shader.
 	float texel_length;
-	float padding_ocean0;
-	float padding_ocean1;
+
+	/** Feature switches, OCEAN_FLAG_*. */
+	uint flags;
+
+	// Artistic gain on the sunlight transmitted through a wave. The
+	// transmission itself comes from the water medium, so this scales a
+	// physical result rather than defining it.
+	float subsurface_strength;
+
 	float padding_ocean2;
 
 	// Absorption coefficient of the water in 1/m per RGB channel (w unused).
@@ -369,6 +382,7 @@ struct alignas(16) ShaderOcean
 	float4 scattering;
 
 	bool IsValid() { return texture_displacementmap >= 0; }
+	bool IsSubsurfaceScattering() { return flags & OCEAN_FLAG_SUBSURFACE_SCATTERING; }
 };
 
 struct alignas(16) ShaderWeather

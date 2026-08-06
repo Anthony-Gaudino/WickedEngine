@@ -939,6 +939,25 @@ void WeatherWindow::Create(EditorComponent* _editor)
 		});
 	AddWidget(&ocean_windDriftStrengthSlider);
 
+	ocean_subsurfaceCheckBox.Create("Subsurface scattering: ");
+	ocean_subsurfaceCheckBox.SetSize(XMFLOAT2(hei, hei));
+	ocean_subsurfaceCheckBox.SetPos(XMFLOAT2(x, y += step));
+	ocean_subsurfaceCheckBox.SetTooltip("When enabled, sunlight transmits through the thin part of a wave and scatters towards the eye, giving the glow through a crest that is lit from behind.");
+	ocean_subsurfaceCheckBox.OnClick([this](wi::gui::EventArgs args) {
+		GetWeather().SetOceanSubsurfaceScattering(args.bValue);
+		});
+	AddWidget(&ocean_subsurfaceCheckBox);
+
+	ocean_subsurfaceStrengthSlider.Create(0, 4, 1, 100000, "Subsurface: ");
+	ocean_subsurfaceStrengthSlider.SetSize(XMFLOAT2(wid, hei));
+	ocean_subsurfaceStrengthSlider.SetPos(XMFLOAT2(x, y += step));
+	ocean_subsurfaceStrengthSlider.SetValue(editor->GetCurrentScene().weather.oceanSubsurfaceStrength);
+	ocean_subsurfaceStrengthSlider.SetTooltip("Gain on the light transmitted through a wave. The colour and falloff come from the water type below, so this only scales the result.");
+	ocean_subsurfaceStrengthSlider.OnSlide([this](wi::gui::EventArgs args) {
+		GetWeather().oceanSubsurfaceStrength = args.fValue;
+		});
+	AddWidget(&ocean_subsurfaceStrengthSlider);
+
 	// Water optics: the inherent optical properties of the water, which decide
 	// turbidity, hue and how far one can see through it.
 	ocean_waterTypeComboBox.Create("Water type: ");
@@ -1241,6 +1260,8 @@ void WeatherWindow::UpdateData()
 		ocean_windInfluenceSlider.SetValue(weather.oceanWindInfluence);
 		ocean_windDriftCheckBox.SetCheck(weather.IsOceanWindDrift());
 		ocean_windDriftStrengthSlider.SetValue(weather.oceanWindDriftStrength);
+		ocean_subsurfaceCheckBox.SetCheck(weather.IsOceanSubsurfaceScattering());
+		ocean_subsurfaceStrengthSlider.SetValue(weather.oceanSubsurfaceStrength);
 		UpdateWaterMedium();
 
 		volumetricCloudsCheckBox.SetCheck(weather.IsVolumetricClouds());
@@ -1489,6 +1510,8 @@ void WeatherWindow::ResizeLayout()
 	layout.add(ocean_windInfluenceSlider);
 	layout.add_right(ocean_windDriftCheckBox);
 	layout.add(ocean_windDriftStrengthSlider);
+	layout.add_right(ocean_subsurfaceCheckBox);
+	layout.add(ocean_subsurfaceStrengthSlider);
 	layout.add(ocean_waterTypeComboBox);
 	layout.add(ocean_algaeSlider);
 	layout.add(ocean_siltSlider);

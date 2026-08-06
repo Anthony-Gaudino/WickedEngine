@@ -1835,6 +1835,7 @@ namespace wi::scene
 			VOLUMETRIC_CLOUDS_RECEIVE_SHADOW = 1 << 10,
 			OCEAN_WIND_DRIVEN = 1 << 11,
 			OCEAN_WIND_DRIFT = 1 << 12,
+			OCEAN_SUBSURFACE_SCATTERING = 1 << 13,
 		};
 		uint32_t _flags = EMPTY;
 
@@ -1854,6 +1855,10 @@ namespace wi::scene
 		// When enabled, objects floating in water are carried horizontally by a
 		// wind-driven surface current, not just bobbed vertically.
 		constexpr bool IsOceanWindDrift() const { return _flags & OCEAN_WIND_DRIFT; }
+		// When enabled, sunlight transmits through the thin part of a wave and
+		// scatters towards the eye, giving the green-gold glow through a crest
+		// that is lit from behind.
+		constexpr bool IsOceanSubsurfaceScattering() const { return _flags & OCEAN_SUBSURFACE_SCATTERING; }
 
 		constexpr void SetOceanEnabled(bool value = true) { set_flag(_flags, OCEAN_ENABLED, value); }
 		constexpr void SetRealisticSky(bool value = true) { set_flag(_flags, REALISTIC_SKY, value); }
@@ -1867,6 +1872,7 @@ namespace wi::scene
 		constexpr void SetVolumetricCloudsReceiveShadow(bool value = true) { set_flag(_flags, VOLUMETRIC_CLOUDS_RECEIVE_SHADOW, value); }
 		constexpr void SetOceanWindDriven(bool value = true) { set_flag(_flags, OCEAN_WIND_DRIVEN, value); }
 		constexpr void SetOceanWindDrift(bool value = true) { set_flag(_flags, OCEAN_WIND_DRIFT, value); }
+		constexpr void SetOceanSubsurfaceScattering(bool value = true) { set_flag(_flags, OCEAN_SUBSURFACE_SCATTERING, value); }
 
 		XMFLOAT3 sunColor = XMFLOAT3(0, 0, 0);
 		XMFLOAT3 sunDirection = XMFLOAT3(0, 1, 0);
@@ -1888,6 +1894,11 @@ namespace wi::scene
 		// Strength of the wind-driven surface current that carries floating
 		// objects when OCEAN_WIND_DRIFT is set (0 disables horizontal drift).
 		float oceanWindDriftStrength = 0.2f;
+		// Scales the sunlight transmitted through a wave when
+		// OCEAN_SUBSURFACE_SCATTERING is set. The transmission itself is
+		// derived from the water medium, so this is an artistic gain over a
+		// physical result rather than the effect's only control.
+		float oceanSubsurfaceStrength = 1.0f;
 		float stars = 0.5f;
 		XMFLOAT3 gravity = XMFLOAT3(0, -10, 0);
 		float sky_rotation = 0; // horizontal rotation for skyMap texture (in radians)

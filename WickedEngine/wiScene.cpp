@@ -967,6 +967,12 @@ namespace wi::scene
 		shaderscene.weather.ocean.texture_displacementmap = device->GetDescriptorIndex(ocean.getDisplacementMap(), SubresourceType::SRV);
 		shaderscene.weather.ocean.texture_gradientmap = device->GetDescriptorIndex(ocean.getGradientMap(), SubresourceType::SRV);
 		shaderscene.weather.ocean.texel_length = weather.oceanParameters.patch_length / (float)weather.oceanParameters.dmap_dim;
+		shaderscene.weather.ocean.flags = 0;
+		if (weather.IsOceanSubsurfaceScattering())
+		{
+			shaderscene.weather.ocean.flags |= OCEAN_FLAG_SUBSURFACE_SCATTERING;
+		}
+		shaderscene.weather.ocean.subsurface_strength = weather.oceanSubsurfaceStrength;
 		{
 			// Inherent optical properties of the water: absorption and
 			// scattering are derived from the authored turbidity / dissolved

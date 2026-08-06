@@ -1931,6 +1931,10 @@ namespace wi::scene
 				// it.
 				oceanParameters.waterMedium.SetFromLegacyDensity(oceanParameters.waterColor.w);
 			}
+			if (seri.GetVersion() >= 9)
+			{
+				archive >> oceanSubsurfaceStrength;
+			}
 		}
 		else
 		{
@@ -2166,6 +2170,10 @@ namespace wi::scene
 				archive << oceanParameters.waterMedium.GetAlgae();
 				archive << oceanParameters.waterMedium.GetSilt();
 				archive << oceanParameters.waterMedium.GetStain();
+			}
+			if (seri.GetVersion() >= 9)
+			{
+				archive << oceanSubsurfaceStrength;
 			}
 		}
 	}
