@@ -7043,7 +7043,7 @@ void DrawShadowmaps(
 
 					if (shcams[cascade].frustum.CheckBoxFast(vis.scene->ocean.GetAABB(cb.cameras[0].position)))
 					{
-						vis.scene->ocean.RenderForShadowmap(cmd);
+						vis.scene->ocean.RenderForShadowmap(cb.cameras[0].position, cmd);
 					}
 				}
 			}
@@ -7222,7 +7222,7 @@ void DrawShadowmaps(
 
 				if (shcam.frustum.CheckBoxFast(vis.scene->ocean.GetAABB(cb.cameras[0].position)))
 				{
-					vis.scene->ocean.RenderForShadowmap(cmd);
+					vis.scene->ocean.RenderForShadowmap(cb.cameras[0].position, cmd);
 				}
 			}
 
@@ -7419,7 +7419,7 @@ void DrawShadowmaps(
 
 					if (cameras[shcam].frustum.CheckBoxFast(vis.scene->ocean.GetAABB(cb.cameras[0].position)))
 					{
-						vis.scene->ocean.RenderForShadowmap(cmd);
+						vis.scene->ocean.RenderForShadowmap(cb.cameras[0].position, cmd);
 					}
 				}
 			}
@@ -9822,7 +9822,7 @@ void RefreshEnvProbes(const Visibility& vis, CommandList cmd)
 		{
 			if (vis.scene->ocean.IsValid() && vis.scene->weather.IsOceanEnabled())
 			{
-				vis.scene->ocean.RenderForCubemap(cmd);
+				vis.scene->ocean.RenderForCubemap(probe.position, cmd);
 			}
 			if (!visible_gaussian_models.empty())
 			{

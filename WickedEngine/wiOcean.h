@@ -49,8 +49,27 @@ namespace wi
 
 		void UpdateDisplacementMap(wi::graphics::CommandList cmd) const;
 		void RenderForOcclusionTest(const wi::scene::CameraComponent& camera, wi::graphics::CommandList cmd) const;
-		void RenderForCubemap(wi::graphics::CommandList cmd) const;
-		void RenderForShadowmap(wi::graphics::CommandList cmd) const;
+
+		/**
+		 * Draws the ocean into an environment probe's cubemap.
+		 *
+		 * @param[in] viewerPosition - World position the clipmap centres on,
+		 *                             i.e. the probe being captured.
+		 * @param[in] cmd - Command list to record into.
+		 */
+		void RenderForCubemap(const XMFLOAT3& viewerPosition, wi::graphics::CommandList cmd) const;
+
+		/**
+		 * Draws the ocean into a shadow map.
+		 *
+		 * @param[in] viewerPosition - World position the clipmap centres on.
+		 *                             This is the **main camera**, not the
+		 *                             light: the shadow map covers the stretch
+		 *                             of sea the viewer can see, so the mesh
+		 *                             has to be the one the viewer gets.
+		 * @param[in] cmd - Command list to record into.
+		 */
+		void RenderForShadowmap(const XMFLOAT3& viewerPosition, wi::graphics::CommandList cmd) const;
 		void Render(const wi::scene::CameraComponent& camera, wi::graphics::CommandList cmd) const;
 
 		void CopyDisplacementMapReadback(wi::graphics::CommandList cmd) const;
@@ -109,10 +128,5 @@ namespace wi
 		// Height & choppy buffer in the space domain, corresponding to H(t), Dx(t) and Dy(t)
 		wi::graphics::GPUBuffer buffer_Float_Dxyz;
 
-
-		mutable wi::graphics::GPUBuffer indexBuffer;
-		mutable wi::graphics::GPUBuffer indexBuffer_occlusionTest;
-		mutable wi::graphics::GPUBuffer indexBuffer_cubemap;
-		mutable wi::graphics::GPUBuffer indexBuffer_shadowmap;
 	};
 }

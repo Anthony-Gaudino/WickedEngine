@@ -11,7 +11,6 @@
 #include "perlin.h"
 
 #include <algorithm>
-#include <mutex>
 
 using namespace wi::graphics;
 using namespace wi::scene;
@@ -36,6 +35,207 @@ namespace wi
 
 		PipelineState PSO, PSO_envmap, PSO_shadowmap, PSO_wire, PSO_occlusionTest;
 		Texture perlinTex;
+
+		/*
+		########################################################################
+		Clipmap mesh
+		########################################################################
+		*/
+
+		/**
+		 * Cells along one side of a clipmap level, for the main surface draw.
+		 *
+		 * Must be a multiple of 4: the outer boundary has to sit at an even
+		 * cell offset so the vertex shader's morph cannot slide it off the
+		 * boundary, and the centre hole boundary must land on a cell edge.
+		 *
+		 * `(cells + 1)^2` must stay under 65536 so the index buffers can be
+		 * 16-bit; 128 gives 16641 vertices.
+		 */
+		constexpr uint32_t MESH_CELLS_PER_SIDE = 128;
+
+		/**
+		 * Cells along one side of a clipmap level, for the cubemap, shadow map
+		 * and occlusion draws.
+		 *
+		 * These only need the ocean's silhouette, not its detail, so they use
+		 * a much coarser mesh. The base cell size is scaled up to compensate,
+		 * which keeps every level's world extent identical between the two
+		 * resolutions - including level 0's, which the snap quantum below is
+		 * sized against.
+		 */
+		constexpr uint32_t MESH_CELLS_PER_SIDE_COARSE = 16;
+
+		/** Cell size of the innermost level at `MESH_CELLS_PER_SIDE`, in metres. */
+		constexpr float MESH_BASE_CELL_SIZE = 0.25F;
+
+		/** Number of clipmap levels, counting the solid centre patch. */
+		constexpr uint32_t MESH_LEVEL_COUNT = 10;
+
+		/** Width of the morph band at the outer edge of a level, in cells. */
+		constexpr uint32_t MESH_MORPH_CELLS = MESH_CELLS_PER_SIDE / 8;
+
+		/**
+		 * Grid the shared mesh centre is snapped to, in metres.
+		 *
+		 * Snapping is what stops the waves swimming: vertices land on a fixed
+		 * world lattice and jump by whole cells as the viewer moves, instead
+		 * of sliding across the displacement map.
+		 *
+		 * One quantum is shared by **every** level, which is what makes each
+		 * level's hole coincide exactly with the extent of the level inside it
+		 * - the alternative, snapping each level to its own cell size, leaves
+		 * the two disagreeing by up to a cell and needs trim geometry to
+		 * close. Levels whose cell size exceeds this quantum can slide by at
+		 * most one quantum, which is under half their cell and is out where
+		 * the displacement has faded to nothing anyway.
+		 *
+		 * The bound that matters: half of this is how far the viewer can drift
+		 * from the mesh centre, and it must stay well inside level 0's half
+		 * extent (`MESH_CELLS_PER_SIDE / 2 * MESH_BASE_CELL_SIZE`, 16 m) or
+		 * the viewer ends up near the edge of the finest ring.
+		 */
+		constexpr float MESH_SNAP_QUANTUM =
+			MESH_BASE_CELL_SIZE * float(1u << 5); // 8 m
+
+		GPUBuffer indexBuffer_patch;
+		GPUBuffer indexBuffer_ring;
+		GPUBuffer indexBuffer_patch_coarse;
+		GPUBuffer indexBuffer_ring_coarse;
+
+		/**
+		 * Builds the index buffer for one clipmap level shape.
+		 *
+		 * The vertex positions themselves are generated in the vertex shader
+		 * from `SV_VertexID`, so this only describes connectivity over a
+		 * `(cellsPerSide + 1)^2` vertex grid and is independent of the ocean
+		 * parameters - hence built once at startup and shared by every ocean.
+		 *
+		 * @param[in] cellsPerSide - Cells along one side of the level.
+		 * @param[in] ring - When true, omit the centre quarter of the grid,
+		 *                   which the level inside this one covers exactly.
+		 * @param[out] indexBuffer - Buffer to create.
+		 * @param[in] debugName - Name to tag the buffer with.
+		 */
+		void CreateClipmapIndexBuffer(
+			const uint32_t cellsPerSide,
+			const bool ring,
+			GPUBuffer& indexBuffer,
+			const char* debugName
+		)
+		{
+			const uint32_t vertsPerSide = cellsPerSide + 1;
+			const uint32_t holeMin = cellsPerSide / 4;
+			const uint32_t holeMax = cellsPerSide - holeMin;
+
+			wi::vector<uint16_t> indexData;
+			indexData.reserve(size_t(cellsPerSide) * cellsPerSide * 6);
+
+			for (uint32_t x = 0; x < cellsPerSide; ++x)
+			{
+				for (uint32_t y = 0; y < cellsPerSide; ++y)
+				{
+					const bool inHole =
+						x >= holeMin && (x + 1) <= holeMax &&
+						y >= holeMin && (y + 1) <= holeMax;
+					if (ring && inHole)
+					{
+						continue;
+					}
+
+					const uint16_t lowerLeft =
+						uint16_t(x + y * vertsPerSide);
+					const uint16_t lowerRight =
+						uint16_t((x + 1) + y * vertsPerSide);
+					const uint16_t topLeft =
+						uint16_t(x + (y + 1) * vertsPerSide);
+					const uint16_t topRight =
+						uint16_t((x + 1) + (y + 1) * vertsPerSide);
+
+					indexData.push_back(topLeft);
+					indexData.push_back(lowerLeft);
+					indexData.push_back(lowerRight);
+
+					indexData.push_back(topLeft);
+					indexData.push_back(lowerRight);
+					indexData.push_back(topRight);
+				}
+			}
+
+			GPUBufferDesc desc;
+			desc.bind_flags = BindFlag::INDEX_BUFFER;
+			desc.size = indexData.size() * sizeof(uint16_t);
+
+			GraphicsDevice* device = wi::graphics::GetDevice();
+			device->CreateBuffer(&desc, indexData.data(), &indexBuffer);
+			device->SetName(&indexBuffer, debugName);
+		}
+
+		/**
+		 * Number of indices in a clipmap level's index buffer.
+		 *
+		 * @param[in] indexBuffer - Buffer built by `CreateClipmapIndexBuffer`.
+		 *
+		 * @return Index count to pass to the draw.
+		 */
+		uint32_t GetIndexCount(const GPUBuffer& indexBuffer)
+		{
+			return uint32_t(indexBuffer.GetDesc().size / sizeof(uint16_t));
+		}
+
+		/**
+		 * Issues the two draws that make up one clipmap.
+		 *
+		 * The centre patch and the rings have different connectivity, so they
+		 * cannot share an index buffer and this is two draws rather than one.
+		 * Which level a vertex belongs to rides in `SV_InstanceID` alongside
+		 * the camera index; `xOceanMeshLevelBase` tells the vertex shader how
+		 * to unpack it, and the convention set here has to match the one it
+		 * reads.
+		 *
+		 * @param[in,out] constants - Ocean constants. `xOceanMeshLevelBase`
+		 *                            is overwritten and the buffer rebound per
+		 *                            draw.
+		 * @param[in] coarse - Use the low resolution mesh, which carries the
+		 *                     ocean's silhouette but not its detail.
+		 * @param[in] cameraCount - Cameras to replicate the mesh across; 6 for
+		 *                          a cubemap, 1 otherwise.
+		 * @param[in] cmd - Command list to record into.
+		 */
+		void DrawClipmap(
+			OceanCB& constants,
+			const bool coarse,
+			const uint32_t cameraCount,
+			const CommandList cmd
+		)
+		{
+			GraphicsDevice* device = wi::graphics::GetDevice();
+
+			const GPUBuffer& patch =
+				coarse ? indexBuffer_patch_coarse : indexBuffer_patch;
+			const GPUBuffer& ring =
+				coarse ? indexBuffer_ring_coarse : indexBuffer_ring;
+
+			constants.xOceanMeshLevelBase = 0;
+			device->BindDynamicConstantBuffer(
+				constants, CB_GETBINDSLOT(OceanCB), cmd);
+			device->BindIndexBuffer(&patch, IndexBufferFormat::UINT16, 0, cmd);
+			device->DrawIndexedInstanced(
+				GetIndexCount(patch), cameraCount, 0, 0, 0, cmd);
+
+			if constexpr (MESH_LEVEL_COUNT > 1)
+			{
+				constants.xOceanMeshLevelBase = 1;
+				device->BindDynamicConstantBuffer(
+					constants, CB_GETBINDSLOT(OceanCB), cmd);
+				device->BindIndexBuffer(
+					&ring, IndexBufferFormat::UINT16, 0, cmd);
+				device->DrawIndexedInstanced(
+					GetIndexCount(ring),
+					(MESH_LEVEL_COUNT - 1) * cameraCount,
+					0, 0, 0, cmd);
+			}
+		}
 
 		void LoadShaders()
 		{
@@ -313,9 +513,44 @@ namespace wi
 		}
 	}
 
-	OceanCB GetOceanCBAtDim(const Ocean::OceanParameters& params, uint2 dim)
+	/**
+	 * Fills the ocean constants for a draw or simulation dispatch.
+	 *
+	 * @param[in] params - Ocean parameters to publish.
+	 * @param[in] viewerPosition - World position the clipmap centres on. This
+	 *                             is the **main** camera even for the shadow
+	 *                             map, which renders the same stretch of sea
+	 *                             from the light.
+	 * @param[in] cellsPerSide - Cells along one side of a clipmap level. The
+	 *                           base cell size is scaled so that every level's
+	 *                           world extent is the same whichever resolution
+	 *                           is used.
+	 *
+	 * @return Constants ready to bind. `xOceanMeshLevelBase` still has to be
+	 *         set per draw: 0 for the centre patch, 1 for the ring instances.
+	 */
+	OceanCB GetOceanCB(
+		const Ocean::OceanParameters& params,
+		const XMFLOAT3& viewerPosition,
+		const uint32_t cellsPerSide
+	)
 	{
 		OceanCB cb = {};
+
+		cb.xOceanMeshCenter = XMFLOAT2(
+			std::round(viewerPosition.x / MESH_SNAP_QUANTUM)
+				* MESH_SNAP_QUANTUM,
+			std::round(viewerPosition.z / MESH_SNAP_QUANTUM)
+				* MESH_SNAP_QUANTUM
+		);
+		cb.xOceanMeshCellSize = MESH_BASE_CELL_SIZE
+			* float(MESH_CELLS_PER_SIDE) / float(cellsPerSide);
+		cb.xOceanMeshVertsPerSide = cellsPerSide + 1;
+		cb.xOceanMeshMorphCells = std::max(1u,
+			MESH_MORPH_CELLS * cellsPerSide / MESH_CELLS_PER_SIDE);
+		cb.xOceanMeshLevelBase = 0;
+		cb.xOceanMeshLevelCount = MESH_LEVEL_COUNT;
+
 		uint32_t actual_dim = params.dmap_dim;
 		uint32_t input_width = actual_dim + 4;
 		uint32_t output_width = actual_dim;
@@ -337,14 +572,9 @@ namespace wi
 		cb.xOceanWaterColor = params.waterColor;
 		cb.xOceanExtinctionColor = XMFLOAT4(1 - params.extinctionColor.x, 1 - params.extinctionColor.y, 1 - params.extinctionColor.z, 1);
 		cb.xOceanTexelLength = params.patch_length / params.dmap_dim;
-		cb.xOceanScreenSpaceParams.x = (float)dim.x;
-		cb.xOceanScreenSpaceParams.y = (float)dim.y;
-		cb.xOceanScreenSpaceParams.z = 1.0f / cb.xOceanScreenSpaceParams.x;
-		cb.xOceanScreenSpaceParams.w = 1.0f / cb.xOceanScreenSpaceParams.y;
 		cb.xOceanPatchSizeRecip = 1.0f / params.patch_length;
 		cb.xOceanMapHalfTexel = 0.5f / params.dmap_dim;
 		cb.xOceanWaterHeight = params.waterHeight;
-		cb.xOceanSurfaceDisplacementTolerance = std::max(1.0f, params.surfaceDisplacementTolerance);
 		cb.xOceanWaveAmplitude = params.wave_amplitude;
 
 		return cb;
@@ -356,8 +586,10 @@ namespace wi
 
 		device->EventBegin("Ocean Simulation", cmd);
 
-		const uint2 dim = uint2(160 * params.surfaceDetail, 90 * params.surfaceDetail);
-		const OceanCB cb = GetOceanCBAtDim(params, dim);
+		// The simulation is camera independent, so the mesh fields this fills
+		// in are simply unused here.
+		const OceanCB cb =
+			GetOceanCB(params, XMFLOAT3(0, 0, 0), MESH_CELLS_PER_SIDE);
 
 		device->BindDynamicConstantBuffer(cb, CB_GETBINDSLOT(OceanCB), cmd);
 
@@ -450,169 +682,51 @@ namespace wi
 
 		device->EventBegin("Ocean Occlusion Test", cmd);
 
-		constexpr uint2 dim = uint2(80, 45);
-		constexpr uint index_count = dim.x * dim.y * 6;
-		constexpr uint64_t indexbuffer_required_size = index_count * sizeof(uint16_t);
-		static std::mutex locker;
-		locker.lock(); // in case two threads draw the ocean the same time, index buffer creation must be locked
-		if (indexBuffer_occlusionTest.GetDesc().size != indexbuffer_required_size)
-		{
-			wi::vector<uint16_t> index_data(index_count);
-			size_t counter = 0;
-			for (uint16_t x = 0; x < dim.x - 1; x++)
-			{
-				for (uint16_t y = 0; y < dim.y - 1; y++)
-				{
-					uint16_t lowerLeft = x + y * dim.x;
-					uint16_t lowerRight = (x + 1) + y * dim.x;
-					uint16_t topLeft = x + (y + 1) * dim.x;
-					uint16_t topRight = (x + 1) + (y + 1) * dim.x;
-
-					index_data[counter++] = topLeft;
-					index_data[counter++] = lowerLeft;
-					index_data[counter++] = lowerRight;
-
-					index_data[counter++] = topLeft;
-					index_data[counter++] = lowerRight;
-					index_data[counter++] = topRight;
-				}
-			}
-
-			GPUBufferDesc desc;
-			desc.bind_flags = BindFlag::INDEX_BUFFER;
-			desc.size = indexbuffer_required_size;
-			device->CreateBuffer(&desc, index_data.data(), &indexBuffer_occlusionTest);
-			device->SetName(&indexBuffer_occlusionTest, "Ocean::indexBuffer_occlusionTest");
-		}
-		locker.unlock();
-
 		device->BindPipelineState(&PSO_occlusionTest, cmd);
-
-		OceanCB cb = GetOceanCBAtDim(params, dim);
-		device->BindDynamicConstantBuffer(cb, CB_GETBINDSLOT(OceanCB), cmd);
 
 		device->BindResource(&displacementMap, 0, cmd);
 		device->BindResource(&perlinTex, 2, cmd);
 
-		device->BindIndexBuffer(&indexBuffer_occlusionTest, IndexBufferFormat::UINT16, 0, cmd);
-
-		device->DrawIndexed(index_count, 0, 0, cmd);
+		OceanCB cb = GetOceanCB(params, camera.Eye, MESH_CELLS_PER_SIDE_COARSE);
+		DrawClipmap(cb, true, 1, cmd);
 
 		device->EventEnd(cmd);
 	}
 
-	void Ocean::RenderForCubemap(CommandList cmd) const
+	void Ocean::RenderForCubemap(const XMFLOAT3& viewerPosition, CommandList cmd) const
 	{
 		GraphicsDevice* device = wi::graphics::GetDevice();
 
 		device->EventBegin("Ocean Rendering into Cubemap", cmd);
 
-		const uint2 dim = uint2(64, 64);
-		const uint index_count = dim.x * dim.y * 6;
-		const uint64_t indexbuffer_required_size = index_count * sizeof(uint16_t);
-		static std::mutex locker;
-		locker.lock(); // in case two threads draw the ocean the same time, index buffer creation must be locked
-		if (indexBuffer_cubemap.GetDesc().size != indexbuffer_required_size)
-		{
-			wi::vector<uint16_t> index_data(index_count);
-			size_t counter = 0;
-			for (uint16_t x = 0; x < dim.x - 1; x++)
-			{
-				for (uint16_t y = 0; y < dim.y - 1; y++)
-				{
-					uint16_t lowerLeft = x + y * dim.x;
-					uint16_t lowerRight = (x + 1) + y * dim.x;
-					uint16_t topLeft = x + (y + 1) * dim.x;
-					uint16_t topRight = (x + 1) + (y + 1) * dim.x;
-
-					index_data[counter++] = topLeft;
-					index_data[counter++] = lowerLeft;
-					index_data[counter++] = lowerRight;
-
-					index_data[counter++] = topLeft;
-					index_data[counter++] = lowerRight;
-					index_data[counter++] = topRight;
-				}
-			}
-
-			GPUBufferDesc desc;
-			desc.bind_flags = BindFlag::INDEX_BUFFER;
-			desc.size = indexbuffer_required_size;
-			device->CreateBuffer(&desc, index_data.data(), &indexBuffer_cubemap);
-			device->SetName(&indexBuffer_cubemap, "Ocean::indexBuffer_cubemap");
-		}
-		locker.unlock();
-
 		device->BindPipelineState(&PSO_envmap, cmd);
-
-		OceanCB cb = GetOceanCBAtDim(params, dim);
-		device->BindDynamicConstantBuffer(cb, CB_GETBINDSLOT(OceanCB), cmd);
 
 		device->BindResource(&displacementMap, 0, cmd);
 		device->BindResource(&gradientMap, 1, cmd);
 		device->BindResource(&perlinTex, 2, cmd);
 
-		device->BindIndexBuffer(&indexBuffer_cubemap, IndexBufferFormat::UINT16, 0, cmd);
-
-		device->DrawIndexedInstanced(index_count, 6, 0, 0, 0, cmd); // 6 instance for each cube side
+		OceanCB cb =
+			GetOceanCB(params, viewerPosition, MESH_CELLS_PER_SIDE_COARSE);
+		DrawClipmap(cb, true, 6, cmd); // 6 instances, one per cube side
 
 		device->EventEnd(cmd);
 	}
 
-	void Ocean::RenderForShadowmap(CommandList cmd) const
+	void Ocean::RenderForShadowmap(const XMFLOAT3& viewerPosition, CommandList cmd) const
 	{
 		GraphicsDevice* device = wi::graphics::GetDevice();
 
 		device->EventBegin("Ocean Rendering into shadow map", cmd);
 
-		const uint2 dim = uint2(64, 64);
-		const uint index_count = dim.x * dim.y * 6;
-		const uint64_t indexbuffer_required_size = index_count * sizeof(uint16_t);
-		static std::mutex locker;
-		locker.lock(); // in case two threads draw the ocean the same time, index buffer creation must be locked
-		if (indexBuffer_shadowmap.GetDesc().size != indexbuffer_required_size)
-		{
-			wi::vector<uint16_t> index_data(index_count);
-			size_t counter = 0;
-			for (uint16_t x = 0; x < dim.x - 1; x++)
-			{
-				for (uint16_t y = 0; y < dim.y - 1; y++)
-				{
-					uint16_t lowerLeft = x + y * dim.x;
-					uint16_t lowerRight = (x + 1) + y * dim.x;
-					uint16_t topLeft = x + (y + 1) * dim.x;
-					uint16_t topRight = (x + 1) + (y + 1) * dim.x;
-
-					index_data[counter++] = topLeft;
-					index_data[counter++] = lowerLeft;
-					index_data[counter++] = lowerRight;
-
-					index_data[counter++] = topLeft;
-					index_data[counter++] = lowerRight;
-					index_data[counter++] = topRight;
-				}
-			}
-
-			GPUBufferDesc desc;
-			desc.bind_flags = BindFlag::INDEX_BUFFER;
-			desc.size = indexbuffer_required_size;
-			device->CreateBuffer(&desc, index_data.data(), &indexBuffer_shadowmap);
-			device->SetName(&indexBuffer_shadowmap, "Ocean::indexBuffer_shadowmap");
-		}
-		locker.unlock();
-
 		device->BindPipelineState(&PSO_shadowmap, cmd);
-
-		OceanCB cb = GetOceanCBAtDim(params, dim);
-		device->BindDynamicConstantBuffer(cb, CB_GETBINDSLOT(OceanCB), cmd);
 
 		device->BindResource(&displacementMap, 0, cmd);
 		device->BindResource(&gradientMap, 1, cmd);
 		device->BindResource(&perlinTex, 2, cmd);
 
-		device->BindIndexBuffer(&indexBuffer_shadowmap, IndexBufferFormat::UINT16, 0, cmd);
-
-		device->DrawIndexedInstanced(index_count, 1, 0, 0, 0, cmd);
+		OceanCB cb =
+			GetOceanCB(params, viewerPosition, MESH_CELLS_PER_SIDE_COARSE);
+		DrawClipmap(cb, true, 1, cmd);
 
 		device->EventEnd(cmd);
 	}
@@ -623,7 +737,7 @@ namespace wi
 
 		device->EventBegin("Ocean Rendering", cmd);
 
-		bool wire = wi::renderer::IsWireRender();
+		const bool wire = wi::renderer::IsWireRender();
 
 		if (wire)
 		{
@@ -634,52 +748,12 @@ namespace wi
 			device->BindPipelineState(&PSO, cmd);
 		}
 
-		const uint2 dim = uint2(160 * params.surfaceDetail, 90 * params.surfaceDetail);
-		const uint index_count = dim.x * dim.y * 6;
-		const uint64_t indexbuffer_required_size = index_count * sizeof(uint32_t);
-		static std::mutex locker;
-		locker.lock(); // in case two threads draw the ocean the same time, index buffer creation must be locked
-		if (indexBuffer.GetDesc().size != indexbuffer_required_size)
-		{
-			wi::vector<uint32_t> index_data(index_count);
-			size_t counter = 0;
-			for (uint32_t x = 0; x < dim.x - 1; x++)
-			{
-				for (uint32_t y = 0; y < dim.y - 1; y++)
-				{
-					uint32_t lowerLeft = x + y * dim.x;
-					uint32_t lowerRight = (x + 1) + y * dim.x;
-					uint32_t topLeft = x + (y + 1) * dim.x;
-					uint32_t topRight = (x + 1) + (y + 1) * dim.x;
-
-					index_data[counter++] = topLeft;
-					index_data[counter++] = lowerLeft;
-					index_data[counter++] = lowerRight;
-
-					index_data[counter++] = topLeft;
-					index_data[counter++] = lowerRight;
-					index_data[counter++] = topRight;
-				}
-			}
-
-			GPUBufferDesc desc;
-			desc.bind_flags = BindFlag::INDEX_BUFFER;
-			desc.size = indexbuffer_required_size;
-			device->CreateBuffer(&desc, index_data.data(), &indexBuffer);
-			device->SetName(&indexBuffer, "Ocean::indexBuffer");
-		}
-		locker.unlock();
-
-		const OceanCB cb = GetOceanCBAtDim(params, dim);
-		device->BindDynamicConstantBuffer(cb, CB_GETBINDSLOT(OceanCB), cmd);
-
 		device->BindResource(&displacementMap, 0, cmd);
 		device->BindResource(&gradientMap, 1, cmd);
 		device->BindResource(&perlinTex, 2, cmd);
 
-		device->BindIndexBuffer(&indexBuffer, IndexBufferFormat::UINT32, 0, cmd);
-
-		device->DrawIndexed(index_count, 0, 0, cmd);
+		OceanCB cb = GetOceanCB(params, camera.Eye, MESH_CELLS_PER_SIDE);
+		DrawClipmap(cb, false, 1, cmd);
 
 		device->EventEnd(cmd);
 	}
@@ -749,6 +823,22 @@ namespace wi
 
 		LoadShaders();
 		wi::fftgenerator::LoadShaders();
+
+		// Connectivity only - the vertex shader generates the positions - so
+		// these depend on nothing per-ocean and are built once here rather
+		// than lazily behind a lock on every draw.
+		CreateClipmapIndexBuffer(
+			MESH_CELLS_PER_SIDE, false,
+			indexBuffer_patch, "Ocean::indexBuffer_patch");
+		CreateClipmapIndexBuffer(
+			MESH_CELLS_PER_SIDE, true,
+			indexBuffer_ring, "Ocean::indexBuffer_ring");
+		CreateClipmapIndexBuffer(
+			MESH_CELLS_PER_SIDE_COARSE, false,
+			indexBuffer_patch_coarse, "Ocean::indexBuffer_patch_coarse");
+		CreateClipmapIndexBuffer(
+			MESH_CELLS_PER_SIDE_COARSE, true,
+			indexBuffer_ring_coarse, "Ocean::indexBuffer_ring_coarse");
 
 		TextureDesc desc;
 		desc.bind_flags = BindFlag::SHADER_RESOURCE;
