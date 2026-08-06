@@ -320,8 +320,8 @@ float4 main(PSIn input) : SV_TARGET
 		// column the target already fogged.
 		const float crest_height =
 			max(0, surface.P.y - GetWeather().ocean.water_height);
-		const float refraction_height =
-			refraction_position.y - ocean_surface_height(refraction_position);
+		const float refraction_height = refraction_position.y
+			- ocean_drawn_surface_height(refraction_position);
 
 		[branch]
 		if (!camera_below_water && crest_height > 0 && refraction_height >= 0)

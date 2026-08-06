@@ -261,31 +261,6 @@ WaterFog MakeWaterFog(
 }
 
 /**
- * Whether a segment is far enough above the water that none of it can be in it.
- *
- * The cheap gate the fog opens with, so that a scene which merely *has* an
- * ocean does not pay a displacement map sample on every fragment above it. Two
- * scalar compares, and conservative rather than exact - it clears the tallest
- * wave the engine is willing to assume before it rejects.
- *
- * @param[in] fragmentPosition - World position of the fragment.
- *
- * @return true when the water cannot touch the segment, so there is nothing to
- *         compute.
- */
-bool IsClearOfWater(float3 fragmentPosition)
-{
-	[branch]
-	if (!GetCamera().IsWaterFog())
-	{
-		return true;
-	}
-
-	return min(GetCamera().position.y, fragmentPosition.y)
-		>= GetWeather().ocean.water_height + WATER_WAVE_HEIGHT_MARGIN;
-}
-
-/**
  * The water's fog between the eye and a fragment.
  *
  * The whole point of applying this where a fragment is drawn rather than over
@@ -318,9 +293,15 @@ bool IsClearOfWater(float3 fragmentPosition)
  *       which is a march, not a clip.
  *
  * **Rejected cheapest first**, because this is called from every draw shader in
- * the frame. `IsClearOfWater` costs a uniform flag test and two scalar
- * compares; only past it does anything sample the displacement map, and only
- * past the exact test after that does anything unproject a pixel.
+ * the frame. The camera flag is uniform across the draw and costs nothing in a
+ * scene with no ocean; past it each end is measured against the surface, and
+ * only past that exact test does anything unproject a pixel.
+ *
+ * There is deliberately no cheap height rejection before those measurements.
+ * One would need a bound on how tall a crest can be, and there is none to have
+ * - the amplitude is authored and the displacement comes off an FFT on the GPU.
+ * A guessed bound does not clamp the waves, it just stops asking about them, so
+ * a sea that exceeds it silently loses its fog above the guess.
  *
  * @param[in] screenUV - Screen space UV coordinates (0-1) of the fragment.
  * @param[in] fragmentPosition - World position of the fragment.
@@ -341,7 +322,7 @@ WaterFog GetWaterFog(
 	fog.inscatter = 0;
 
 	[branch]
-	if (IsClearOfWater(fragmentPosition))
+	if (!GetCamera().IsWaterFog())
 	{
 		return fog;
 	}
@@ -349,7 +330,7 @@ WaterFog GetWaterFog(
 	const float3 eye = GetCamera().position;
 
 	// The same quantity the caller supplied for the far end, for the near one.
-	const float eyeHeight = eye.y - ocean_surface_height(eye);
+	const float eyeHeight = eye.y - ocean_drawn_surface_height(eye);
 
 	// Nothing on this segment is under water, so there is nothing to fog. Exact
 	// now that both ends have been measured against the surface rather than the
@@ -433,8 +414,8 @@ WaterFog GetWaterFog(
  * The water's fog between the eye and a fragment somewhere in the scene.
  *
  * Measures the fragment against the wave surface over it, which is what every
- * ordinary draw wants. The cheap rejection is repeated here so that a fragment
- * well clear of the water never costs the displacement map sample that asking
+ * ordinary draw wants. The camera flag is tested here as well as inside, so a
+ * scene with no ocean never pays the displacement map sample that measuring
  * would take.
  *
  * @param[in] screenUV - Screen space UV coordinates (0-1) of the fragment.
@@ -449,7 +430,7 @@ WaterFog GetWaterFog(float2 screenUV, float3 fragmentPosition)
 	fog.inscatter = 0;
 
 	[branch]
-	if (IsClearOfWater(fragmentPosition))
+	if (!GetCamera().IsWaterFog())
 	{
 		return fog;
 	}
@@ -457,7 +438,7 @@ WaterFog GetWaterFog(float2 screenUV, float3 fragmentPosition)
 	return GetWaterFog(
 		screenUV,
 		fragmentPosition,
-		fragmentPosition.y - ocean_surface_height(fragmentPosition)
+		fragmentPosition.y - ocean_drawn_surface_height(fragmentPosition)
 	);
 }
 

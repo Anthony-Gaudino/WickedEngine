@@ -58,24 +58,6 @@ static const float WATER_VOLUMETRICS_FADE_DEPTH = 1.0;
 static const float WATER_REFRACTIVE_INDEX = 1.333;
 
 /**
- * Height a wave crest is assumed never to reach above the still plane, in
- * metres.
- *
- * The cheap rejection every water test opens with. Asking where the wave
- * surface actually is costs a displacement map sample, so a segment is first
- * measured against the still plane raised by this much; only what survives is
- * asked the exact question.
- *
- * **A sea whose crests exceed this is not broken, it is merely classified
- * against the flat plane again** - which is what every one of these tests did
- * before the surface was consulted at all. It degrades to the old behaviour
- * rather than to a wrong one. The engine has no bound on the wave amplitude to
- * offer here: it is authored, the displacement is produced by an FFT on the
- * GPU, and nothing reads its extent back.
- */
-static const float WATER_WAVE_HEIGHT_MARGIN = 10.0;
-
-/**
  * Height above the wave surface within which the eye may still be submerged.
  *
  * The eye's own height settles which side of the surface its CENTRE is on, but
@@ -351,7 +333,15 @@ struct WaterVolumetrics
 	 */
 	half phaseG;
 
-	/** World height of the still water plane. */
+	/**
+	 * World height of the water surface this medium was built for.
+	 *
+	 * The WAVE surface where the caller had a position to measure it over, and
+	 * the still plane where it did not - see the two builders below for which
+	 * is which and why. Everything that needs to know how far a point is under
+	 * the water reads this rather than the plane, so a crest counts as the
+	 * water it is.
+	 */
 	float waterHeight;
 
 	/** 0 at or above the surface, reaching 1 once fully submerged. */
@@ -588,20 +578,21 @@ struct WaterVolumetrics
 /**
  * Builds the water medium for a given degree of submersion.
  *
- * Shared by the two entry points below, which differ only in how they decide
- * that number.
+ * Shared by the entry points below, which differ only in how they decide that
+ * number and which surface they measure it against.
  *
  * @param[in] submersion - 0 for no medium at all, 1 for the full authored
  *                         water, in between to fade it in.
+ * @param[in] waterHeight - World height of the surface this medium sits under.
  *
  * @return The medium. Inactive when there is no ocean, whatever was asked for.
  */
-WaterVolumetrics MakeWaterVolumetrics(half submersion)
+WaterVolumetrics MakeWaterVolumetrics(half submersion, float waterHeight)
 {
 	const ShaderOcean ocean = GetWeather().ocean;
 
 	WaterVolumetrics water;
-	water.waterHeight = ocean.water_height;
+	water.waterHeight = waterHeight;
 	water.submersion = ocean.IsValid() ? submersion : (half)0;
 
 	const float3 sigmaS = ocean.scattering.rgb;
@@ -623,24 +614,65 @@ WaterVolumetrics MakeWaterVolumetrics(half submersion)
 }
 
 /**
+ * Builds the water medium for a given submersion, under the still plane.
+ *
+ * For callers that have already decided the medium is fully present and have
+ * no position to measure a surface over - the ocean surface compositing its own
+ * reflection, or a wave transmitting light through itself.
+ *
+ * @param[in] submersion - 0 for no medium at all, 1 for the full authored
+ *                         water, in between to fade it in.
+ *
+ * @return The medium. Inactive when there is no ocean, whatever was asked for.
+ */
+WaterVolumetrics MakeWaterVolumetrics(half submersion)
+{
+	return MakeWaterVolumetrics(submersion, GetWeather().ocean.water_height);
+}
+
+/**
  * Builds the water medium as it applies at a shaded point.
+ *
+ * **Measured against the wave surface over the point**, so a shaded point
+ * inside a crest is in the water. Against the still plane it was not: every
+ * surface around a camera sitting in a crest reads as above the water, the
+ * medium comes back inactive, and the whole scene is lit as though in air -
+ * however much water the fog says is in front of it.
  *
  * Fades in over the first metre of depth, because a point's own submersion is
  * a SPATIAL quantity: a wall running down into the water would otherwise take
  * the full attenuation of a distant submerged light on the first pixel below
  * the waterline, drawing a hard line across it.
  *
+ * @note **Always asks where the surface is** rather than rejecting cheaply
+ *       against the still plane first. A cheap rejection needs a bound on how
+ *       tall a crest can be, and there is none to have: the amplitude is
+ *       authored, the displacement comes off an FFT on the GPU, and nothing
+ *       reads its extent back. A guessed bound does not clamp the waves, it
+ *       just stops asking about them - so a sea that exceeds it goes back to
+ *       being lit as air above the guess, with a hard line across everything
+ *       standing in it and no clue as to why. One fetch is the price of not
+ *       having that failure mode.
+ *
+ * @note Uses the world's surface, NOT the drawn one, and so disagrees with the
+ *       fog beyond the distance the waves flatten out over. Deliberate: this
+ *       shades a point, and a shaded point may not move with the camera. The
+ *       disagreement is a metre or two of depth on something far enough away
+ *       that the fog dominates how it looks; the alternative was a waterline
+ *       that slides up a tree trunk as you walk towards it, and cached
+ *       world-space lighting that drifts with the view.
+ *
  * @param[in] position - World position of the shaded point.
  *
  * @return The medium. Inactive when there is no ocean or the point is at or
  *         above the surface, in which case nothing attenuates.
  */
-WaterVolumetrics GetWaterVolumetrics(float3 position)
+WaterVolumetrics GetWaterVolumetrics(float3 position, float waterHeight)
 {
-	const float waterHeight = GetWeather().ocean.water_height;
-
-	return MakeWaterVolumetrics((half)saturate(
-		(waterHeight - position.y) / WATER_VOLUMETRICS_FADE_DEPTH));
+	return MakeWaterVolumetrics(
+		(half)saturate(
+			(waterHeight - position.y) / WATER_VOLUMETRICS_FADE_DEPTH),
+		waterHeight);
 }
 
 /**
@@ -658,6 +690,15 @@ WaterVolumetrics GetWaterVolumetrics(float3 position)
  * Judged against the wave displaced surface, so a crest counts as water, and at
  * the same plane a metre ahead of the near plane, so all of them switch on the
  * same pixels at the same instant.
+ *
+ * **The surface height it carries stays the still plane, deliberately**, unlike
+ * the shaded-point medium above. This one is handed to a MARCH, whose samples
+ * are spread along the view ray and can be a long way off; the height is what
+ * `SubmergedLightPath` clips a light against at each of them. The crest the
+ * camera happens to be under says nothing about the surface over a sample a
+ * hundred metres away, so using it would replace an unbiased answer - the plane
+ * is the mean surface - with a biased one. Measuring per sample is the honest
+ * alternative and costs a displacement fetch per step per light.
  *
  * There is no fade with depth here, unlike a shaded point. Fading the medium
  * thins the water rather than removing it, and both halves of that are wrong:
@@ -695,10 +736,12 @@ WaterVolumetrics GetWaterVolumetricsAtEye(float2 screenUV)
  *
  * Example usage:
  * @code
- * light_color *= WaterLightTransmittance(surface.P, L, dist);
+ * light_color *= WaterLightTransmittance(
+ *     surface.P, surface.waterSurfaceHeight, L, dist);
  * @endcode
  *
  * @param[in] samplePos - The lit point, in world space.
+ * @param[in] waterHeight - World height of the water surface over that point.
  * @param[in] toLight - Normalized direction from the lit point to the light.
  * @param[in] distanceToLight - Distance to the light, or `FLT_MAX` for a
  *                              directional light.
@@ -708,11 +751,12 @@ WaterVolumetrics GetWaterVolumetricsAtEye(float2 screenUV)
  */
 half3 WaterLightTransmittance(
 	float3 samplePos,
+	float waterHeight,
 	float3 toLight,
 	float distanceToLight
 )
 {
-	const WaterVolumetrics water = GetWaterVolumetrics(samplePos);
+	const WaterVolumetrics water = GetWaterVolumetrics(samplePos, waterHeight);
 
 	[branch]
 	if (!water.IsActive())
@@ -749,17 +793,19 @@ half3 WaterLightTransmittance(
  *
  * Example usage:
  * @code
- * lighting.indirect.diffuse *= WaterAmbientTransmittance(surface.P);
+ * lighting.indirect.diffuse *=
+ *     WaterAmbientTransmittance(surface.P, surface.waterSurfaceHeight);
  * @endcode
  *
  * @param[in] samplePos - The lit point, in world space.
+ * @param[in] waterHeight - World height of the water surface over that point.
  *
  * @return Per-channel surviving fraction, in [0, 1]. 1 at or above the surface,
  *         so callers need no test of their own.
  */
-half3 WaterAmbientTransmittance(float3 samplePos)
+half3 WaterAmbientTransmittance(float3 samplePos, float waterHeight)
 {
-	const WaterVolumetrics water = GetWaterVolumetrics(samplePos);
+	const WaterVolumetrics water = GetWaterVolumetrics(samplePos, waterHeight);
 
 	[branch]
 	if (!water.IsActive())

@@ -17,8 +17,8 @@
  * that grid. Deliberately short.
  *
  * Lives here rather than beside the rest of the ocean surface constants because
- * `ocean_surface_height` has to fade over exactly the same band as the vertex
- * shader that draws the waves - see there for why.
+ * `ocean_drawn_surface_height` has to fade over exactly the same band as the
+ * vertex shader that draws the waves - see there for why.
  */
 static const float2 OCEAN_DISPLACEMENT_FADE = float2(16, 160);
 
@@ -43,18 +43,20 @@ inline float3 ocean_underwater_test_position(in float2 uv)
 }
 
 /**
- * Height of the ocean surface over a world space position.
+ * Height of the ocean surface over a world space position, as the WORLD has it.
  *
  * The displaced surface, not the still water plane, so a wave crest counts as
  * water and a trough does not.
  *
- * **Faded over the same band as the drawn waves**, which is why this takes a
- * position rather than the xz it samples with. The vertex shader flattens the
- * displacement towards the horizon (`OCEAN_DISPLACEMENT_FADE`), so past that
- * band the surface on screen *is* the still plane - and a test that kept full
- * amplitude out there would classify fragments against waves that were never
- * drawn. Measured to the point on the still plane above or below the position,
- * matching what the vertex shader measures to.
+ * **Depends on nothing but the position**, which is what makes it the right
+ * question for anything that shades: whether a tree trunk stands in water is a
+ * property of the world, and an answer that moved with the camera would slide
+ * the waterline up and down the trunk as you walked towards it. Cached
+ * world-space lighting - surfels, DDGI probes - would carry that drift into
+ * everything they later light.
+ *
+ * Use `ocean_drawn_surface_height` instead wherever the answer has to agree
+ * with the surface actually on screen.
  *
  * @param[in] position - World position to judge the surface height over.
  *
@@ -65,27 +67,59 @@ inline float ocean_surface_height(in float3 position)
 	const ShaderOcean ocean = GetWeather().ocean;
 	float height = ocean.water_height;
 
+	[branch]
+	if (ocean.texture_displacementmap >= 0)
+	{
+		const float2 ocean_uv = position.xz * ocean.patch_size_rcp;
+		Texture2D texture_displacementmap = bindless_textures[descriptor_index(ocean.texture_displacementmap)];
+
+		height += texture_displacementmap.SampleLevel(
+			sampler_linear_wrap, ocean_uv, 0).z;
+	}
+
+	return height;
+}
+
+/**
+ * Height of the ocean surface over a position, as it is DRAWN.
+ *
+ * The vertex shader flattens the displacement towards the horizon
+ * (`OCEAN_DISPLACEMENT_FADE`), so past that band the surface on screen *is* the
+ * still plane. A test that has to agree with what was rendered - which side of
+ * the water a fragment was drawn on, or how much water a view ray crossed -
+ * has to flatten with it, or it classifies against waves that were never there.
+ *
+ * **View dependent, and legitimately so**: every caller of this is answering a
+ * question about a particular view. Anything shading a point in the world wants
+ * `ocean_surface_height` instead, whose answer does not move with the camera.
+ *
+ * Measured to the point on the still plane above or below the position, which
+ * is what the vertex shader measures to.
+ *
+ * @param[in] position - World position to judge the surface height over.
+ *
+ * @return World height of the drawn surface there.
+ */
+inline float ocean_drawn_surface_height(in float3 position)
+{
+	const ShaderOcean ocean = GetWeather().ocean;
+
 	const float dist = distance(
 		GetCamera().position,
 		float3(position.x, ocean.water_height, position.z));
 	const float fade = smoothstep(
 		OCEAN_DISPLACEMENT_FADE.x, OCEAN_DISPLACEMENT_FADE.y, dist);
 
-	// The sample is skipped where it would be faded away entirely rather than
-	// taken and multiplied out, because most of what asks this is far off - the
-	// sky covers every pixel no geometry wrote - and the arithmetic is free
-	// beside the fetch.
+	// Returned before sampling where the displacement is faded away entirely,
+	// rather than sampled and multiplied out, because most of what asks this is
+	// far off - the sky covers every pixel no geometry wrote.
 	[branch]
-	if (ocean.texture_displacementmap >= 0 && fade < 1)
+	if (fade >= 1)
 	{
-		const float2 ocean_uv = position.xz * ocean.patch_size_rcp;
-		Texture2D texture_displacementmap = bindless_textures[descriptor_index(ocean.texture_displacementmap)];
-
-		height += (1 - fade) * texture_displacementmap.SampleLevel(
-			sampler_linear_wrap, ocean_uv, 0).z;
+		return ocean.water_height;
 	}
 
-	return height;
+	return lerp(ocean_surface_height(position), ocean.water_height, fade);
 }
 
 /**
@@ -126,7 +160,11 @@ inline void ClipToWaterSide(
 	[branch]
 	if (keepSubmerged != keepAbove)
 	{
-		const float side = position.y - ocean_surface_height(position);
+		// The DRAWN surface: this decides which of the two passes around the
+		// ocean keeps the fragment, and the pass it is competing with is the
+		// ocean's own depth. Judged against waves the grid flattened away, a
+		// fragment would be dropped by both sides or kept by both.
+		const float side = position.y - ocean_drawn_surface_height(position);
 
 		if (keepSubmerged ? (side > 0) : (side <= 0))
 		{
@@ -151,7 +189,7 @@ inline void ClipToWaterSide(
 inline float ocean_underwater_factor(in float2 uv)
 {
 	const float3 world_pos = ocean_underwater_test_position(uv);
-	const float surface = ocean_surface_height(world_pos);
+	const float surface = ocean_drawn_surface_height(world_pos);
 
 	return 1 - smoothstep(0.0, 0.025, saturate(world_pos.y - surface - 0.01));
 }

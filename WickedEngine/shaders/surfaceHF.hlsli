@@ -1,6 +1,7 @@
 #ifndef WI_SURFACE_HF
 #define WI_SURFACE_HF
 #include "globals.hlsli"
+#include "underwaterHF.hlsli"
 
 // MakeUniformResourceIndex can omit the NonUniformResourceIndex call if the primitiveID is guaranteed to be uniform, as an optimization
 #ifdef PRIMITIVEID_UNIFORM
@@ -93,6 +94,10 @@ struct Surface
 	half4 sss;				// subsurface scattering color * amount
 	half4 sss_inv;			// 1 / (1 + sss)
 	half water_thickness;	// water a wave presents to light behind it, metres
+	// World height of the ocean surface over P, fetched once in update().
+	// Asked once per light otherwise - by attenuation_water, for every light
+	// reaching this point - and it is the same answer every time.
+	float waterSurfaceHeight;
 	uint layerMask;			// the engine-side layer mask
 	half3 facenormal;		// surface normal without normal map
 	uint uid_validate;
@@ -152,6 +157,10 @@ struct Surface
 		sss = 0;
 		sss_inv = 1;
 		water_thickness = 0;
+		// The still plane until update() measures the waves, so a surface that
+		// never gets updated behaves as everything did before the waves were
+		// consulted at all, rather than as though the sea were at the origin.
+		waterSurfaceHeight = GetWeather().ocean.water_height;
 		layerMask = ~0;
 		facenormal = 0;
 		gi = 0;
@@ -280,6 +289,14 @@ struct Surface
 #endif // CARTOON
 
 		R = -reflect(V, N);
+
+#ifndef WATER
+		// One fetch per shaded point, for every light that will ask. Skipped on
+		// a WATER surface, which is the interface itself: attenuation_water and
+		// attenuation_water_ambient both return 1 there without reading this,
+		// so fetching it would cost every ocean pixel a lookup nothing wants.
+		waterSurfaceHeight = ocean_surface_height(P);
+#endif // WATER
 
 #ifdef SHEEN
 		// Sheen energy compensation: https://dassaultsystemes-technology.github.io/EnterprisePBRShadingModel/spec-2021x.md.html#figure_energy-compensation-sheen-e
