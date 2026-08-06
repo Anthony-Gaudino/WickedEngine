@@ -300,6 +300,46 @@ float4 main(PSIn input) : SV_TARGET
 		// refraction * (1 - F), so the surface still reflects its share away.
 		surface.refraction.a = 1;
 		color.a = 1;
+
+		// The one stretch of water that no fragment fogs for itself: the crest
+		// this one stands on.
+		//
+		// Every fragment carries the absorption of its own path, which covers
+		// the refraction target whenever the target is IN the water - and since
+		// the fog clips against the wave surface rather than the still plane,
+		// that already includes the crest standing over the target. What it
+		// cannot cover is a target that was never in the water at all. The sky
+		// and anything above the surface have no water path to fog, so a crest
+		// seen against them handed their radiance on undimmed and read as a
+		// glass blob instead of as a body of water.
+		//
+		// So the test is whether the target is under water at all, and the term
+		// is what is missing when it is not: the slab standing above the still
+		// plane here, crossed at the angle the ray was refracted to. Adding it
+		// only in that case is what keeps it from double counting against the
+		// column the target already fogged.
+		const float crest_height =
+			max(0, surface.P.y - GetWeather().ocean.water_height);
+		const float refraction_height =
+			refraction_position.y - ocean_surface_height(refraction_position);
+
+		[branch]
+		if (!camera_below_water && crest_height > 0 && refraction_height >= 0)
+		{
+			const WaterFog crestFog = MakeWaterFog(
+				MakeWaterVolumetrics(1),
+				SubmergedViewPath(crest_height, V),
+				V,
+				0,
+				ScreenCoord,
+				uv_to_clipspace(ScreenCoord),
+				false
+			);
+
+			surface.refraction.rgb = (half3)(
+				surface.refraction.rgb * crestFog.transmittance
+				+ crestFog.inscatter);
+		}
 	}
 	
 #if 1
