@@ -1837,7 +1837,8 @@ namespace wi::scene
 			OCEAN_WIND_DRIFT = 1 << 12,
 			OCEAN_SUBSURFACE_SCATTERING = 1 << 13,
 		};
-		uint32_t _flags = EMPTY;
+		// Subsurface scattering is on by default.
+		uint32_t _flags = OCEAN_SUBSURFACE_SCATTERING;
 
 		constexpr bool IsOceanEnabled() const { return _flags & OCEAN_ENABLED; }
 		constexpr bool IsRealisticSky() const { return _flags & REALISTIC_SKY; }
