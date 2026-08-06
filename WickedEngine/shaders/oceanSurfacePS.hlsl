@@ -141,8 +141,23 @@ float4 main(PSIn input) : SV_TARGET
 	surface.P = input.GetPos3D();
 	surface.N = normalize(float3(gradient.x, xOceanTexelLength * 2, gradient.y));
 	surface.V = V;
+	// Kept at 1 for the gate it holds open, not for the wrap diffuse it looks
+	// like it buys: ApplyLighting lerps the whole diffuse term away wherever
+	// the refraction shows through, which for the ocean is everywhere but the
+	// foam. What this actually does is keep NdotL_sss non-zero so that
+	// BACK-LIT lights survive the early-out in each light function and reach
+	// the scattering term at the bottom. Setting it to 0 silently kills the
+	// glow through every wave facing away from the sun.
 	surface.sss = 1;
 	surface.sss_inv = 1.0f / ((1 + surface.sss) * (1 + surface.sss));
+
+	// How much water this wave puts between the sun behind it and the eye. The
+	// Jacobian fold runs high where the surface compresses into a crest - a
+	// thin sheet - and to zero on the flat, so it inverts into a thickness.
+	surface.water_thickness = (half)lerp(
+		OCEAN_SUBSURFACE_THICKNESS.x,
+		OCEAN_SUBSURFACE_THICKNESS.y,
+		saturate(gradient.a));
 	surface.extinction = xOceanExtinctionColor.rgb;
 	surface.update();
 

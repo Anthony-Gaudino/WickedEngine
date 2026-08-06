@@ -183,10 +183,52 @@ inline void light_directional(in ShaderEntity light, in Surface surface, inout L
 	lighting.direct.specular = mad(light_color, BRDF_GetSpecular(surface, surface_to_light), lighting.direct.specular);
 
 #ifdef LIGHTING_SCATTER
-	const half scattering = ComputeScattering(saturate(dot(L, -surface.V)));
-	lighting.indirect.specular += scattering * light_color * (1 - surface.extinction) * (1 - sqr(1 - saturate(1 - surface.N.y)));
+#ifdef WATER
+	// Sunlight that entered the back of a wave, scattered inside it, and came
+	// out towards the eye - the glow through a crest lit from behind.
+	//
+	// The generic term below stands in for this with a hard coded phase, the
+	// legacy artist extinction tint, and wave steepness as a proxy for
+	// thickness. Every one of those has a real quantity to hand here: the
+	// medium's own phase asymmetry, its single scattering albedo, and the
+	// thickness the wave actually presents.
+	[branch]
+	if (GetWeather().ocean.IsSubsurfaceScattering())
+	{
+		const WaterVolumetrics medium = MakeWaterVolumetrics(1);
+
+		// What got through the wave, and the colour the water gives it. Thin
+		// crests transmit and glow; deep water does not, which is the whole
+		// shape of the effect.
+		const float3 transmitted = exp(-surface.water_thickness * medium.sigmaT);
+		const float3 scatterAlbedo = medium.sigmaS / medium.sigmaT;
+
+		// HgPhase peaks at cosTheta = -1 and both L and V point away from the
+		// surface, so this peaks with the sun directly behind the wave from the
+		// eye - exactly where transmission belongs. Reduced by how much of the
+		// light this bounded path actually scattered, as MakeWaterFog does.
+		const half phase = HgPhase(
+			medium.ReducedPhaseG(scatterAlbedo * (1 - transmitted)),
+			(half)dot(L, surface.V));
+
+		// Both interfaces: the share admitted at the back, and the share not
+		// reflected away on the way out. The generic term has neither.
+		const half entering =
+			(half)FresnelTransmittanceIntoWater(RefractIntoWater(L).y);
+
+		lighting.indirect.specular +=
+			light_color * (half3)(scatterAlbedo * transmitted) * phase
+			* entering * (1 - surface.F)
+			* (half)GetWeather().ocean.subsurface_strength;
+	}
+	else
+#endif // WATER
+	{
+		const half scattering = ComputeScattering(saturate(dot(L, -surface.V)));
+		lighting.indirect.specular += scattering * light_color * (1 - surface.extinction) * (1 - sqr(1 - saturate(1 - surface.N.y)));
+	}
 #endif // LIGHTING_SCATTER
-		
+
 }
 
 inline half attenuation_pointlight(in half dist2, in half range, in half range2_rcp)

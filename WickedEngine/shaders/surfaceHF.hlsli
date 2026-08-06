@@ -92,6 +92,7 @@ struct Surface
 	half3 B;				// bitangent
 	half4 sss;				// subsurface scattering color * amount
 	half4 sss_inv;			// 1 / (1 + sss)
+	half water_thickness;	// water a wave presents to light behind it, metres
 	uint layerMask;			// the engine-side layer mask
 	half3 facenormal;		// surface normal without normal map
 	uint uid_validate;
@@ -150,6 +151,7 @@ struct Surface
 		B = 0;
 		sss = 0;
 		sss_inv = 1;
+		water_thickness = 0;
 		layerMask = ~0;
 		facenormal = 0;
 		gi = 0;

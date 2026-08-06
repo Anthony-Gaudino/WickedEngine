@@ -7,6 +7,16 @@
 #define OCEAN_NEARPLANE_CUTOFF compute_inverse_lineardepth(max(GetCamera().z_near + 1, 1.0))
 
 /**
+ * Water a wave presents to light coming from behind it, in metres.
+ *
+ * `x` is flat water, `y` a fully folding crest. The medium extinguishes over
+ * roughly a metre, so the first number has to be deep enough that open water
+ * stays dark and only the crests light up - otherwise the whole sea glows and
+ * the effect reads as a wash rather than as thin water.
+ */
+static const float2 OCEAN_SUBSURFACE_THICKNESS = float2(4.0, 0.2);
+
+/**
  * Distance band over which the wave DISPLACEMENT flattens, in metres.
  *
  * Geometry, which makes this the expensive one to extend: the projected grid's
