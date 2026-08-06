@@ -29,7 +29,7 @@ float4 main(VertexToPixel input) : SV_TARGET
 		// would be active over a segment too short to scatter anything.
 		const float3 waterEye = ocean_underwater_test_position(ScreenCoord);
 		float3 rayDirection = -V;
-		float dist = intersectPlaneClampInfiniteDist(waterEye, rayDirection, float3(0, 1, 0), ocean_surface_height(waterEye.xz));
+		float dist = intersectPlaneClampInfiniteDist(waterEye, rayDirection, float3(0, 1, 0), ocean_surface_height(waterEye));
 		if (dist > 0 && dist < cameraDistance)
 		{
 			P = waterEye + rayDirection * dist;

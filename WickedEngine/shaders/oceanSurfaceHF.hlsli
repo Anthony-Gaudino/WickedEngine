@@ -1,6 +1,7 @@
 #ifndef WI_OCEAN_SURFACE_HF
 #define WI_OCEAN_SURFACE_HF
 #include "globals.hlsli"
+#include "underwaterHF.hlsli"
 #include "ShaderInterop_Ocean.h"
 
 //static const float OCEAN_NEARPLANE_CUTOFF = 0.1;
@@ -26,16 +27,6 @@
  * and exactly what a wave height would miss.
  */
 static const float2 OCEAN_SUBSURFACE_THICKNESS = float2(4.0, 0.2);
-
-/**
- * Distance band over which the wave DISPLACEMENT flattens, in metres.
- *
- * Geometry, which makes this the expensive one to extend: the projected grid's
- * triangles grow without bound towards the horizon, and displacing a vertex a
- * huge triangle hangs off is what throws the elongated spikes recorded against
- * that grid. Deliberately short.
- */
-static const float2 OCEAN_DISPLACEMENT_FADE = float2(16, 160);
 
 /**
  * Distance band over which the FFT gradient gives way to the perlin
