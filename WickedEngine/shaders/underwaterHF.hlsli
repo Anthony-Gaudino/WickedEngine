@@ -9,18 +9,37 @@
  */
 
 /**
- * Distance band over which the wave DISPLACEMENT flattens, in metres.
+ * Fraction of the wave displacement flattened away at a distance from the eye.
  *
- * Geometry, which makes this the expensive one to extend: the projected grid's
- * triangles grow without bound towards the horizon, and displacing a vertex a
- * huge triangle hangs off is what throws the elongated spikes recorded against
- * that grid. Deliberately short.
+ * The surface mesh cannot carry wave detail finer than its cells, so the
+ * displacement is faded out over the band where the cells grow past the wave
+ * patch. That band is derived from the mesh on the CPU
+ * (`Ocean::GetDisplacementFadeBand`) and published in `ShaderOcean`, so it
+ * follows the patch size and the mesh resolution instead of being a pair of
+ * authored metres that quietly stops being true when either changes.
  *
- * Lives here rather than beside the rest of the ocean surface constants because
- * `ocean_drawn_surface_height` has to fade over exactly the same band as the
- * vertex shader that draws the waves - see there for why.
+ * **Everything that fades with the drawn waves calls this**, the surface vertex
+ * shader included. Two places computing the same curve is exactly how the
+ * surface and the tests against it drift apart, and a test that classifies
+ * against waves that are not on screen paints wave-shaped noise across the
+ * whole distance.
+ *
+ * @param[in] distanceToEye - Distance from the eye to the point on the still
+ *                            water plane, in metres. Taken as a parameter
+ *                            rather than derived because the eye is not the
+ *                            same camera in every pass.
+ *
+ * @return 0 where the waves are drawn at full height, 1 where the surface is
+ *         the still plane, blended in between.
  */
-static const float2 OCEAN_DISPLACEMENT_FADE = float2(16, 160);
+inline float ocean_displacement_fade(in float distanceToEye)
+{
+	const float2 band = GetWeather().ocean.displacement_fade;
+
+	// A degenerate band would divide by zero inside smoothstep and take every
+	// caller with it; the ocean can be disabled, which zeroes this.
+	return smoothstep(band.x, max(band.y, band.x + 1), distanceToEye);
+}
 
 /**
  * Reconstructs the world position this pixel's submersion is judged at.
@@ -84,7 +103,7 @@ inline float ocean_surface_height(in float3 position)
  * Height of the ocean surface over a position, as it is DRAWN.
  *
  * The vertex shader flattens the displacement towards the horizon
- * (`OCEAN_DISPLACEMENT_FADE`), so past that band the surface on screen *is* the
+ * (`ocean_displacement_fade`), so past that band the surface on screen *is* the
  * still plane. A test that has to agree with what was rendered - which side of
  * the water a fragment was drawn on, or how much water a view ray crossed -
  * has to flatten with it, or it classifies against waves that were never there.
@@ -104,11 +123,9 @@ inline float ocean_drawn_surface_height(in float3 position)
 {
 	const ShaderOcean ocean = GetWeather().ocean;
 
-	const float dist = distance(
+	const float fade = ocean_displacement_fade(distance(
 		GetCamera().position,
-		float3(position.x, ocean.water_height, position.z));
-	const float fade = smoothstep(
-		OCEAN_DISPLACEMENT_FADE.x, OCEAN_DISPLACEMENT_FADE.y, dist);
+		float3(position.x, ocean.water_height, position.z)));
 
 	// Returned before sampling where the displacement is faded away entirely,
 	// rather than sampled and multiplied out, because most of what asks this is

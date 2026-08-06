@@ -105,15 +105,12 @@ PSIn main(
 	const float3 displacement = texture_displacementmap.SampleLevel(
 		sampler_linear_wrap, uv, 0).xzy;
 
-	// Waves are flattened with distance so that the surface does not have to
-	// carry detail the triangles out there cannot represent.
-	// `ocean_drawn_surface_height` mirrors this band exactly; the two must be
-	// changed together or every test built on it classifies against waves that
-	// are not on screen.
-	const float displacementFade = smoothstep(
-		OCEAN_DISPLACEMENT_FADE.x,
-		OCEAN_DISPLACEMENT_FADE.y,
-		distance(camera.position, surfacePos));
+	// Waves are flattened once the cells grow past the wave patch, since the
+	// mesh cannot carry detail finer than a cell. `ocean_drawn_surface_height`
+	// calls the same function, which is what keeps every test against the
+	// water agreeing with the surface that was actually drawn.
+	const float displacementFade = ocean_displacement_fade(
+		distance(camera.position, surfacePos) * xOceanMeshFadeScale);
 	surfacePos += lerp(displacement, 0, displacementFade);
 
 	Out.pos = mul(camera.view_projection, float4(surfacePos, 1));

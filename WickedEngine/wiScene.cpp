@@ -973,6 +973,10 @@ namespace wi::scene
 			shaderscene.weather.ocean.flags |= OCEAN_FLAG_SUBSURFACE_SCATTERING;
 		}
 		shaderscene.weather.ocean.subsurface_strength = weather.oceanSubsurfaceStrength;
+		// Derived from the surface mesh, not authored. Published once here so
+		// the vertex shader that flattens the waves and everything that has to
+		// agree with the surface as drawn read the same band.
+		shaderscene.weather.ocean.displacement_fade = ocean.GetDisplacementFadeBand();
 		{
 			// Inherent optical properties of the water: absorption and
 			// scattering are derived from the authored turbidity / dissolved

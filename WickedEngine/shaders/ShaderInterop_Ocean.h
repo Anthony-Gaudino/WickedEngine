@@ -64,6 +64,24 @@ CBUFFER(OceanCB, CBSLOT_OTHER_OCEAN)
 	float xOceanChoppyScale;
 	float xOceanGridLen;
 	float xOceanWaveAmplitude;
+
+	/**
+	 * Scales the distance this mesh reports when asking how far the waves have
+	 * flattened.
+	 *
+	 * The published fade band is derived for the main surface mesh. The coarse
+	 * mesh used for shadow maps, cubemaps and the occlusion test has the same
+	 * world extent from far fewer cells, so its cells reach any given size
+	 * much sooner and it has to start flattening correspondingly sooner - a
+	 * mesh with one cell per wave patch displaced at full amplitude is
+	 * sampling noise.
+	 *
+	 * **1 for the main mesh**, so the surface and everything testing against
+	 * it read the band identically and cannot drift.
+	 */
+	float xOceanMeshFadeScale;
+
+	float3 xOcean_padding;
 };
 
 #endif // WI_SHADERINTEROP_OCEAN_H

@@ -32,8 +32,14 @@ static const float2 OCEAN_SUBSURFACE_THICKNESS = float2(4.0, 0.2);
  * Distance band over which the FFT gradient gives way to the perlin
  * substitute, in metres.
  *
- * Shading only, and far longer than the displacement band above - the two used
- * to share one curve, which cost real wave shading to buy nothing.
+ * Shading only, and far longer than the geometric band
+ * `ocean_displacement_fade` covers - the two used to share one curve, which
+ * cost real wave shading to buy nothing.
+ *
+ * Note the two bands now overlap: the perlin starts taking over here while the
+ * displacement is still being drawn, so between them the geometry repeats the
+ * FFT patch while the shading has already begun hiding that repetition. That
+ * is the seam to look at first if tiling shows up at range.
  *
  * The perlin octaves are all LOWER frequency than the base patch, so their job
  * is to hide the patch tiling at range, not to supply detail. Handing over

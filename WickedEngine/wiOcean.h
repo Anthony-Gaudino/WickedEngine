@@ -79,6 +79,31 @@ namespace wi
 
 		const wi::primitive::AABB GetAABB(const XMFLOAT3& camera_pos) const;
 
+		/**
+		 * Distance band over which the wave displacement flattens, in metres.
+		 *
+		 * Derived from the clipmap's geometry rather than authored. A level's
+		 * cell size and its extent are tied together, so the cells at distance
+		 * \f$d\f$ are about \f$2d/N\f$ across for \f$N\f$ cells per side.
+		 * Inverting that gives the distance at which the cells grow to a
+		 * chosen size, and the size that matters is the one measured against
+		 * the wave patch: a patch spanned by plenty of cells is drawn
+		 * faithfully, a patch spanned by two is at the Nyquist limit and
+		 * cannot be drawn at all.
+		 *
+		 * The band therefore moves automatically with the patch size and the
+		 * mesh resolution, which a pair of authored metres does not - that was
+		 * the failure the previous 16-160 m band was heading for.
+		 *
+		 * @return `x` where flattening begins, `y` where it is complete.
+		 *
+		 * @note Both the surface vertex shader and everything that has to
+		 *       agree with the surface as drawn read this through
+		 *       `ShaderOcean::displacement_fade`; it is published once so the
+		 *       two cannot drift apart.
+		 */
+		[[nodiscard]] XMFLOAT2 GetDisplacementFadeBand() const noexcept;
+
 		static void Initialize();
 
 		bool IsValid() const { return displacementMap.IsValid(); }

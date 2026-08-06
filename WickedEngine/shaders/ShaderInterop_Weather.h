@@ -363,12 +363,21 @@ struct alignas(16) ShaderOcean
 	/** Feature switches, OCEAN_FLAG_*. */
 	uint flags;
 
-	// Artistic gain on the sunlight transmitted through a wave. The
-	// transmission itself comes from the water medium, so this scales a
-	// physical result rather than defining it.
-	float subsurface_strength;
-
-	float padding_ocean2;
+	/**
+	 * Distance band over which the wave displacement flattens, in metres.
+	 *
+	 * Derived on the CPU from the clipmap's cell size against the wave patch
+	 * size (`Ocean::GetDisplacementFadeBand`) rather than authored, so it
+	 * tracks the patch size and the mesh resolution instead of being a pair of
+	 * metres that silently goes wrong when either changes.
+	 *
+	 * Published here rather than in `OceanCB` because the surface geometry is
+	 * not the only thing that needs it: everything that has to agree with the
+	 * surface *as drawn* fades over the same band, and one field they all read
+	 * is the only way to guarantee they cannot drift apart. Use
+	 * `ocean_displacement_fade()` rather than reading this directly.
+	 */
+	float2 displacement_fade;
 
 	// Absorption coefficient of the water in 1/m per RGB channel (w unused).
 	// Light removed from the beam; strongly wavelength selective, so it is what
@@ -380,6 +389,13 @@ struct alignas(16) ShaderOcean
 	// destroyed; this is the turbidity term, and it is what makes murky water
 	// read as a milky haze that kills contrast rather than a dark filter.
 	float4 scattering;
+
+	// Artistic gain on the sunlight transmitted through a wave. The
+	// transmission itself comes from the water medium, so this scales a
+	// physical result rather than defining it.
+	float subsurface_strength;
+
+	float3 padding_ocean;
 
 	bool IsValid() { return texture_displacementmap >= 0; }
 	bool IsSubsurfaceScattering() { return flags & OCEAN_FLAG_SUBSURFACE_SCATTERING; }

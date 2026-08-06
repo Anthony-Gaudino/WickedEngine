@@ -76,6 +76,28 @@ namespace wi
 		constexpr uint32_t MESH_MORPH_CELLS = MESH_CELLS_PER_SIDE / 8;
 
 		/**
+		 * Cells per wave patch below which the displacement starts flattening.
+		 *
+		 * A patch spanned by this many cells still carries its shape; below it
+		 * the mesh is throwing wave detail away whether or not the
+		 * displacement is applied, so applying it only buys noise.
+		 */
+		constexpr float MESH_FADE_START_CELLS_PER_PATCH = 32.0F;
+
+		/**
+		 * Cells per wave patch at which the displacement is fully flattened.
+		 *
+		 * The hard limit here is **2** - one patch is the longest wavelength
+		 * the FFT produces, so below two cells per patch the mesh cannot
+		 * represent even the fundamental and the displacement degenerates into
+		 * aliasing. Stopping well short of it is deliberate rather than
+		 * timid: there is only one FFT patch, so pushing displacement further
+		 * out mostly buys a visible repetition of the same 50 m tile. The
+		 * cascaded FFT is what would earn the rest of the range.
+		 */
+		constexpr float MESH_FADE_END_CELLS_PER_PATCH = 8.0F;
+
+		/**
 		 * Grid the shared mesh centre is snapped to, in metres.
 		 *
 		 * Snapping is what stops the waves swimming: vertices land on a fixed
@@ -550,6 +572,12 @@ namespace wi
 			MESH_MORPH_CELLS * cellsPerSide / MESH_CELLS_PER_SIDE);
 		cb.xOceanMeshLevelBase = 0;
 		cb.xOceanMeshLevelCount = MESH_LEVEL_COUNT;
+		// Cells reach a given size this much sooner than on the main mesh, so
+		// the waves have to flatten this much sooner too. Exactly 1 for the
+		// main mesh, which is what keeps the surface and the tests against it
+		// reading one band.
+		cb.xOceanMeshFadeScale =
+			float(MESH_CELLS_PER_SIDE) / float(cellsPerSide);
 
 		uint32_t actual_dim = params.dmap_dim;
 		uint32_t input_width = actual_dim + 4;
@@ -873,6 +901,21 @@ namespace wi
 	const Texture* Ocean::getGradientMap() const
 	{
 		return &gradientMap;
+	}
+
+	XMFLOAT2 Ocean::GetDisplacementFadeBand() const noexcept
+	{
+		// A level's outer boundary sits at (cells / 2) * cellSize, so the
+		// cells at distance d are 2d / cells across. Inverting that turns a
+		// cell size into the distance at which the mesh reaches it.
+		const float distancePerCellSize = float(MESH_CELLS_PER_SIDE) * 0.5F;
+
+		return XMFLOAT2(
+			params.patch_length / MESH_FADE_START_CELLS_PER_PATCH
+				* distancePerCellSize,
+			params.patch_length / MESH_FADE_END_CELLS_PER_PATCH
+				* distancePerCellSize
+		);
 	}
 
 	const wi::primitive::AABB Ocean::GetAABB(const XMFLOAT3& camera_pos) const
