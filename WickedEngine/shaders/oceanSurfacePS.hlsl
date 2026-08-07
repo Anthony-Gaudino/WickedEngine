@@ -27,6 +27,17 @@ float4 main(PSIn input) : SV_TARGET
 	half4 color = xOceanWaterColor;
 	float2 ScreenCoord = input.pos.xy * camera.internal_resolution_rcp;
 
+	// The surface stops short of the eye so that the waterline the underwater
+	// effects draw analytically is the only thing visible there.
+	// `ocean_underwater_test_position` reconstructs on the same plane this
+	// discards against, and gives a 2.5 cm band - the thin water mark seen
+	// when breaking the surface. Rasterizing the mesh into that metre as well
+	// puts a hard geometric edge over it.
+	float4 pos2D = mul(camera.view_projection, float4(input.GetPos3D(), 1));
+	pos2D.xyz /= pos2D.w;
+	if (pos2D.z > ocean_waterline_handoff_depth())
+		discard;
+
 	float3 V = input.GetViewVector();
 	float dist = length(V);
 	V /= dist;

@@ -42,6 +42,34 @@ inline float ocean_displacement_fade(in float distanceToEye)
 }
 
 /**
+ * Distance in front of the near plane where the drawn ocean surface hands over
+ * to the analytic waterline, in metres.
+ *
+ * A metre rather than the near plane itself, so the plane the waterline is
+ * reconstructed on spans enough of the world to cross the screen instead of
+ * snapping over a few centimetres of camera travel.
+ */
+static const float OCEAN_WATERLINE_HANDOFF = 1.0;
+
+/**
+ * Device depth of the plane where the surface hands over to the waterline.
+ *
+ * **Two things read this and they must agree.** The ocean surface shader
+ * discards fragments nearer than this plane, and the underwater effects
+ * reconstruct their waterline exactly on it, so between them the nearest metre
+ * is drawn analytically and everything beyond it is drawn as geometry. Split
+ * the two apart and either the mesh puts a hard geometric edge over the
+ * waterline band, or a metre of water goes missing with nothing drawing it.
+ *
+ * @return Reverse-Z device depth of the handoff plane.
+ */
+inline float ocean_waterline_handoff_depth()
+{
+	return compute_inverse_lineardepth(
+		max(GetCamera().z_near + OCEAN_WATERLINE_HANDOFF, 1.0));
+}
+
+/**
  * Reconstructs the world position this pixel's submersion is judged at.
  *
  * Every underwater effect has to agree on where the waterline falls, or one
@@ -53,11 +81,8 @@ inline float ocean_displacement_fade(in float distanceToEye)
  */
 inline float3 ocean_underwater_test_position(in float2 uv)
 {
-	// A metre in front of the near plane rather than on it, so the plane this
-	// reconstructs spans enough of the world for the waterline to cross the
-	// screen instead of snapping over a few centimetres of camera travel.
-	const float cutoff = compute_inverse_lineardepth(max(GetCamera().z_near + 1, 1.0));
-	float4 unproj = mul(GetCamera().inverse_view_projection, float4(uv_to_clipspace(uv), cutoff, 1));
+	float4 unproj = mul(GetCamera().inverse_view_projection,
+		float4(uv_to_clipspace(uv), ocean_waterline_handoff_depth(), 1));
 	return unproj.xyz / unproj.w;
 }
 

@@ -4,9 +4,6 @@
 #include "underwaterHF.hlsli"
 #include "ShaderInterop_Ocean.h"
 
-//static const float OCEAN_NEARPLANE_CUTOFF = 0.1;
-#define OCEAN_NEARPLANE_CUTOFF compute_inverse_lineardepth(max(GetCamera().z_near + 1, 1.0))
-
 /**
  * Water a wave presents to light coming from behind it, in metres.
  *
