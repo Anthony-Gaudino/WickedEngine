@@ -350,7 +350,6 @@ static const uint OCEAN_FLAG_SUBSURFACE_SCATTERING = 1u << 0u;
 struct alignas(16) ShaderOcean
 {
 	float4 water_color;
-	float4 extinction_color;
 	float water_height;
 	float patch_size_rcp;
 	int texture_displacementmap;
