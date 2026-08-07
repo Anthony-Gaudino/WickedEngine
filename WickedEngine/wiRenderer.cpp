@@ -3915,10 +3915,22 @@ void UpdateVisibility(Visibility& vis)
 		bool occluded = false;
 		if (vis.flags & Visibility::ALLOW_OCCLUSION_CULLING)
 		{
-			vis.scene->ocean.occlusionQueries[vis.scene->queryheap_idx] = vis.scene->queryAllocator.fetch_add(1); // allocate new occlusion query from heap
-			if (vis.scene->ocean.IsOccluded())
+			// Same rule the objects above use.
+			// A proxy drawn from outside cannot speak for a volume the eye is
+			// standing in: near a crest edge, or inside a crest, the surface
+			// is all around the camera and the query came back empty, which
+			// deleted the whole ocean - this gates Render and the simulation.
+			if (vis.scene->ocean.GetAABB(vis.camera->Eye).intersects(vis.camera->Eye))
 			{
-				occluded = true;
+				vis.scene->ocean.occlusionHistory |= 1; // camera is in the water's bounds
+			}
+			else
+			{
+				vis.scene->ocean.occlusionQueries[vis.scene->queryheap_idx] = vis.scene->queryAllocator.fetch_add(1); // allocate new occlusion query from heap
+				if (vis.scene->ocean.IsOccluded())
+				{
+					occluded = true;
+				}
 			}
 		}
 
@@ -5925,8 +5937,19 @@ void OcclusionCulling_Render(const CameraComponent& camera, const Visibility& vi
 		{
 			device->EventBegin("Occlusion Culling Ocean", cmd);
 
+			// The ocean's BOUNDS, not its surface - exactly what the objects
+			// and lights above test. A box that contains the water cannot
+			// report less than the water does, so the query can only ever be
+			// too optimistic, which costs a draw. Testing the surface itself
+			// had the opposite failure: wherever the proxy fell short of the
+			// real mesh the whole ocean disappeared, and it fell short
+			// wherever the two meshes disagreed by so much as a depth test.
+			const AABB aabb = vis.scene->ocean.GetAABB(camera.Eye);
+			const XMMATRIX transform = aabb.getAsBoxMatrix() * VP;
+			device->PushConstants(&transform, sizeof(transform), cmd);
+
 			device->QueryBegin(&queryHeap, queryIndex, cmd);
-			vis.scene->ocean.RenderForOcclusionTest(camera, cmd);
+			device->Draw(14, 0, cmd);
 			device->QueryEnd(&queryHeap, queryIndex, cmd);
 
 			device->EventEnd(cmd);
