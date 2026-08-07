@@ -158,9 +158,17 @@ WaterFog MakeWaterFog(
 	WaterFog fog;
 	fog.transmittance = exp(-path * medium.sigmaT);
 
-	// Only the scattered share of what was extinguished comes back.
+	// Only the scattered share of what was extinguished comes back. This is
+	// the SINGLE scattering veiling term, and it stays that way: it feeds the
+	// phase reduction below, which asks how much this one path scattered.
 	const float3 scatterAlbedo = medium.sigmaS / medium.sigmaT;
 	const float3 inscatterAmount = scatterAlbedo * (1 - fog.transmittance);
+
+	// What that veil is coloured, which is a different question. Light leaves
+	// turbid water having bounced many times, and the colour it settles on is
+	// far more saturated than one bounce keeps - see EmergentAlbedo.
+	const float3 inscatterColorAmount =
+		medium.EmergentAlbedo() * (1 - fog.transmittance);
 
 	const half3 L = GetSunDirection();
 	const half3 refractedLightDir =
@@ -255,7 +263,7 @@ WaterFog MakeWaterFog(
 
 	const half3 fogColor =
 		ocean.water_color.rgb + ambientColor + inscatteringColor;
-	fog.inscatter = fogColor * inscatterAmount;
+	fog.inscatter = fogColor * inscatterColorAmount;
 
 	return fog;
 }

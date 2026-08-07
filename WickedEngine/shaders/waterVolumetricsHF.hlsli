@@ -400,6 +400,40 @@ struct WaterVolumetrics
 	}
 
 	/**
+	 * Colour the medium settles on once light has scattered many times in it.
+	 *
+	 * The single-scattering albedo \f$\omega = \sigma_s/\sigma_t\f$ says what
+	 * one bounce keeps. It is the wrong colour for water that scatters hard:
+	 * at \f$\omega \approx 0.89\f$ a photon bounces roughly
+	 * \f$1/(1-\omega) \approx 9\f$ times before it is absorbed, and each
+	 * bounce applies the spectral selectivity again. So the emergent colour is
+	 * far more saturated than \f$\omega\f$ - which one bounce cannot show.
+	 *
+	 * Uses the two-stream reflectance of a semi-infinite medium:
+	 * \f[
+	 * R_\infty = \frac{1 - \sqrt{1 - \omega}}{1 + \sqrt{1 - \omega}}
+	 * \f]
+	 *
+	 * @note Deliberately the ISOTROPIC form, without the similarity reduction
+	 *       for `phaseG0`. The anisotropy is already carried by the phase
+	 *       function this multiplies against; reducing here as well would
+	 *       count the same forward scattering twice and drive the murky end
+	 *       almost black.
+	 *
+	 * References:
+	 * https://en.wikipedia.org/wiki/Kubelka%E2%80%93Munk_theory
+	 *
+	 * @return Emergent albedo per channel, 0 for a purely absorbing medium.
+	 */
+	float3 EmergentAlbedo()
+	{
+		const float3 singleScatter = sigmaS / max(sigmaT, 1e-6);
+		const float3 root = sqrt(saturate(1 - singleScatter));
+
+		return (1 - root) / (1 + root);
+	}
+
+	/**
 	 * Beer-Lambert transmittance from the eye out to a sample.
 	 *
 	 * Analytic rather than a running product, because the volumetric light
