@@ -377,6 +377,31 @@ class wi::scene::environment::WaterMedium final
 	[[nodiscard]] DirectX::XMFLOAT3 Scattering() const noexcept;
 
 	/**
+	 * Computes the backscattering coefficient of the medium.
+	 *
+	 * The share of \f$\sigma_s\f$ that is turned *backwards* rather than
+	 * merely deflected onwards, which is the quantity that decides what colour
+	 * a body of water shows. Scattering alone does not: silt and
+	 * phytoplankton cells are large compared to the wavelength and scatter
+	 * overwhelmingly forward, so almost none of their considerable
+	 * \f$\sigma_s\f$ ever comes back, while pure water's Rayleigh-like
+	 * scattering is nearly symmetric and half of it does.
+	 * \f[
+	 * b_b(\lambda) = \tilde{b}_{water} \, b_{water}(\lambda)
+	 *              + \tilde{b}_{ph} \, \text{algae} \cdot b_{ph}(\lambda)
+	 *              + \tilde{b}_{min} \, \text{silt} \cdot b_{min}(\lambda)
+	 * \f]
+	 *
+	 * References:
+	 * Morel 1974, *Optical properties of pure water and pure sea water*;
+	 * Petzold 1972, *Volume scattering functions for selected ocean waters*;
+	 * Babin et al. 2003, *Light scattering properties of marine particles*.
+	 *
+	 * @return \f$b_b\f$ per RGB channel (in 1/m).
+	 */
+	[[nodiscard]] DirectX::XMFLOAT3 Backscattering() const noexcept;
+
+	/**
 	 * Computes the overall turbidity of the medium.
 	 *
 	 * The total particulate scattering at 550 nm. Useful as a readout: it says

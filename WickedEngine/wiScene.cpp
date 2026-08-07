@@ -982,6 +982,8 @@ namespace wi::scene
 			// scattering are derived from the authored turbidity / dissolved
 			// organics rather than stored, so they always stay consistent.
 			const wi::scene::environment::WaterMedium& waterMedium = weather.oceanParameters.waterMedium;
+			const XMFLOAT3 backscattering = waterMedium.Backscattering();
+			shaderscene.weather.ocean.backscattering = backscattering;
 			const XMFLOAT3 absorption = waterMedium.Absorption();
 			const XMFLOAT3 scattering = waterMedium.Scattering();
 			shaderscene.weather.ocean.absorption = XMFLOAT4(absorption.x, absorption.y, absorption.z, 0);

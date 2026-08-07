@@ -313,6 +313,14 @@ struct WaterVolumetrics
 	float3 sigmaT;
 
 	/**
+	 * Backscattering coefficient in 1/m per channel.
+	 *
+	 * What comes back rather than carrying on forwards. See `EmergentAlbedo`
+	 * for why `sigmaS` cannot answer that.
+	 */
+	float3 sigmaB;
+
+	/**
 	 * Henyey-Greenstein asymmetry as authored, before any reduction.
 	 *
 	 * Marine particulates scatter extremely far forward - g around 0.9, see
@@ -402,33 +410,48 @@ struct WaterVolumetrics
 	/**
 	 * Colour the medium settles on once light has scattered many times in it.
 	 *
-	 * The single-scattering albedo \f$\omega = \sigma_s/\sigma_t\f$ says what
-	 * one bounce keeps. It is the wrong colour for water that scatters hard:
-	 * at \f$\omega \approx 0.89\f$ a photon bounces roughly
-	 * \f$1/(1-\omega) \approx 9\f$ times before it is absorbed, and each
-	 * bounce applies the spectral selectivity again. So the emergent colour is
-	 * far more saturated than \f$\omega\f$ - which one bounce cannot show.
+	 * **Scattering is not what decides the colour of water - backscattering
+	 * is.** Only light turned back towards the viewer is ever seen, and how
+	 * much that is varies by two orders of magnitude between constituents.
+	 * Silt and phytoplankton cells are large compared to the wavelength and
+	 * scatter overwhelmingly forwards, returning under two percent and half a
+	 * percent of what they scatter; pure water's Rayleigh-like scattering is
+	 * nearly symmetric and returns half. So the enormous, nearly grey
+	 * \f$\sigma_s\f$ of a turbid water counts for far less than its size
+	 * suggests, and the water's own sharply selective absorption survives.
 	 *
-	 * Uses the two-stream reflectance of a semi-infinite medium:
+	 * The transport (similarity) approximation supplies the equivalent
+	 * isotropic scattering: an isotropic scatterer returns half of what it
+	 * scatters, so \f$2 b_b\f$ is the coefficient that sends back the same
+	 * amount. Feeding its albedo to the two-stream reflectance of a
+	 * semi-infinite medium,
 	 * \f[
-	 * R_\infty = \frac{1 - \sqrt{1 - \omega}}{1 + \sqrt{1 - \omega}}
+	 * R_\infty = \frac{1 - \sqrt{1 - \omega}}{1 + \sqrt{1 - \omega}},
+	 * \qquad \omega = \frac{2 b_b}{\sigma_a + 2 b_b}
 	 * \f]
+	 * lands where measurements do: about 5% for the murkiest water and under
+	 * 2% for the clearest, against the 50% that weighting by \f$\sigma_s\f$
+	 * produced - a value belonging to snow rather than to any sea.
 	 *
-	 * @note Deliberately the ISOTROPIC form, without the similarity reduction
-	 *       for `phaseG0`. The anisotropy is already carried by the phase
-	 *       function this multiplies against; reducing here as well would
-	 *       count the same forward scattering twice and drive the murky end
-	 *       almost black.
+	 * @note Multiplied against the phase function by the caller, which is
+	 *       correct only because this answers a different question: the phase
+	 *       function gives the direction one bounce takes, this gives the
+	 *       colour surviving all of them.
 	 *
 	 * References:
+	 * Gordon et al. 1988, *A semianalytic radiance model of ocean color*;
 	 * https://en.wikipedia.org/wiki/Kubelka%E2%80%93Munk_theory
 	 *
 	 * @return Emergent albedo per channel, 0 for a purely absorbing medium.
 	 */
 	float3 EmergentAlbedo()
 	{
-		const float3 singleScatter = sigmaS / max(sigmaT, 1e-6);
-		const float3 root = sqrt(saturate(1 - singleScatter));
+		const float3 reducedScattering = 2 * sigmaB;
+		const float3 absorption = max(sigmaT - sigmaS, 0);
+
+		const float3 albedo = reducedScattering
+			/ max(absorption + reducedScattering, 1e-6);
+		const float3 root = sqrt(saturate(1 - albedo));
 
 		return (1 - root) / (1 + root);
 	}
@@ -637,6 +660,7 @@ WaterVolumetrics MakeWaterVolumetrics(half submersion, float waterHeight)
 	// beams black on the way in rather than simply absent.
 	water.sigmaS = sigmaS * water.submersion;
 	water.sigmaT = sigmaT * water.submersion;
+	water.sigmaB = ocean.backscattering.rgb * water.submersion;
 
 	// Reduce the asymmetry from the UNFADED ratio, so crossing the surface
 	// changes how much the medium scatters but not the shape of its lobe.

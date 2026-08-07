@@ -395,7 +395,12 @@ struct alignas(16) ShaderOcean
 	// physical result rather than defining it.
 	float subsurface_strength;
 
-	float3 padding_ocean;
+	// Backscattering coefficient in 1/m per RGB channel. The share of the
+	// scattering above that comes back towards the viewer rather than carrying
+	// on forwards, which is what decides the colour a body of water shows -
+	// large particles scatter hard but almost entirely forwards, so sigmaS on
+	// its own overstates their contribution enormously.
+	float3 backscattering;
 
 	bool IsValid() { return texture_displacementmap >= 0; }
 	bool IsSubsurfaceScattering() { return flags & OCEAN_FLAG_SUBSURFACE_SCATTERING; }

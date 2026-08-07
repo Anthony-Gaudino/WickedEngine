@@ -119,6 +119,46 @@ namespace
 		XMFLOAT3(0.470F, 0.500F, 0.540F);
 
 	/**
+	 * Share of pure water's scattering that is turned backwards.
+	 *
+	 * Molecular scattering is Rayleigh-like, whose phase function is symmetric
+	 * about the scattering plane, so very nearly half of it heads back the way
+	 * it came. Two orders of magnitude more than the particles below, which is
+	 * why the water's own sharply selective colour survives at all once they
+	 * are present.
+	 *
+	 * Sources:
+	 * Morel 1974, *Optical properties of pure water and pure sea water*.
+	 */
+	constexpr float WATER_BACKSCATTER_FRACTION = 0.500F;
+
+	/**
+	 * Share of phytoplankton scattering that is turned backwards.
+	 *
+	 * Cells are large compared to the wavelength, so their scattering is
+	 * overwhelmingly forward and only a few parts per thousand return. This is
+	 * why productive water can be very hazy to see through and still show
+	 * comparatively little colour of its own.
+	 *
+	 * Sources:
+	 * Petzold 1972, *Volume scattering functions for selected ocean waters*.
+	 */
+	constexpr float ALGAE_BACKSCATTER_FRACTION = 0.005F;
+
+	/**
+	 * Share of mineral scattering that is turned backwards.
+	 *
+	 * Grains are larger still, but rougher and more angular than cells, so
+	 * they return somewhat more - a few percent rather than a few tenths of
+	 * one. Silt therefore does brighten water, just far less than its
+	 * enormous \f$\sigma_s\f$ taken at face value would suggest.
+	 *
+	 * Sources:
+	 * Babin et al. 2003, *Light scattering properties of marine particles*.
+	 */
+	constexpr float MINERAL_BACKSCATTER_FRACTION = 0.018F;
+
+	/**
 	 * Henyey-Greenstein asymmetry parameter of marine particulates.
 	 *
 	 * Petzold's measured average ocean phase function is extremely forward
@@ -365,6 +405,30 @@ XMFLOAT3 WaterMedium::Scattering() const noexcept
 		PURE_WATER_SCATTERING.z
 			+ (chlorophyll * ALGAE_SCATTERING_SPECTRUM.z)
 			+ (minerals * MINERAL_SCATTERING_SPECTRUM.z)
+	);
+}
+
+XMFLOAT3 WaterMedium::Backscattering() const noexcept
+{
+	const float chlorophyll = GetAlgae();
+	const float minerals = GetSilt();
+
+	return XMFLOAT3(
+		(PURE_WATER_SCATTERING.x * WATER_BACKSCATTER_FRACTION)
+			+ (chlorophyll * ALGAE_SCATTERING_SPECTRUM.x
+				* ALGAE_BACKSCATTER_FRACTION)
+			+ (minerals * MINERAL_SCATTERING_SPECTRUM.x
+				* MINERAL_BACKSCATTER_FRACTION),
+		(PURE_WATER_SCATTERING.y * WATER_BACKSCATTER_FRACTION)
+			+ (chlorophyll * ALGAE_SCATTERING_SPECTRUM.y
+				* ALGAE_BACKSCATTER_FRACTION)
+			+ (minerals * MINERAL_SCATTERING_SPECTRUM.y
+				* MINERAL_BACKSCATTER_FRACTION),
+		(PURE_WATER_SCATTERING.z * WATER_BACKSCATTER_FRACTION)
+			+ (chlorophyll * ALGAE_SCATTERING_SPECTRUM.z
+				* ALGAE_BACKSCATTER_FRACTION)
+			+ (minerals * MINERAL_SCATTERING_SPECTRUM.z
+				* MINERAL_BACKSCATTER_FRACTION)
 	);
 }
 
