@@ -7,7 +7,6 @@ static const uint OCEAN_COMPUTE_TILESIZE = 8;
 CBUFFER(OceanCB, CBSLOT_OTHER_OCEAN)
 {
 	float4 xOceanWaterColor;
-	float4 xOceanExtinctionColor;
 
 	/**
 	 * World XZ the whole clipmap hierarchy is centred on.

@@ -695,7 +695,6 @@ namespace wi
 		cb.xOceanGridLen = params.dmap_dim / params.patch_length;
 
 		cb.xOceanWaterColor = params.waterColor;
-		cb.xOceanExtinctionColor = XMFLOAT4(1 - params.extinctionColor.x, 1 - params.extinctionColor.y, 1 - params.extinctionColor.z, 1);
 		cb.xOceanTexelLength = params.patch_length / params.dmap_dim;
 		cb.xOceanPatchSizeRecip = 1.0f / params.patch_length;
 		cb.xOceanMapHalfTexel = 0.5f / params.dmap_dim;

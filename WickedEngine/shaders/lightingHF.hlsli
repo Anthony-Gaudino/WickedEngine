@@ -96,6 +96,64 @@ inline void ApplyLighting(in Surface surface, in Lighting lighting, inout half4 
 }
 
 //#define CASCADE_DITHERING
+#ifdef WATER
+/**
+ * Light that entered the back of a wave, scattered inside it, and came out
+ * towards the eye - the glow through a crest lit from behind.
+ *
+ * Every light gets this, not only the sun. A lamp behind a wave lights it
+ * through exactly as the sun does, and the wave has no way to tell them apart.
+ *
+ * The generic scattering term this replaces stands in for the effect with a
+ * hard coded phase, an authored tint, and wave steepness as a proxy for
+ * thickness. Every one of those has a real quantity to hand here: the medium's
+ * own phase asymmetry, its single scattering albedo, and the thickness the wave
+ * actually presents.
+ *
+ * @param[in] surface - The shaded point on the wave. Supplies the thickness it
+ *                      presents, the view direction and the Fresnel term.
+ * @param[in] L - Normalized direction from the surface towards the light.
+ * @param[in] lightColor - Radiance arriving from the light, after shadowing and
+ *                         attenuation.
+ *
+ * @return Radiance to add to the indirect specular term.
+ *
+ * @note For a light **above** the water. One below the surface delivers
+ *       nothing here, since the Fresnel term for crossing in goes to zero -
+ *       its light reaches the eye through refraction instead, which the water
+ *       fog already carries.
+ */
+inline half3 WaterSubsurfaceScattering(
+	in Surface surface, in half3 L, in half3 lightColor
+)
+{
+	const WaterVolumetrics medium = MakeWaterVolumetrics(1);
+
+	// What got through the wave, and the colour the water gives it. Thin
+	// crests transmit and glow; deep water does not, which is the whole
+	// shape of the effect.
+	const float3 transmitted = exp(-surface.water_thickness * medium.sigmaT);
+	const float3 scatterAlbedo = medium.sigmaS / medium.sigmaT;
+
+	// HgPhase peaks at cosTheta = -1 and both L and V point away from the
+	// surface, so this peaks with the light directly behind the wave from the
+	// eye - exactly where transmission belongs. Reduced by how much of the
+	// light this bounded path actually scattered, as MakeWaterFog does.
+	const half phase = HgPhase(
+		medium.ReducedPhaseG(scatterAlbedo * (1 - transmitted)),
+		(half)dot(L, surface.V));
+
+	// Both interfaces: the share admitted at the back, and the share not
+	// reflected away on the way out. The generic term has neither.
+	const half entering =
+		(half)FresnelTransmittanceIntoWater(RefractIntoWater(L).y);
+
+	return lightColor * (half3)(scatterAlbedo * transmitted) * phase
+		* entering * (1 - surface.F)
+		* (half)GetWeather().ocean.subsurface_strength;
+}
+#endif // WATER
+
 inline void light_directional(in ShaderEntity light, in Surface surface, inout Lighting lighting, in half shadow_mask = 1)
 {
 	if (shadow_mask <= 0.001)
@@ -188,49 +246,18 @@ inline void light_directional(in ShaderEntity light, in Surface surface, inout L
 
 #ifdef LIGHTING_SCATTER
 #ifdef WATER
-	// Sunlight that entered the back of a wave, scattered inside it, and came
-	// out towards the eye - the glow through a crest lit from behind.
-	//
-	// The generic term below stands in for this with a hard coded phase, the
-	// legacy artist extinction tint, and wave steepness as a proxy for
-	// thickness. Every one of those has a real quantity to hand here: the
-	// medium's own phase asymmetry, its single scattering albedo, and the
-	// thickness the wave actually presents.
 	[branch]
 	if (GetWeather().ocean.IsSubsurfaceScattering())
 	{
-		const WaterVolumetrics medium = MakeWaterVolumetrics(1);
-
-		// What got through the wave, and the colour the water gives it. Thin
-		// crests transmit and glow; deep water does not, which is the whole
-		// shape of the effect.
-		const float3 transmitted = exp(-surface.water_thickness * medium.sigmaT);
-		const float3 scatterAlbedo = medium.sigmaS / medium.sigmaT;
-
-		// HgPhase peaks at cosTheta = -1 and both L and V point away from the
-		// surface, so this peaks with the sun directly behind the wave from the
-		// eye - exactly where transmission belongs. Reduced by how much of the
-		// light this bounded path actually scattered, as MakeWaterFog does.
-		const half phase = HgPhase(
-			medium.ReducedPhaseG(scatterAlbedo * (1 - transmitted)),
-			(half)dot(L, surface.V));
-
-		// Both interfaces: the share admitted at the back, and the share not
-		// reflected away on the way out. The generic term has neither.
-		const half entering =
-			(half)FresnelTransmittanceIntoWater(RefractIntoWater(L).y);
-
 		lighting.indirect.specular +=
-			light_color * (half3)(scatterAlbedo * transmitted) * phase
-			* entering * (1 - surface.F)
-			* (half)GetWeather().ocean.subsurface_strength;
+			WaterSubsurfaceScattering(surface, L, light_color);
 	}
-	else
-#endif // WATER
+#else
 	{
 		const half scattering = ComputeScattering(saturate(dot(L, -surface.V)));
 		lighting.indirect.specular += scattering * light_color * (1 - surface.extinction) * (1 - sqr(1 - saturate(1 - surface.N.y)));
 	}
+#endif // WATER
 #endif // LIGHTING_SCATTER
 
 }
@@ -354,8 +381,17 @@ inline void light_point(in ShaderEntity light, in Surface surface, inout Lightin
 	lighting.direct.specular = mad(light_color, BRDF_GetSpecular(surface, surface_to_light), lighting.direct.specular);
 				
 #ifdef LIGHTING_SCATTER
+#ifdef WATER
+	[branch]
+	if (GetWeather().ocean.IsSubsurfaceScattering())
+	{
+		lighting.indirect.specular +=
+			WaterSubsurfaceScattering(surface, L, light_color);
+	}
+#else
 	const half scattering = ComputeScattering(saturate(dot(L, -surface.V)));
 	lighting.indirect.specular += scattering * light_color * (1 - surface.extinction) * (1 - sqr(1 - saturate(1 - surface.N.y)));
+#endif // WATER
 #endif // LIGHTING_SCATTER
 }
 
@@ -457,8 +493,17 @@ inline void light_spot(in ShaderEntity light, in Surface surface, inout Lighting
 	lighting.direct.specular = mad(light_color, BRDF_GetSpecular(surface, surface_to_light), lighting.direct.specular);
 					
 #ifdef LIGHTING_SCATTER
+#ifdef WATER
+	[branch]
+	if (GetWeather().ocean.IsSubsurfaceScattering())
+	{
+		lighting.indirect.specular +=
+			WaterSubsurfaceScattering(surface, L, light_color);
+	}
+#else
 	const half scattering = ComputeScattering(saturate(dot(L, -surface.V)));
 	lighting.indirect.specular += scattering * light_color * (1 - surface.extinction) * (1 - sqr(1 - saturate(1 - surface.N.y)));
+#endif // WATER
 #endif // LIGHTING_SCATTER
 }
 
@@ -604,8 +649,17 @@ inline void light_rect(in ShaderEntity light, in Surface surface, inout Lighting
 	lighting.direct.specular = mad(light_color_specular, BRDF_GetSpecular(surface, surface_to_light), lighting.direct.specular);
 				
 #ifdef LIGHTING_SCATTER
+#ifdef WATER
+	[branch]
+	if (GetWeather().ocean.IsSubsurfaceScattering())
+	{
+		lighting.indirect.specular +=
+			WaterSubsurfaceScattering(surface, L, light_color);
+	}
+#else
 	const half scattering = ComputeScattering(saturate(dot(L, -surface.V)));
 	lighting.indirect.specular += scattering * light_color * (1 - surface.extinction) * (1 - sqr(1 - saturate(1 - surface.N.y)));
+#endif // WATER
 #endif // LIGHTING_SCATTER
 
 #endif // DISABLE_AREA_LIGHTS

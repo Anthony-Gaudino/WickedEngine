@@ -35,6 +35,13 @@ namespace wi
 
 
 			XMFLOAT4 waterColor = XMFLOAT4(0.0f, 2.0f / 255.0f, 6.0f / 255.0f, 0.6f);
+
+			// Deprecated: nothing reads this. It tinted the wave transmission
+			// glow before that was derived from waterMedium below, which now
+			// supplies the colour, the phase and both Fresnel interfaces.
+			// Kept only so the serializer keeps its slot - the archive format
+			// is positional, so dropping the field would shift every ocean
+			// parameter written after it and misread every existing scene.
 			XMFLOAT4 extinctionColor = XMFLOAT4(0, 0.9f, 1, 1);
 
 			// Inherent optical properties (absorption and scattering) of the

@@ -164,7 +164,6 @@ float4 main(PSIn input) : SV_TARGET
 		OCEAN_SUBSURFACE_THICKNESS.x,
 		OCEAN_SUBSURFACE_THICKNESS.y,
 		saturate(gradient.a));
-	surface.extinction = xOceanExtinctionColor.rgb;
 	surface.update();
 
 	Lighting lighting;
