@@ -235,10 +235,46 @@ WaterFog MakeWaterFog(
 	// Isotropic, so no phase function. A uniform field integrates the phase
 	// over the whole sphere, and any phase function integrates to one - the
 	// directionality the sun gets from HgPhase has nothing to weight here.
-	half3 ambientColor = (GetFrame().options & OPTION_BIT_REALISTIC_SKY)
-		? texture_skyluminancelut.SampleLevel(
-			sampler_point_clamp, float2(0.5, 0.5), 0).rgb
-		: (GetHorizonColor() + GetZenithColor()) * 0.5;
+	// What reaches the water is the COSINE weighted mean of sky radiance over
+	// the hemisphere above it: a patch of sky overhead delivers its full
+	// radiance downwards while one at the horizon delivers none, so the zenith
+	// counts for far more than an even average of the two would give it.
+	//
+	// The global probe's most convolved mip is that integral already, so
+	// sampling it straight up asks the question directly - and asks it of the
+	// same source the submerged surfaces are lit from, which is what keeps the
+	// haze and the things seen through it agreeing about the daylight.
+	half3 ambientColor;
+
+	[branch]
+	if (GetScene().globalprobe >= 0)
+	{
+		TextureCube<half4> globalProbe =
+			bindless_cubemaps_half4[descriptor_index(GetScene().globalprobe)];
+		uint2 probeDim;
+		uint probeMips;
+		globalProbe.GetDimensions(0, probeDim.x, probeDim.y, probeMips);
+
+		ambientColor = globalProbe.SampleLevel(
+			sampler_linear_clamp, float3(0, 1, 0), probeMips).rgb;
+	}
+	else
+	{
+		// Without a probe, the best available. The sky luminance LUT is an
+		// average over the whole sphere rather than the hemisphere overhead,
+		// so it under-reads what comes down; the authored sky can at least be
+		// weighted properly, taking it as linear in \f$\cos\theta\f$ between
+		// its ends:
+		// \f[
+		// \frac{\int_0^1 L(u)\,u\,du}{\int_0^1 u\,du}
+		//   = \tfrac{1}{3} L_{horizon} + \tfrac{2}{3} L_{zenith}
+		// \f]
+		// which returns the sky's own radiance when it is uniform, as it must.
+		ambientColor = (GetFrame().options & OPTION_BIT_REALISTIC_SKY)
+			? texture_skyluminancelut.SampleLevel(
+				sampler_point_clamp, float2(0.5, 0.5), 0).rgb
+			: (GetHorizonColor() + GetZenithColor() * 2) / 3;
+	}
 
 	// The same two losses the sun takes, in the forms a hemispherical source
 	// takes them: the mean Fresnel transmittance over the sky rather than the
