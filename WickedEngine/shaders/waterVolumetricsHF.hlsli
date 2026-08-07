@@ -146,6 +146,34 @@ static const float WATER_FRESNEL_NORMAL_REFLECTANCE = 0.020373;
 static const float WATER_FRESNEL_DIFFUSE_TRANSMITTANCE = 0.9336;
 
 /**
+ * Raman scattering coefficient of pure water, by the channel it EMITS into.
+ *
+ * Water scatters a small share of what passes through it **inelastically**: the
+ * photon gives up a fixed quantum of energy to an O-H stretch vibration of the
+ * molecule and carries on at a longer wavelength. The shift is fixed in
+ * wavenumber rather than in wavelength - about \f$3400\,\mathrm{cm}^{-1}\f$ -
+ * which across these three reference bands works out to very nearly one band
+ * each time: 460 nm re-emerges at 545 nm and 540 nm at 661 nm. So red is lit by
+ * green, green by blue, and blue by an ultraviolet that never reaches the water
+ * in any quantity worth counting - which is why the blue component here is
+ * zero, and why nothing converts twice.
+ *
+ * Taken from the measured \f$b_R(488) = 2.7\times10^{-4}\,\mathrm{m}^{-1}\f$
+ * and carried to each excitation band by the \f$\lambda^{-5.3}\f$ law.
+ *
+ * **A property of the water molecule**, so unlike every other coefficient the
+ * medium carries it does not move with what is dissolved or suspended in the
+ * water - particles do not Raman scatter appreciably. It is a constant here
+ * rather than something the scene publishes.
+ *
+ * References:
+ * Bartlett et al. 1998, *Raman scattering by pure water and seawater*;
+ * Sathyendranath & Platt 1998, *Ocean-color model incorporating transspectral
+ * processes*.
+ */
+static const float3 WATER_RAMAN_SCATTERING = float3(1.6e-4, 3.7e-4, 0.0);
+
+/**
  * Fraction of the light arriving from above that crosses into the water.
  *
  * Some of what reaches the surface reflects off it instead of refracting down,
@@ -321,6 +349,17 @@ struct WaterVolumetrics
 	float3 sigmaB;
 
 	/**
+	 * Share of the light one band up that comes back out at this one.
+	 *
+	 * The Raman counterpart to `EmergentAlbedo`, and dimensionless like it:
+	 * where that returns a share of the light at its own wavelength, this
+	 * returns a share of the light at the shorter one that excited it. Carried
+	 * as a member rather than derived on demand because it has to be built
+	 * from the UNFADED coefficients - see `MakeWaterVolumetrics`.
+	 */
+	float3 ramanAlbedo;
+
+	/**
 	 * Henyey-Greenstein asymmetry as authored, before any reduction.
 	 *
 	 * Marine particulates scatter extremely far forward - g around 0.9, see
@@ -453,6 +492,55 @@ struct WaterVolumetrics
 		const float3 root = sqrt(saturate(1 - albedo));
 
 		return (1 - root) / (1 + root);
+	}
+
+	/**
+	 * Light the water gives back at a longer wavelength than it took in.
+	 *
+	 * Every other term here is elastic - a photon changes direction and keeps
+	 * its colour. A small share instead loses a fixed quantum of energy to the
+	 * water molecule and comes back **redder than it arrived**, which makes the
+	 * water a source of light at wavelengths nothing in it reflected.
+	 *
+	 * That is what stops the clearest water being as purely blue as its
+	 * absorption says it should be. A few metres down blue is very nearly all
+	 * that is left, and a hundredth of a percent of a large number beats the
+	 * elastic return of a small one: green comes out around a quarter brighter
+	 * than backscatter alone would leave it, and past ten metres or so what red
+	 * there is is mostly this rather than red that made it down. Turbid water
+	 * drowns it - the elastic return is two orders of magnitude larger there and
+	 * the blue driving this is gone - so it costs nothing to leave switched on.
+	 *
+	 * \f[
+	 * R_{Raman}(\lambda_{em}) = \frac{b_R(\lambda_{ex})}
+	 *   {2\,\left(K(\lambda_{ex}) + K(\lambda_{em})\right)}
+	 * \f]
+	 * from integrating an isotropic volume source down a semi-infinite column:
+	 * half of what converts at each depth heads back up, having been attenuated
+	 * on the way down at the wavelength that excited it and on the way back at
+	 * the one it now carries.
+	 *
+	 * @note Carries no directionality, for the same reason `EmergentAlbedo`
+	 *       does not: the emission is isotropic and remembers nothing of where
+	 *       the exciting photon came from. Do not weight it with a phase
+	 *       function.
+	 *
+	 * References:
+	 * Sathyendranath & Platt 1998, *Ocean-color model incorporating
+	 * transspectral processes*.
+	 *
+	 * @param[in] downwelling - Daylight reaching this depth, per channel, in
+	 *                          whatever units the result is wanted in.
+	 *
+	 * @return Per-channel radiance the water re-emits, to be weighted by how
+	 *         much of the segment it fills exactly as `EmergentAlbedo` is.
+	 */
+	float3 RamanEmission(float3 downwelling)
+	{
+		// Each channel is lit by the one above it in energy: red by green,
+		// green by blue, and blue by an ultraviolet there is no channel for -
+		// which the zero coefficient in the albedo takes care of.
+		return ramanAlbedo * float3(downwelling.g, downwelling.b, 0);
 	}
 
 	/**
@@ -652,6 +740,7 @@ WaterVolumetrics MakeWaterVolumetrics(half submersion, float waterHeight)
 	water.submersion = ocean.IsValid() ? submersion : (half)0;
 
 	const float3 sigmaS = ocean.scattering.rgb;
+	const float3 sigmaB = ocean.backscattering.rgb;
 	const float3 sigmaT = max(ocean.absorption.rgb + sigmaS, 0.00001);
 
 	// Fade both coefficients together, so the medium degenerates to "not there"
@@ -659,13 +748,26 @@ WaterVolumetrics MakeWaterVolumetrics(half submersion, float waterHeight)
 	// beams black on the way in rather than simply absent.
 	water.sigmaS = sigmaS * water.submersion;
 	water.sigmaT = sigmaT * water.submersion;
-	water.sigmaB = ocean.backscattering.rgb * water.submersion;
+	water.sigmaB = sigmaB * water.submersion;
 
 	// Reduce the asymmetry from the UNFADED ratio, so crossing the surface
 	// changes how much the medium scatters but not the shape of its lobe.
 	const float3 albedo = sigmaS / sigmaT;
 	water.phaseG0 = (half)ocean.scattering.a;
 	water.phaseG = water.phaseG0 * (1 - (half)saturate(albedo.g));
+
+	// Unfaded for a stronger reason than the asymmetry: this RISES as the
+	// medium thins, since a longer mean free path converts more of what crosses
+	// it, while the caller's weighting falls away. Faded, the two would cancel
+	// and the water would go on emitting as it left the frame.
+	//
+	// The same reduced extinction EmergentAlbedo works from, so both describe
+	// one medium. Each channel is paired with the extinction of the band above
+	// it, which is where its light was taken from; blue has no band above it
+	// and a zero coefficient, so what it pairs with never shows.
+	const float3 reducedExtinction = max(sigmaT - sigmaS, 0) + 2 * sigmaB;
+	water.ramanAlbedo = 0.5 * WATER_RAMAN_SCATTERING
+		/ max(reducedExtinction + reducedExtinction.gbb, 0.00001);
 
 	return water;
 }
