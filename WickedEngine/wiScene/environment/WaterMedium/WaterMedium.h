@@ -402,6 +402,46 @@ class wi::scene::environment::WaterMedium final
 	[[nodiscard]] DirectX::XMFLOAT3 Backscattering() const noexcept;
 
 	/**
+	 * Computes the fluorescence emitted per unit of light absorbed.
+	 *
+	 * Phytoplankton do not merely absorb the light they catch - a small share
+	 * of it is re-emitted a few nanoseconds later as a narrow line at
+	 * **685 nm**, deep in the red. Unlike everything else in this class this
+	 * is a *source* rather than a loss: it puts light into the water at a
+	 * wavelength that may have been extinguished long before, which is why
+	 * satellites can read chlorophyll from it directly.
+	 *
+	 * Returned per **excitation** band rather than per emission band, since
+	 * every band chlorophyll absorbs feeds the same single line:
+	 * \f[
+	 * F(\lambda_{ex}) = \eta \, \frac{\lambda_{ex}}{685}
+	 *     \; \text{algae} \cdot a_{ph}(\lambda_{ex})
+	 * \f]
+	 * The wavelength ratio converts the quantum yield (photons out per photon
+	 * in) into an energy yield, since the emitted photons are longer and so
+	 * individually carry less.
+	 *
+	 * Scales with chlorophyll alone - minerals and CDOM do not fluoresce - so
+	 * it is the one optical property here that says something about whether
+	 * the water is *alive* rather than merely dirty.
+	 *
+	 * References:
+	 * Gower et al. 1999, *Detection of intense plankton blooms using the 709 nm
+	 * band of the MERIS imaging spectrometer*;
+	 * Babin et al. 1996, *Remote sensing of sea surface sun-induced chlorophyll
+	 * fluorescence*.
+	 *
+	 * @return Fluorescence source coefficient per excitation channel (in 1/m),
+	 *         all of it emitting at 685 nm. Zero in water with no
+	 *         phytoplankton in it.
+	 *
+	 * @note Radiometric only. How much of a 685 nm line a renderer's red
+	 *       channel should actually show is a question about its primaries,
+	 *       not about the water, and is deliberately left to the caller.
+	 */
+	[[nodiscard]] DirectX::XMFLOAT3 Fluorescence() const noexcept;
+
+	/**
 	 * Computes the overall turbidity of the medium.
 	 *
 	 * The total particulate scattering at 550 nm. Useful as a readout: it says

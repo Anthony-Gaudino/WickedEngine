@@ -159,6 +159,37 @@ namespace
 	constexpr float MINERAL_BACKSCATTER_FRACTION = 0.018F;
 
 	/**
+	 * Share of the photons phytoplankton absorb that are re-emitted at 685 nm.
+	 *
+	 * A quantum yield, so photons out per photon in regardless of how much
+	 * energy each carries. Around one percent in open water, climbing several
+	 * fold under nutrient stress or low light, when the cell has caught more
+	 * than its photosynthesis can consume and sheds the excess.
+	 *
+	 * Sources:
+	 * Babin et al. 1996, *Remote sensing of sea surface sun-induced chlorophyll
+	 * fluorescence*.
+	 */
+	constexpr float CHLOROPHYLL_FLUORESCENCE_QUANTUM_YIELD = 0.01F;
+
+	/**
+	 * Share of the ENERGY absorbed in each band re-emitted as fluorescence.
+	 *
+	 * The quantum yield above counts photons, and the emitted ones are longer
+	 * than the ones that were caught, so each carries proportionally less
+	 * energy. Scaling by \f$\lambda_{ex} / 685\f$ converts one to the other.
+	 *
+	 * The line sits at 685 nm however it was excited - the cell relaxes to the
+	 * same state before emitting - so the shortest wavelengths lose the most in
+	 * the conversion.
+	 */
+	constexpr XMFLOAT3 CHLOROPHYLL_FLUORESCENCE_ENERGY_YIELD = XMFLOAT3(
+		CHLOROPHYLL_FLUORESCENCE_QUANTUM_YIELD * (620.0F / 685.0F),
+		CHLOROPHYLL_FLUORESCENCE_QUANTUM_YIELD * (540.0F / 685.0F),
+		CHLOROPHYLL_FLUORESCENCE_QUANTUM_YIELD * (460.0F / 685.0F)
+	);
+
+	/**
 	 * Henyey-Greenstein asymmetry parameter of marine particulates.
 	 *
 	 * Petzold's measured average ocean phase function is extremely forward
@@ -429,6 +460,23 @@ XMFLOAT3 WaterMedium::Backscattering() const noexcept
 				* ALGAE_BACKSCATTER_FRACTION)
 			+ (minerals * MINERAL_SCATTERING_SPECTRUM.z
 				* MINERAL_BACKSCATTER_FRACTION)
+	);
+}
+
+XMFLOAT3 WaterMedium::Fluorescence() const noexcept
+{
+	const float chlorophyll = GetAlgae();
+
+	// Only what the phytoplankton themselves caught can be re-emitted, so this
+	// is their share of the absorption alone - the water, the minerals and the
+	// staining all absorb without fluorescing.
+	return XMFLOAT3(
+		chlorophyll * ALGAE_ABSORPTION_SPECTRUM.x
+			* CHLOROPHYLL_FLUORESCENCE_ENERGY_YIELD.x,
+		chlorophyll * ALGAE_ABSORPTION_SPECTRUM.y
+			* CHLOROPHYLL_FLUORESCENCE_ENERGY_YIELD.y,
+		chlorophyll * ALGAE_ABSORPTION_SPECTRUM.z
+			* CHLOROPHYLL_FLUORESCENCE_ENERGY_YIELD.z
 	);
 }
 

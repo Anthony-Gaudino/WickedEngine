@@ -174,6 +174,29 @@ static const float WATER_FRESNEL_DIFFUSE_TRANSMITTANCE = 0.9336;
 static const float3 WATER_RAMAN_SCATTERING = float3(1.6e-4, 3.7e-4, 0.0);
 
 /**
+ * Share of the red channel's response that light at 685 nm produces.
+ *
+ * Chlorophyll fluoresces in a narrow line at 685 nm, and this render has no
+ * channel there - it samples red at 620 nm. Handing a 685 nm line straight to
+ * the red channel would claim it looks as red as 620 nm light of the same
+ * radiance, and it does not: 685 nm is far out on the tail of both the eye's
+ * response and the display's red primary, where a watt buys around a
+ * thirteenth of the response it buys at 620 nm.
+ * \[
+ * \frac{R(685)}{R(620)}, \qquad
+ * R(\lambda) \propto 3.2406\,\bar{x} - 1.5372\,\bar{y} - 0.4986\,\bar{z}
+ * \]
+ * evaluated on the CIE 1931 observer through the sRGB matrix.
+ *
+ * A statement about the primaries rather than about the water, which is why it
+ * lives here and not in `WaterMedium::Fluorescence`.
+ *
+ * References:
+ * https://en.wikipedia.org/wiki/CIE_1931_color_space
+ */
+static const float WATER_FLUORESCENCE_BAND_RESPONSE = 0.079;
+
+/**
  * Fraction of the light arriving from above that crosses into the water.
  *
  * Some of what reaches the surface reflects off it instead of refracting down,
@@ -360,6 +383,17 @@ struct WaterVolumetrics
 	float3 ramanAlbedo;
 
 	/**
+	 * Share of the light in each band that comes back out as red.
+	 *
+	 * Indexed by the band that EXCITED it, not the one it emerges in - every
+	 * band chlorophyll absorbs feeds one line at 685 nm, so this gathers into
+	 * red where `ramanAlbedo` shifts channel by channel. Carries the display
+	 * response at 685 nm as well as the water's own conversion, so it is ready
+	 * to be dotted with the downwelling and put straight into red.
+	 */
+	float3 fluorescenceAlbedo;
+
+	/**
 	 * Henyey-Greenstein asymmetry as authored, before any reduction.
 	 *
 	 * Marine particulates scatter extremely far forward - g around 0.9, see
@@ -541,6 +575,49 @@ struct WaterVolumetrics
 		// green by blue, and blue by an ultraviolet there is no channel for -
 		// which the zero coefficient in the albedo takes care of.
 		return ramanAlbedo * float3(downwelling.g, downwelling.b, 0);
+	}
+
+	/**
+	 * Light the phytoplankton in the water give back after absorbing it.
+	 *
+	 * A cell that catches more light than its photosynthesis can consume sheds
+	 * the excess a few nanoseconds later as a narrow line at **685 nm**. Like
+	 * Raman this is inelastic and so puts light back at a wavelength that may
+	 * have been extinguished long before it could reach anything; unlike Raman
+	 * it is a property of what is living in the water rather than of the water
+	 * itself, so it rises with the algae and vanishes in a sterile sea.
+	 *
+	 * Every band the chlorophyll absorbs feeds the same line - the cell relaxes
+	 * to one state before emitting, however it was excited - so this **gathers
+	 * into red** rather than shifting band by band as `RamanEmission` does.
+	 * Blue does most of the exciting, chlorophyll's absorption peaking there.
+	 *
+	 * @note Radiometrically this is the larger of the two inelastic terms in
+	 *       any water with much life in it, several times Raman's by the
+	 *       turbid end. Almost none of it survives being shown: the line sits
+	 *       far enough into the red that the display's primary answers it with
+	 *       about a thirteenth of the response 620 nm would get, which
+	 *       `WATER_FLUORESCENCE_BAND_RESPONSE` accounts for and which leaves
+	 *       the visible result the smaller of the two.
+	 *
+	 * @note Carries no directionality, exactly as `EmergentAlbedo` and
+	 *       `RamanEmission` do not - the emission is isotropic and has
+	 *       forgotten where the exciting photon came from.
+	 *
+	 * References:
+	 * Babin et al. 1996, *Remote sensing of sea surface sun-induced chlorophyll
+	 * fluorescence*.
+	 *
+	 * @param[in] downwelling - Daylight reaching this depth, per channel, in
+	 *                          whatever units the result is wanted in.
+	 *
+	 * @return Per-channel radiance the water re-emits, red only, to be weighted
+	 *         by how much of the segment it fills exactly as `EmergentAlbedo`
+	 *         is.
+	 */
+	float3 FluorescenceEmission(float3 downwelling)
+	{
+		return float3(dot(fluorescenceAlbedo, downwelling), 0, 0);
 	}
 
 	/**
@@ -768,6 +845,13 @@ WaterVolumetrics MakeWaterVolumetrics(half submersion, float waterHeight)
 	const float3 reducedExtinction = max(sigmaT - sigmaS, 0) + 2 * sigmaB;
 	water.ramanAlbedo = 0.5 * WATER_RAMAN_SCATTERING
 		/ max(reducedExtinction + reducedExtinction.gbb, 0.00001);
+
+	// The same integral, unfaded for the same reason, but every band escapes
+	// against red's extinction rather than its own: whatever excited the cell,
+	// what leaves it is one line at 685 nm.
+	water.fluorescenceAlbedo =
+		0.5 * WATER_FLUORESCENCE_BAND_RESPONSE * ocean.fluorescence
+		/ max(reducedExtinction + reducedExtinction.r, 0.00001);
 
 	return water;
 }

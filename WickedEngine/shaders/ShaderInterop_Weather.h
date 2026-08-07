@@ -402,6 +402,14 @@ struct alignas(16) ShaderOcean
 	// its own overstates their contribution enormously.
 	float3 backscattering;
 
+	// Fluorescence source coefficient in 1/m, per EXCITATION channel - every
+	// band chlorophyll absorbs feeds the same single emission line at 685 nm,
+	// so this gathers into red rather than staying per channel. Already
+	// carries the quantum yield and the photon-to-energy conversion; what it
+	// does not carry is how much of a 685 nm line the red channel should show,
+	// which is a question about the display primaries rather than the water.
+	float3 fluorescence;
+
 	bool IsValid() { return texture_displacementmap >= 0; }
 	bool IsSubsurfaceScattering() { return flags & OCEAN_FLAG_SUBSURFACE_SCATTERING; }
 };

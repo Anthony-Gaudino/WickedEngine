@@ -126,8 +126,9 @@ struct WaterFog
  * god rays, both of which need a direction the sky has not got.
  *
  * On top of what the water hands back at the wavelength it received, a little
- * comes back at a longer one - see `WaterVolumetrics::RamanEmission`, which is
- * most of what the clearest water shows outside the blue.
+ * comes back at a longer one - see `WaterVolumetrics::RamanEmission` and
+ * `FluorescenceEmission`, which between them are most of what clear water shows
+ * outside the blue.
  *
  * Example usage:
  * @code
@@ -296,12 +297,15 @@ WaterFog MakeWaterFog(
 	// irradiance. This term carries the water's colour.
 	const half3 downwelling = ambientColor + sunLight * (half)saturate(L.y);
 
-	// A share of that daylight comes back out one band redder than it went in,
-	// converted by the water molecules rather than reflected by anything
-	// suspended in the water. Negligible next to the elastic return in any
-	// water with something in it, and most of what the clearest water shows
-	// outside the blue.
-	const half3 raman = (half3)medium.RamanEmission(downwelling);
+	// A share of that daylight comes back out redder than it went in, rather
+	// than being reflected at the colour it arrived: converted by the water
+	// molecules themselves, and re-emitted by the phytoplankton living in
+	// them. Both put light back at wavelengths that may have been extinguished
+	// long before, which is why they are what the clearest water shows outside
+	// the blue and what the red owes itself to at any depth.
+	const half3 inelastic = (half3)(
+		medium.RamanEmission(downwelling)
+		+ medium.FluorescenceEmission(downwelling));
 
 	// One scattering event, which does remember: this is the glow that
 	// sharpens towards the sun and draws the shafts. The medium's own albedo
@@ -325,7 +329,7 @@ WaterFog MakeWaterFog(
 	fog.inscatter =
 		((half3)ocean.water_color.rgb + downwelling)
 			* (half3)inscatterColorAmount
-		+ raman * (half3)(1 - fog.transmittance)
+		+ inelastic * (half3)(1 - fog.transmittance)
 		+ directional * (half3)inscatterAmount;
 
 	return fog;
