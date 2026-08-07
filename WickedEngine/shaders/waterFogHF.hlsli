@@ -169,15 +169,22 @@ WaterFog MakeWaterFog(
 	const float3 scatterAlbedo = medium.sigmaS / medium.sigmaT;
 	const float3 inscatterAmount = scatterAlbedo * (1 - fog.transmittance);
 
-	// What that veil is coloured, which is a different question. Light leaves
-	// turbid water having bounced many times, and the colour it settles on is
-	// far more saturated than one bounce keeps - see EmergentAlbedo.
-	const float3 inscatterColorAmount =
-		medium.EmergentAlbedo() * (1 - fog.transmittance);
-
 	const half3 L = GetSunDirection();
 	const half3 refractedLightDir =
 		refract(-L, float3(0, 1, 0), 1.0 / WATER_REFRACTIVE_INDEX);
+
+	// What that veil is coloured, which is a different question. Light leaves
+	// turbid water having bounced many times, and the colour it settles on is
+	// far more saturated than one bounce keeps - see EmergentAlbedo.
+	//
+	// Reshaped by where the sun is and where this is being seen from, which the
+	// emergent colour on its own has no way to express: it brightens under a
+	// low sun and dims towards a slanted view. Both directions are taken below
+	// the surface, since that is where the light being described is.
+	const float3 inscatterColorAmount = medium.EmergentAlbedo()
+		* medium.BidirectionalFactor(
+			RefractIntoWater(L).y, RefractIntoWater(toEye).y)
+		* (1 - fog.transmittance);
 
 	half3 sunLight = GetSunColor();
 

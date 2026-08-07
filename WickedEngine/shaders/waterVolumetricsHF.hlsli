@@ -394,6 +394,17 @@ struct WaterVolumetrics
 	float3 fluorescenceAlbedo;
 
 	/**
+	 * Single-scattering albedo on the green channel, as authored.
+	 *
+	 * How much of what the medium extinguishes it merely redirects, which is
+	 * to say how many times a photon is likely to scatter before it is
+	 * absorbed. Governs how thoroughly multiple scattering has smoothed the
+	 * upwelling light out - see `BidirectionalFactor`. Unfaded, for the reason
+	 * `phaseG` is.
+	 */
+	half singleScatterAlbedo;
+
+	/**
 	 * Henyey-Greenstein asymmetry as authored, before any reduction.
 	 *
 	 * Marine particulates scatter extremely far forward - g around 0.9, see
@@ -526,6 +537,75 @@ struct WaterVolumetrics
 		const float3 root = sqrt(saturate(1 - albedo));
 
 		return (1 - root) / (1 + root);
+	}
+
+	/**
+	 * How the emergent colour reshapes with the sun and the view direction.
+	 *
+	 * `EmergentAlbedo` is one number for a whole body of water, which quietly
+	 * assumes what comes back out is spread evenly over the sky. It is not.
+	 * A low sun drives its light in at a slant, giving it further to travel
+	 * through the scattering layer and so more chance to be turned back, and
+	 * light leaving the water is somewhat peaked about the vertical, so a
+	 * slanted view collects less of it than a view straight down. Ocean optics
+	 * carries these as the pair \f$f/Q\f$ - the first factor for the sun, the
+	 * second for the view.
+	 *
+	 * Taken from the single-scattering reflectance of a semi-infinite medium,
+	 * \f[
+	 * R(\mu_s, \mu_v) \propto \frac{1}{\mu_s + \mu_v}
+	 * \f]
+	 * so what a viewer collects goes as \f$\mu_v / (\mu_s + \mu_v)\f$,
+	 * normalized here to the overhead sun seen from straight above.
+	 *
+	 * **Refraction is what keeps this small.** Both directions are measured
+	 * inside the water, and nothing crossing the surface bends further from
+	 * the vertical than the critical angle, so neither cosine can fall below
+	 * about 0.66 however low the sun sits or however grazing the view. The
+	 * whole span is therefore only about \f$\pm 20\%\f$, where the published
+	 * tables range much wider over in-water directions whose light could never
+	 * have reached an eye in the air to begin with.
+	 *
+	 * Faded towards no reshaping at all as the single-scattering albedo rises,
+	 * by the similarity argument `phaseG` already uses: the angular law above
+	 * describes ONE scattering event, and water that scatters many times over
+	 * before absorbing anything has smoothed most of the direction back out.
+	 *
+	 * @note Applies to the ELASTIC return only. The inelastic terms beside it
+	 *       are isotropic emission - a molecule or a cell radiates the same in
+	 *       every direction - so they carry no angular preference to reshape.
+	 *
+	 * @note Derived for light escaping upward out of deep water, which is the
+	 *       geometry an eye in the air sees. A submerged eye looking level has
+	 *       no such column in front of it; clamping at the critical angle
+	 *       bounds what that case can do rather than describing it.
+	 *
+	 * References:
+	 * Morel & Gentili 1996, *Diffuse reflectance of oceanic waters III*;
+	 * Chandrasekhar 1960, *Radiative Transfer*.
+	 *
+	 * @param[in] cosSun - Cosine between straight up and the direction towards
+	 *                     the sun, measured below the surface.
+	 * @param[in] cosView - Cosine between straight up and the direction towards
+	 *                      the eye, measured below the surface.
+	 *
+	 * @return Factor on the emergent albedo, in roughly [0.8, 1.2] and 1 at the
+	 *         reference geometry. Tends to 1 as the water turns turbid.
+	 */
+	float BidirectionalFactor(float cosSun, float cosView)
+	{
+		// The floor is the analytic bound rather than a guard, so it joins up
+		// smoothly: a ray arriving along the surface refracts to exactly the
+		// critical angle, which is the floor itself. Replace it with a smaller
+		// number and a camera looking level under water gets a hard band across
+		// the screen where the two sides stop meeting.
+		const float muSun = max(cosSun, WATER_CRITICAL_ANGLE_COSINE);
+		const float muView = max(cosView, WATER_CRITICAL_ANGLE_COSINE);
+
+		const float singleScattering = 2 * muView / (muSun + muView);
+
+		return lerp(
+			1, singleScattering, 1 - (float)saturate(singleScatterAlbedo));
 	}
 
 	/**
@@ -830,8 +910,9 @@ WaterVolumetrics MakeWaterVolumetrics(half submersion, float waterHeight)
 	// Reduce the asymmetry from the UNFADED ratio, so crossing the surface
 	// changes how much the medium scatters but not the shape of its lobe.
 	const float3 albedo = sigmaS / sigmaT;
+	water.singleScatterAlbedo = (half)saturate(albedo.g);
 	water.phaseG0 = (half)ocean.scattering.a;
-	water.phaseG = water.phaseG0 * (1 - (half)saturate(albedo.g));
+	water.phaseG = water.phaseG0 * (1 - water.singleScatterAlbedo);
 
 	// Unfaded for a stronger reason than the asymmetry: this RISES as the
 	// medium thins, since a longer mean free path converts more of what crosses
