@@ -174,26 +174,15 @@ WaterFog MakeWaterFog(
 	const half3 refractedLightDir =
 		refract(-L, float3(0, 1, 0), 1.0 / WATER_REFRACTIVE_INDEX);
 
-	half3 inscatteringColor = GetSunColor();
+	half3 sunLight = GetSunColor();
 
 	// Apply atmosphere transmittance:
 	if (GetFrame().options & OPTION_BIT_REALISTIC_SKY)
 	{
 		// 0 for position since fog is centered around world center
-		inscatteringColor *= GetAtmosphericLightTransmittance(
+		sunLight *= GetAtmosphericLightTransmittance(
 			GetWeather().atmosphere, 0, L, texture_transmittancelut);
 	}
-
-	// Phase function of the medium, reduced by how much of the light this
-	// particular path actually scattered - see ReducedPhaseG. There is exactly
-	// one path length here, unlike in a march, so the medium's own albedo
-	// reduced phaseG would be throwing that away.
-	const half cosTheta = dot(toEye, -refractedLightDir);
-	inscatteringColor *= HgPhase(medium.ReducedPhaseG(inscatterAmount), cosTheta);
-
-	// Uniform base phase, matching what the engine's height fog does for a
-	// constant medium (see GetFog in fogHF.hlsli):
-	inscatteringColor *= UniformPhase();
 
 	// Sunlight has already crossed the water column above the eye before it can
 	// scatter towards it, so it arrives filtered by the same medium. Red goes
@@ -203,7 +192,7 @@ WaterFog MakeWaterFog(
 	// Over the sun's own slant path, not the vertical drop: the sun enters at
 	// whatever angle Snell's law bends it to and crosses more water than the
 	// depth alone, which is the same reciprocity the view path uses.
-	inscatteringColor *= exp(-SubmergedViewPath(eyeDepth, L) * medium.sigmaT);
+	sunLight *= exp(-SubmergedViewPath(eyeDepth, L) * medium.sigmaT);
 
 	// And some of it never got in: the surface reflects a share away instead of
 	// refracting it down, nearly all of it once the sun is low. The same term
@@ -214,7 +203,7 @@ WaterFog MakeWaterFog(
 	// RefractIntoWater rather than refractedLightDir above: the two agree while
 	// the sun is up, but refract() keeps bending a sun that has already set
 	// into a downward ray, whose cosine would read as light still getting in.
-	inscatteringColor *=
+	sunLight *=
 		(half)FresnelTransmittanceIntoWater(RefractIntoWater(L).y);
 
 	[branch]
@@ -233,7 +222,7 @@ WaterFog MakeWaterFog(
 		godray *= 1 - pow(abs(dot(refractedLightDir, toEye)), 2);
 		godray *= pow(1 - saturate(-dot(refractedLightDir, toEye)), 1);
 
-		inscatteringColor *= 1 - godray;
+		sunLight *= 1 - godray;
 	}
 
 	// The sky scatters in the water as well as the sun does, and unlike the sun
@@ -261,9 +250,25 @@ WaterFog MakeWaterFog(
 	ambientColor *= (half3)exp(
 		-eyeDepth * WATER_DOWNWELLING_SLANT * medium.sigmaT);
 
-	const half3 fogColor =
-		ocean.water_color.rgb + ambientColor + inscatteringColor;
-	fog.inscatter = fogColor * inscatterColorAmount;
+	// Light leaving after many scattering events has no memory of the
+	// direction it arrived from, so the phase function has nothing to weight -
+	// the sun enters this the same way the sky does, as downwelling
+	// irradiance. This term carries the water's colour.
+	const half3 downwelling = ambientColor + sunLight * (half)saturate(L.y);
+
+	// One scattering event, which does remember: this is the glow that
+	// sharpens towards the sun and draws the shafts. The medium's own albedo
+	// weights it, not the emergent colour, because a single bounce keeps
+	// exactly what a single bounce keeps.
+	const half cosTheta = dot(toEye, -refractedLightDir);
+	const half3 directional = sunLight
+		* HgPhase(medium.ReducedPhaseG(inscatterAmount), cosTheta)
+		* UniformPhase();
+
+	fog.inscatter =
+		((half3)ocean.water_color.rgb + downwelling)
+			* (half3)inscatterColorAmount
+		+ directional * (half3)inscatterAmount;
 
 	return fog;
 }

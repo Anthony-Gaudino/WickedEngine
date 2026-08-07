@@ -430,13 +430,12 @@ struct WaterVolumetrics
 	 * \qquad \omega = \frac{2 b_b}{\sigma_a + 2 b_b}
 	 * \f]
 	 * lands where measurements do: about 5% for the murkiest water and under
-	 * 2% for the clearest, against the 50% that weighting by \f$\sigma_s\f$
-	 * produced - a value belonging to snow rather than to any sea.
+	 * 2% for the clearest.
 	 *
-	 * @note Multiplied against the phase function by the caller, which is
-	 *       correct only because this answers a different question: the phase
-	 *       function gives the direction one bounce takes, this gives the
-	 *       colour surviving all of them.
+	 * @note Carries no directionality, so callers must not weight it with a
+	 *       phase function. Light that has scattered this many times has no
+	 *       memory of the direction it arrived from; the phase function
+	 *       belongs to the single-scattering term alongside it.
 	 *
 	 * References:
 	 * Gordon et al. 1988, *A semianalytic radiance model of ocean color*;
