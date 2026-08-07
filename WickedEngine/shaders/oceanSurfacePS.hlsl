@@ -456,8 +456,8 @@ float4 main(PSIn input) : SV_TARGET
 		}
 		foam *= 2;
 		foam = saturate(foam);
-		surface.albedo = lerp(surface.albedo, 0.6, foam);
-		surface.refraction.a *= 1 - foam;
+		surface.albedo = lerp(surface.albedo, (half3)xOceanFoamColor.rgb, foam);
+		surface.refraction.a *= 1 - foam * (half)xOceanFoamColor.a;
 		// Same guard: with no sea bed under water there is no shoreline to
 		// restore the refraction over.
 		surface.refraction.a = saturate(surface.refraction.a +

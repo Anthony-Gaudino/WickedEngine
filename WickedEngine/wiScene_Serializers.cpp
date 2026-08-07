@@ -1935,6 +1935,16 @@ namespace wi::scene
 			{
 				archive >> oceanSubsurfaceStrength;
 			}
+			if (seri.GetVersion() >= 10)
+			{
+				XMFLOAT3 tintColor;
+				float tintStrength = 0;
+				archive >> tintColor;
+				archive >> tintStrength;
+				oceanParameters.waterMedium.SetTintColor(tintColor);
+				oceanParameters.waterMedium.SetTintStrength(tintStrength);
+				archive >> oceanParameters.foamColor;
+			}
 		}
 		else
 		{
@@ -2174,6 +2184,12 @@ namespace wi::scene
 			if (seri.GetVersion() >= 9)
 			{
 				archive << oceanSubsurfaceStrength;
+			}
+			if (seri.GetVersion() >= 10)
+			{
+				archive << oceanParameters.waterMedium.GetTintColor();
+				archive << oceanParameters.waterMedium.GetTintStrength();
+				archive << oceanParameters.foamColor;
 			}
 		}
 	}

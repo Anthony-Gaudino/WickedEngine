@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <cmath>
 #include <cstddef>
 
 using namespace DirectX;
@@ -201,6 +202,95 @@ namespace
 	constexpr float PARTICULATE_PHASE_ASYMMETRY = 0.924F;
 
 	/**
+	 * Smallest emergent reflectance a tint may ask a channel to show.
+	 *
+	 * The inverted reflectance runs to infinite absorption as the target
+	 * reaches 0, so a channel asked for pure black needs a floor to stay
+	 * finite.
+	 *
+	 * **It has to stay far below any reflectance real water shows**, because
+	 * the same inversion runs at zero strength and has to give the constituent
+	 * spectrum back untouched. The clearest water returns about
+	 * \f$5\times10^{-4}\f$ in red; a floor anywhere near that silently
+	 * brightens clear water's red long before any tint is asked for.
+	 */
+	constexpr float MIN_TINT_REFLECTANCE = 1.0e-6F;
+
+	/**
+	 * Largest emergent reflectance a tint may ask a channel to show.
+	 *
+	 * A perfect reflector absorbs nothing, so the inversion returns zero
+	 * absorption and the channel sees forever. Held just below 1 to keep that
+	 * a very clear medium rather than a degenerate one.
+	 */
+	constexpr float MAX_TINT_REFLECTANCE = 0.999F;
+
+	/**
+	 * Smallest denominator used while solving for a tinted absorption.
+	 *
+	 * Guards the two divisions in TintedAbsorption() against a medium that
+	 * neither absorbs nor scatters, which has no colour to solve for.
+	 */
+	constexpr float MIN_TINT_DENOMINATOR = 1.0e-6F;
+
+	/**
+	 * Solves for the absorption that makes one channel show a chosen colour.
+	 *
+	 * Runs the two-stream reflectance forwards to find what the channel shows
+	 * as authored, blends that towards the tint, and inverts it for the
+	 * absorption that produces the result:
+	 * \f[
+	 * R = \frac{1 - r}{1 + r}, \quad r = \sqrt{1 - \omega}
+	 * \;\Longrightarrow\;
+	 * r = \frac{1 - R}{1 + R}, \quad
+	 * \sigma_a = \frac{2 b_b \, r^2}{1 - r^2}
+	 * \f]
+	 * the last step collapsing \f$\sigma_a = 2 b_b (1-\omega)/\omega\f$ through
+	 * \f$1 - \omega = r^2\f$.
+	 *
+	 * Blending the two **colours** and solving once, rather than solving for
+	 * the tint and interpolating coefficients, is what keeps every strength in
+	 * between a real medium: each is the water that genuinely shows the blended
+	 * colour, not a cross-fade between two of them.
+	 *
+	 * @param[in] absorption - \f$\sigma_a\f$ the constituents give this channel
+	 *                         (in 1/m).
+	 * @param[in] backscattering - \f$b_b\f$ for this channel (in 1/m).
+	 * @param[in] tint - Reflectance the tint asks this channel to show.
+	 * @param[in] strength - How far to move towards the tint, in [0, 1].
+	 *
+	 * @return \f$\sigma_a\f$ that shows the blended colour (in 1/m).
+	 */
+	[[nodiscard]] float TintedAbsorption(
+		const float absorption,
+		const float backscattering,
+		const float tint,
+		const float strength
+	) noexcept
+	{
+		const float reducedScattering = 2.0F * backscattering;
+
+		// Forwards: what this channel shows as the constituents describe it.
+		const float albedo = reducedScattering
+			/ std::max(absorption + reducedScattering, MIN_TINT_DENOMINATOR);
+		const float root = std::sqrt(std::max(0.0F, 1.0F - albedo));
+		const float reflectance = (1.0F - root) / (1.0F + root);
+
+		const float target = std::clamp(
+			reflectance + ((tint - reflectance) * strength),
+			MIN_TINT_REFLECTANCE,
+			MAX_TINT_REFLECTANCE
+		);
+
+		// Backwards, for the absorption that shows it.
+		const float targetRoot = (1.0F - target) / (1.0F + target);
+		const float targetRootSq = targetRoot * targetRoot;
+
+		return reducedScattering * targetRootSq
+			/ std::max(1.0F - targetRootSq, MIN_TINT_DENOMINATOR);
+	}
+
+	/**
 	 * Optical depth at which apparent contrast falls to the 2% threshold.
 	 *
 	 * \f$\ln(1 / 0.02) = \ln 50 \approx 3.912\f$.
@@ -330,6 +420,16 @@ float WaterMedium::GetStain() const noexcept
 	return props.stain;
 }
 
+XMFLOAT3 WaterMedium::GetTintColor() const noexcept
+{
+	return props.tintColor;
+}
+
+float WaterMedium::GetTintStrength() const noexcept
+{
+	return props.tintStrength;
+}
+
 JerlovWaterType WaterMedium::GetWaterType() const noexcept
 {
 	return props.waterType;
@@ -351,6 +451,20 @@ void WaterMedium::SetSilt(const float silt) noexcept
 void WaterMedium::SetStain(const float stain) noexcept
 {
 	props.stain = std::max(0.0F, stain);
+}
+
+void WaterMedium::SetTintColor(const XMFLOAT3& tintColor) noexcept
+{
+	props.tintColor = XMFLOAT3(
+		std::max(0.0F, tintColor.x),
+		std::max(0.0F, tintColor.y),
+		std::max(0.0F, tintColor.z)
+	);
+}
+
+void WaterMedium::SetTintStrength(const float tintStrength) noexcept
+{
+	props.tintStrength = std::clamp(tintStrength, 0.0F, 1.0F);
 }
 
 void WaterMedium::SetWaterType(const JerlovWaterType waterType) noexcept
@@ -401,23 +515,31 @@ void WaterMedium::SetFromLegacyDensity(const float density) noexcept
 
 XMFLOAT3 WaterMedium::Absorption() const noexcept
 {
-	const float chlorophyll = GetAlgae();
-	const float minerals = GetSilt();
-	const float cdom = GetStain();
+	const XMFLOAT3 constituent = ConstituentAbsorption();
+
+	// Returned as it stands rather than round-tripped through the solve, so an
+	// untinted medium is bit-for-bit what it was before tinting existed. The
+	// inversion is exact to floating point either way, but "exact" and
+	// "identical" are not the same promise.
+	if (props.tintStrength <= 0.0F)
+	{
+		return constituent;
+	}
+
+	// Backscattering does not depend on absorption, so asking for it here
+	// cannot recurse.
+	const XMFLOAT3 backscattering = Backscattering();
 
 	return XMFLOAT3(
-		PURE_WATER_ABSORPTION.x
-			+ (chlorophyll * ALGAE_ABSORPTION_SPECTRUM.x)
-			+ (minerals * MINERAL_ABSORPTION_SPECTRUM.x)
-			+ (cdom * CDOM_ABSORPTION_SPECTRUM.x),
-		PURE_WATER_ABSORPTION.y
-			+ (chlorophyll * ALGAE_ABSORPTION_SPECTRUM.y)
-			+ (minerals * MINERAL_ABSORPTION_SPECTRUM.y)
-			+ (cdom * CDOM_ABSORPTION_SPECTRUM.y),
-		PURE_WATER_ABSORPTION.z
-			+ (chlorophyll * ALGAE_ABSORPTION_SPECTRUM.z)
-			+ (minerals * MINERAL_ABSORPTION_SPECTRUM.z)
-			+ (cdom * CDOM_ABSORPTION_SPECTRUM.z)
+		TintedAbsorption(
+			constituent.x, backscattering.x,
+			props.tintColor.x, props.tintStrength),
+		TintedAbsorption(
+			constituent.y, backscattering.y,
+			props.tintColor.y, props.tintStrength),
+		TintedAbsorption(
+			constituent.z, backscattering.z,
+			props.tintColor.z, props.tintStrength)
 	);
 }
 
@@ -524,4 +646,35 @@ float WaterMedium::VisibilityDistance() const noexcept
 
 	return CONTRAST_THRESHOLD_OPTICAL_DEPTH
 		/ std::max(MIN_EXTINCTION, bestChannel);
+}
+
+/*
+################################################################################
+Private
+################################################################################
+*/
+
+// Methods
+//==============================================================================
+
+XMFLOAT3 WaterMedium::ConstituentAbsorption() const noexcept
+{
+	const float chlorophyll = GetAlgae();
+	const float minerals = GetSilt();
+	const float cdom = GetStain();
+
+	return XMFLOAT3(
+		PURE_WATER_ABSORPTION.x
+			+ (chlorophyll * ALGAE_ABSORPTION_SPECTRUM.x)
+			+ (minerals * MINERAL_ABSORPTION_SPECTRUM.x)
+			+ (cdom * CDOM_ABSORPTION_SPECTRUM.x),
+		PURE_WATER_ABSORPTION.y
+			+ (chlorophyll * ALGAE_ABSORPTION_SPECTRUM.y)
+			+ (minerals * MINERAL_ABSORPTION_SPECTRUM.y)
+			+ (cdom * CDOM_ABSORPTION_SPECTRUM.y),
+		PURE_WATER_ABSORPTION.z
+			+ (chlorophyll * ALGAE_ABSORPTION_SPECTRUM.z)
+			+ (minerals * MINERAL_ABSORPTION_SPECTRUM.z)
+			+ (cdom * CDOM_ABSORPTION_SPECTRUM.z)
+	);
 }

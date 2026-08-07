@@ -195,6 +195,32 @@ class wi::scene::environment::WaterMedium final
 		float stain = 0.18F;
 
 		/**
+		 * Colour the water is pushed towards, as a reflectance per channel.
+		 *
+		 * Not a filter over the result but the colour the body of water is
+		 * asked to **show**, in the same units as the emergent reflectance it
+		 * replaces - so at full strength a value of 0.4 in red means the water
+		 * returns 40% of the red falling on it, against the 0.5% to 5% real
+		 * water manages. Natural waters live in the bottom few percent; the
+		 * range above that is where a stylised ocean lives.
+		 *
+		 * Has no effect at all while `tintStrength` is 0.
+		 */
+		DirectX::XMFLOAT3 tintColor = DirectX::XMFLOAT3(0.0F, 0.12F, 0.20F);
+
+		/**
+		 * How far the tint overrides the derived colour, in [0, 1].
+		 *
+		 * 0 leaves the medium exactly as its constituents describe it, which is
+		 * the default and is a bit-exact passthrough rather than a round trip.
+		 * 1 makes `tintColor` the water's reflectance outright. In between, the
+		 * two are blended **as colours** and the coefficients solved from the
+		 * result, so every value on the way is a real medium rather than a
+		 * cross-fade between two renders.
+		 */
+		float tintStrength = 0.0F;
+
+		/**
 		 * Preset the coefficients were last taken from.
 		 *
 		 * Purely descriptive: it records which JerlovWaterType was applied so
@@ -254,6 +280,21 @@ class wi::scene::environment::WaterMedium final
 	[[nodiscard]] float GetStain() const noexcept;
 
 	/**
+	 * Returns the colour the water is pushed towards.
+	 *
+	 * @return Target reflectance per channel. Meaningless while the tint
+	 *         strength is 0.
+	 */
+	[[nodiscard]] DirectX::XMFLOAT3 GetTintColor() const noexcept;
+
+	/**
+	 * Returns how far the tint overrides the derived colour.
+	 *
+	 * @return Strength in [0, 1]. 0 for a purely physical medium.
+	 */
+	[[nodiscard]] float GetTintStrength() const noexcept;
+
+	/**
 	 * Returns the preset the coefficients were last taken from.
 	 *
 	 * @return The recorded water type. JerlovWaterType::CUSTOM when the
@@ -296,6 +337,30 @@ class wi::scene::environment::WaterMedium final
 	 * @note Does not reset the recorded water type; see SetAlgae().
 	 */
 	void SetStain(float stain) noexcept;
+
+	/**
+	 * Sets the colour the water is pushed towards.
+	 *
+	 * @param[in] tintColor - Target reflectance per channel. Negative
+	 *                        components are clamped to 0.
+	 *
+	 * @note Does nothing visible until SetTintStrength() raises the strength
+	 *       above 0. Does not reset the recorded water type; see SetAlgae().
+	 */
+	void SetTintColor(const DirectX::XMFLOAT3& tintColor) noexcept;
+
+	/**
+	 * Sets how far the tint overrides the derived colour.
+	 *
+	 * @param[in] tintStrength - Strength, clamped to [0, 1]. 0 restores the
+	 *                           purely physical medium exactly.
+	 *
+	 * @note Does not reset the recorded water type; see SetAlgae(). A tint sits
+	 *       on top of a Jerlov preset rather than replacing it - the preset
+	 *       still decides how turbid the water is, and therefore how much of
+	 *       the tint survives being seen *through* rather than *at*.
+	 */
+	void SetTintStrength(float tintStrength) noexcept;
 
 	/**
 	 * Applies a Jerlov water type preset.
@@ -345,6 +410,30 @@ class wi::scene::environment::WaterMedium final
 	 *                   + \text{silt} \cdot a_{min}(\lambda)
 	 *                   + \text{stain} \cdot a_{CDOM}(\lambda)
 	 * \f]
+	 *
+	 * **This is also where an authored tint enters**, and deliberately the only
+	 * place. Absorption is what the whole render derives the water's appearance
+	 * from - the emergent colour, the transmittance through it, the light
+	 * reaching a submerged object, the volumetric shafts - so solving for it
+	 * once here makes every one of those agree, where tinting any single
+	 * result would leave the others describing a different sea. Given a target
+	 * colour, the two-stream reflectance is inverted for the absorption that
+	 * shows it:
+	 * \f[
+	 * \omega = 1 - \left(\frac{1 - R}{1 + R}\right)^2,
+	 * \qquad
+	 * \sigma_a = \frac{2 b_b (1 - \omega)}{\omega}
+	 * \f]
+	 * which is the exact inverse of the reflectance the renderer computes from
+	 * \f$\sigma_a\f$ and \f$b_b\f$, so a strength of 0 returns the constituent
+	 * spectrum untouched.
+	 *
+	 * @note The tint sets the colour the water **shows** exactly. The colour it
+	 *       is seen *through* follows from the physics rather than being
+	 *       authored, and how strongly it reads depends on turbidity: the
+	 *       scattering coefficient is large and nearly grey in murky water, so
+	 *       it dominates the extinction and a tinted murky sea still looks
+	 *       milky. Clear water carries a tint far further.
 	 *
 	 * References:
 	 * Pope & Fry 1997, *Absorption spectrum (380-700 nm) of pure water*;
@@ -512,4 +601,24 @@ class wi::scene::environment::WaterMedium final
 	 *       attenuation.
 	 */
 	[[nodiscard]] float VisibilityDistance() const noexcept;
+
+	/*
+	############################################################################
+	Private
+	############################################################################
+	*/
+	private:
+
+	// Methods
+	//==========================================================================
+
+	/**
+	 * Computes the absorption the constituents alone account for.
+	 *
+	 * The untinted spectrum, which Absorption() either returns as it stands or
+	 * uses as the colour a tint is blended away from.
+	 *
+	 * @return \f$\sigma_a\f$ per RGB channel (in 1/m).
+	 */
+	[[nodiscard]] DirectX::XMFLOAT3 ConstituentAbsorption() const noexcept;
 };

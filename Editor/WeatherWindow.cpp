@@ -57,6 +57,8 @@ void WeatherWindow::Create(EditorComponent* _editor)
 	colorComboBox.AddItem("Horizon color");
 	colorComboBox.AddItem("Zenith color");
 	colorComboBox.AddItem("Ocean color");
+	colorComboBox.AddItem("Ocean tint");
+	colorComboBox.AddItem("Ocean foam");
 	colorComboBox.AddItem("Cloud color 1");
 	colorComboBox.AddItem("Cloud color 2");
 	colorComboBox.AddItem("Cloud extinction 1");
@@ -88,18 +90,29 @@ void WeatherWindow::Create(EditorComponent* _editor)
 			weather.oceanParameters.waterColor = args.color.toFloat4();
 			break;
 		case 4:
-			weather.volumetricCloudParameters.layerFirst.albedo = args.color.toFloat3();
+		{
+			const XMFLOAT4 tint = args.color.toFloat4();
+			weather.oceanParameters.waterMedium.SetTintColor(
+				XMFLOAT3(tint.x, tint.y, tint.z));
+			weather.oceanParameters.waterMedium.SetTintStrength(tint.w);
+		}
 			break;
 		case 5:
-			weather.volumetricCloudParameters.layerSecond.albedo = args.color.toFloat3();
+			weather.oceanParameters.foamColor = args.color.toFloat4();
 			break;
 		case 6:
-			weather.volumetricCloudParameters.layerFirst.extinctionCoefficient = args.color.toFloat3();
+			weather.volumetricCloudParameters.layerFirst.albedo = args.color.toFloat3();
 			break;
 		case 7:
-			weather.volumetricCloudParameters.layerSecond.extinctionCoefficient = args.color.toFloat3();
+			weather.volumetricCloudParameters.layerSecond.albedo = args.color.toFloat3();
 			break;
 		case 8:
+			weather.volumetricCloudParameters.layerFirst.extinctionCoefficient = args.color.toFloat3();
+			break;
+		case 9:
+			weather.volumetricCloudParameters.layerSecond.extinctionCoefficient = args.color.toFloat3();
+			break;
+		case 10:
 			weather.rain_color = args.color.toFloat4();
 			break;
 		}
@@ -1208,18 +1221,29 @@ void WeatherWindow::UpdateData()
 			colorPicker.SetPickColor(wi::Color::fromFloat4(weather.oceanParameters.waterColor));
 			break;
 		case 4:
-			colorPicker.SetPickColor(wi::Color::fromFloat3(weather.volumetricCloudParameters.layerFirst.albedo));
+		{
+			const XMFLOAT3 tint = weather.oceanParameters.waterMedium.GetTintColor();
+			colorPicker.SetPickColor(wi::Color::fromFloat4(XMFLOAT4(
+				tint.x, tint.y, tint.z,
+				weather.oceanParameters.waterMedium.GetTintStrength())));
+		}
 			break;
 		case 5:
-			colorPicker.SetPickColor(wi::Color::fromFloat3(weather.volumetricCloudParameters.layerSecond.albedo));
+			colorPicker.SetPickColor(wi::Color::fromFloat4(weather.oceanParameters.foamColor));
 			break;
 		case 6:
-			colorPicker.SetPickColor(wi::Color::fromFloat3(weather.volumetricCloudParameters.layerFirst.extinctionCoefficient));
+			colorPicker.SetPickColor(wi::Color::fromFloat3(weather.volumetricCloudParameters.layerFirst.albedo));
 			break;
 		case 7:
-			colorPicker.SetPickColor(wi::Color::fromFloat3(weather.volumetricCloudParameters.layerSecond.extinctionCoefficient));
+			colorPicker.SetPickColor(wi::Color::fromFloat3(weather.volumetricCloudParameters.layerSecond.albedo));
 			break;
 		case 8:
+			colorPicker.SetPickColor(wi::Color::fromFloat3(weather.volumetricCloudParameters.layerFirst.extinctionCoefficient));
+			break;
+		case 9:
+			colorPicker.SetPickColor(wi::Color::fromFloat3(weather.volumetricCloudParameters.layerSecond.extinctionCoefficient));
+			break;
+		case 10:
 			colorPicker.SetPickColor(wi::Color::fromFloat4(weather.rain_color));
 			break;
 		}
