@@ -30,10 +30,10 @@ namespace wi
 
 		RasterizerState		rasterizerState;
 		RasterizerState		wireRS;
-		DepthStencilState	depthStencilState, depthStencilState_occlusionTest, depthStencilState_shadowmap;
-		BlendState			blendState, blendState_occlusionTest, blendState_shadowmap;
+		DepthStencilState	depthStencilState, depthStencilState_shadowmap;
+		BlendState			blendState, blendState_shadowmap;
 
-		PipelineState PSO, PSO_envmap, PSO_shadowmap, PSO_wire, PSO_occlusionTest;
+		PipelineState PSO, PSO_envmap, PSO_shadowmap, PSO_wire;
 		Texture perlinTex;
 
 		/*
@@ -55,8 +55,8 @@ namespace wi
 		constexpr uint32_t MESH_CELLS_PER_SIDE = 128;
 
 		/**
-		 * Cells along one side of a clipmap level, for the cubemap, shadow map
-		 * and occlusion draws.
+		 * Cells along one side of a clipmap level, for the cubemap and shadow
+		 * map draws.
 		 *
 		 * These only need the ocean's silhouette, not its detail, so they use
 		 * a much coarser mesh. The base cell size is scaled up to compensate,
@@ -399,12 +399,6 @@ namespace wi
 				desc.rs = &wireRS;
 				desc.dss = &depthStencilState;
 				device->CreatePipelineState(&desc, &PSO_wire);
-
-				desc.ps = {};
-				desc.rs = &rasterizerState;
-				desc.bs = &blendState_occlusionTest;
-				desc.dss = &depthStencilState_occlusionTest;
-				device->CreatePipelineState(&desc, &PSO_occlusionTest);
 			}
 		}
 	}
@@ -807,23 +801,6 @@ namespace wi
 		device->EventEnd(cmd);
 	}
 
-	void Ocean::RenderForOcclusionTest(const CameraComponent& camera, CommandList cmd) const
-	{
-		GraphicsDevice* device = wi::graphics::GetDevice();
-
-		device->EventBegin("Ocean Occlusion Test", cmd);
-
-		device->BindPipelineState(&PSO_occlusionTest, cmd);
-
-		device->BindResource(&displacementMap, 0, cmd);
-		device->BindResource(&perlinTex, 2, cmd);
-
-		OceanCB cb = GetOceanCB(params, camera.Eye, MESH_CELLS_PER_SIDE_COARSE);
-		DrawClipmap(cb, true, 1, cmd);
-
-		device->EventEnd(cmd);
-	}
-
 	void Ocean::RenderForCubemap(const XMFLOAT3& viewerPosition, CommandList cmd) const
 	{
 		GraphicsDevice* device = wi::graphics::GetDevice();
@@ -918,7 +895,6 @@ namespace wi
 		depthStencilState = depth_desc;
 
 		depth_desc.depth_write_mask = DepthWriteMask::ZERO;
-		depthStencilState_occlusionTest = depth_desc;
 		depthStencilState_shadowmap = depth_desc;
 
 		BlendState blend_desc;
@@ -933,9 +909,6 @@ namespace wi
 		blend_desc.render_target[0].blend_op_alpha = BlendOp::ADD;
 		blend_desc.render_target[0].render_target_write_mask = ColorWrite::ENABLE_ALL;
 		blendState = blend_desc;
-
-		blend_desc.render_target[0].blend_enable = false;
-		blendState_occlusionTest = blend_desc;
 
 		blend_desc.render_target[0].src_blend = Blend::ZERO;
 		blend_desc.render_target[0].dest_blend = Blend::SRC_COLOR;

@@ -69,7 +69,6 @@ namespace wi
 		void Create(const OceanParameters& params);
 
 		void UpdateDisplacementMap(wi::graphics::CommandList cmd) const;
-		void RenderForOcclusionTest(const wi::scene::CameraComponent& camera, wi::graphics::CommandList cmd) const;
 
 		/**
 		 * Draws the ocean into an environment probe's cubemap.
