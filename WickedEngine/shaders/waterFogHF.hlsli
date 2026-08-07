@@ -260,10 +260,20 @@ WaterFog MakeWaterFog(
 	// sharpens towards the sun and draws the shafts. The medium's own albedo
 	// weights it, not the emergent colour, because a single bounce keeps
 	// exactly what a single bounce keeps.
+	//
+	// Only the part of that bounce which is DIRECTIONAL belongs here. Its
+	// isotropic share carries no direction and is already accounted for in the
+	// term above, so what is left is the excess over an even spread. That
+	// excess falls away as the reduced asymmetry approaches isotropic, which
+	// is the behaviour the water should have: a turbid sea has no sun glow to
+	// show, only an even haze.
 	const half cosTheta = dot(toEye, -refractedLightDir);
-	const half3 directional = sunLight
-		* HgPhase(medium.ReducedPhaseG(inscatterAmount), cosTheta)
-		* UniformPhase();
+	const half phaseExcess = max(
+		(half)0,
+		HgPhase(medium.ReducedPhaseG(inscatterAmount), cosTheta)
+			- UniformPhase());
+
+	const half3 directional = sunLight * phaseExcess * UniformPhase();
 
 	fog.inscatter =
 		((half3)ocean.water_color.rgb + downwelling)
