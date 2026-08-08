@@ -10,9 +10,11 @@
 
 #define arraysize(a) (sizeof(a) / sizeof((a)[0]))
 
+#ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif // NOMINMAX
+#endif // _WIN32
 
 #if defined(__GNUC__) || defined(__clang__)
 #define __forceinline __attribute__((always_inline)) inline
