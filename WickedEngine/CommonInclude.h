@@ -127,7 +127,7 @@ struct StackVector
 	constexpr void push_back(const T& item) { items[last++] = item; }
 	constexpr void push_back(T&& item) { items[last++] = static_cast<T&&>(item); }
 	constexpr void pop_back() { if (!empty()) items[--last] = {}; }
-	constexpr void clear() { for (unsigned i = 0; i < count; ++i) items[i] = {}; last = 0; }
+	constexpr void clear() { for (unsigned i = 0; i < last; ++i) items[i] = {}; last = 0; }
 	constexpr T* data() { return items; }
 	constexpr const T* data() const { return items; }
 	constexpr T* begin() { return items; }
