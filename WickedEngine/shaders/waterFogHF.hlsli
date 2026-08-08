@@ -334,8 +334,7 @@ WaterFog MakeWaterFog(
 	const half3 directional = sunLight * phaseExcess * UniformPhase();
 
 	fog.inscatter =
-		((half3)ocean.water_color.rgb + downwelling)
-			* (half3)inscatterColorAmount
+		downwelling * (half3)inscatterColorAmount
 		+ inelastic * (half3)(1 - fog.transmittance)
 		+ directional * (half3)inscatterAmount;
 

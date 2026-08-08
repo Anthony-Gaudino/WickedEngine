@@ -34,6 +34,11 @@ namespace wi
 			float choppy_scale = 1.3f;
 
 
+			// Deprecated: nothing reads this. It tinted the foam blend before
+			// foamColor existed, and its alpha was overwritten before use. Kept
+			// because the serializer format is positional, and because the
+			// alpha still carries the pre-medium water density that scenes
+			// older than version 8 are migrated from. Also still bound to Lua.
 			XMFLOAT4 waterColor = XMFLOAT4(0.0f, 2.0f / 255.0f, 6.0f / 255.0f, 0.6f);
 
 			// Foam colour in rgb, and how opaque the foam is in w. The default

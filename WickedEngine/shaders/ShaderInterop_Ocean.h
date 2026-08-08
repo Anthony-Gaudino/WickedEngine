@@ -6,8 +6,6 @@ static const uint OCEAN_COMPUTE_TILESIZE = 8;
 
 CBUFFER(OceanCB, CBSLOT_OTHER_OCEAN)
 {
-	float4 xOceanWaterColor;
-
 	// Foam colour in rgb, how opaque the foam is in w.
 	float4 xOceanFoamColor;
 

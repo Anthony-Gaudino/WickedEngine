@@ -67,7 +67,6 @@ void main(uint3 DTid : SV_DispatchThreadID)
 	float intersection_blend = saturate(exp(-intersection_distance * 50));
 	clipspace.xy *= lerp(1, 0.5, intersection_blend);
 	uv = clipspace_to_uv(clipspace.xy);
-	//color.rgb = lerp(color.rgb, ocean.water_color.rgb, intersection_blend);
 
 	// Recompute ray after distortion:
 	unproj = mul(GetCamera().inverse_view_projection, clipspace);
@@ -290,16 +289,15 @@ void main(uint3 DTid : SV_DispatchThreadID)
 				aboveWater = GetDynamicSkyColor(refractedDir);
 			}
 
-			// The window shows the refracted above-water view, hazing toward
-			// the water with DEPTH (not strength) so it dissolves into the blue
-			// as it attenuates. The blend is per channel, so the window loses
-			// its warm end first and goes blue before it goes dark. Fade to the
-			// flat base water color, NOT the fog's inscatter: that carries the
-			// sun and the god-ray modulation, which would otherwise show as a
-			// god-ray texture inside the window as it hazes out. Strength is
-			// the overall opacity, blending back to the normal underwater view:
-			const float3 windowContent =
-				lerp(ocean.water_color.rgb, aboveWater, pathTransmittance);
+			// The window shows the refracted above-water view, extinguished by
+			// the water it crossed. Per channel, so it loses its warm end first
+			// and goes blue before it goes dark.
+			//
+			// It fades to nothing rather than to the fog's inscatter, which
+			// carries the sun and the god-ray modulation and would draw a
+			// god-ray texture inside the window as it hazed out. What replaces
+			// it is the surrounding underwater view, through the blend below.
+			const float3 windowContent = aboveWater * pathTransmittance;
 			const float windowShape = saturate(cone * upward * openWater);
 			const float windowBlend = saturate(windowShape * underwater_snell);
 			color.rgb = lerp(color.rgb, windowContent, windowBlend);

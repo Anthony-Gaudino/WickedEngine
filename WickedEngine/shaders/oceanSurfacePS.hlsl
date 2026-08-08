@@ -24,7 +24,7 @@ float4 main(PSIn input) : SV_TARGET
 
 	ShaderCamera camera = GetCameraIndexed(input.cameraIndex);
 	float lineardepth = camera.IsOrtho() ? ((1 - input.pos.z) * camera.z_far) : input.pos.w;
-	half4 color = xOceanWaterColor;
+	half4 color = 0;
 	float2 ScreenCoord = input.pos.xy * camera.internal_resolution_rcp;
 
 	// The surface stops short of the eye so that the waterline the underwater

@@ -694,7 +694,6 @@ namespace wi
 		cb.xOceanChoppyScale = params.choppy_scale;
 		cb.xOceanGridLen = params.dmap_dim / params.patch_length;
 
-		cb.xOceanWaterColor = params.waterColor;
 		cb.xOceanFoamColor = params.foamColor;
 		cb.xOceanTexelLength = params.patch_length / params.dmap_dim;
 		cb.xOceanPatchSizeRecip = 1.0f / params.patch_length;
