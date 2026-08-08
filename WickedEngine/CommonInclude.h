@@ -126,7 +126,7 @@ struct StackVector
 {
 	T items[count] = {};
 	unsigned last = 0;
-	constexpr void resize(unsigned size) { assert(size <= count); last = size; }
+	constexpr void set_size(unsigned size) { assert(size <= count); last = size; }
 	constexpr unsigned size() const { return last; }
 	constexpr bool empty() const { return last == 0; }
 	constexpr unsigned capacity() const { return count; }
