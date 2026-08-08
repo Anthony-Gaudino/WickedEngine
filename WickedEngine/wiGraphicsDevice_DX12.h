@@ -37,7 +37,7 @@
 #include <mutex>
 
 #define dx12_assert(cond, fname) { wilog_assert(cond, "DX12 error: %s failed with %s (%s:%d)", fname, wi::helper::GetPlatformErrorString(hr).c_str(), relative_path(__FILE__), __LINE__); }
-#define dx12_check(call) [&]() { HRESULT hr = call; dx12_assert(SUCCEEDED(hr), extract_function_name(#call).c_str()); return hr; }()
+#define dx12_check(call) [&]() { HRESULT hr = call; dx12_assert(SUCCEEDED(hr), to_stack_string(#call).c_str()); return hr; }()
 
 namespace wi::graphics
 {

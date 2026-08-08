@@ -436,8 +436,8 @@ constexpr auto relative_path_storage(const char* path)
 	return ret;
 }
 
-// Extract function name from a string at compile-time
-constexpr auto extract_function_name(const char* str)
+// Convert string literal to StackString at compile-time
+constexpr auto to_stack_string(const char* str)
 {
 	StackString ret;
 	ret.push_back(str);
