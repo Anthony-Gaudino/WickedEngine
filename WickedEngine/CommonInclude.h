@@ -92,10 +92,11 @@ constexpr T smoothstep(T edge0, T edge1, T x)
 }
 
 template <typename Vec4, typename Vec2>
-constexpr float bilinear(Vec4 gather, Vec2 pixel_frac)
+constexpr auto bilinear(Vec4 gather, Vec2 pixel_frac)
 {
-	const float top_row = lerp(gather.w, gather.z, pixel_frac.x);
-	const float bottom_row = lerp(gather.x, gather.y, pixel_frac.x);
+	using T = decltype(gather.x);
+	const T top_row = lerp(gather.w, gather.z, pixel_frac.x);
+	const T bottom_row = lerp(gather.x, gather.y, pixel_frac.x);
 	return lerp(top_row, bottom_row, pixel_frac.y);
 }
 
