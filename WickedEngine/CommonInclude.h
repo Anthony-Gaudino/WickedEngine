@@ -397,7 +397,7 @@ constexpr E operator~(E rhs)
 	rhs = static_cast<E>(~static_cast<U>(rhs));
 	return rhs;
 }
-template<typename E>
+template<typename E, EnableIfBitmaskOps<E> = 0>
 constexpr bool has_flag(E lhs, E rhs)
 {
 	return (lhs & rhs) == rhs;
