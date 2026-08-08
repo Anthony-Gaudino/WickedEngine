@@ -106,7 +106,7 @@ struct StackString
 	constexpr operator const char* () const { return chars; }
 	constexpr const char* const c_str() const { return chars; }
 	constexpr void push_back(const char* str) { while (*str != 0 && (cnt < (capacity - 1))) { chars[cnt++] = *str; str++; } }
-	constexpr unsigned size() const { return capacity; }
+	constexpr unsigned size() const { return cnt; }
 	constexpr unsigned length() const { return cnt; }
 	constexpr bool empty() const { return cnt == 0; }
 	constexpr StackString() = default;
