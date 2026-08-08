@@ -287,7 +287,7 @@ inline unsigned int countbits(unsigned int value)
 {
 	return __builtin_popcount(value);
 }
-inline unsigned long long countbits(unsigned long value)
+inline unsigned long countbits(unsigned long value)
 {
 	return __builtin_popcountl(value);
 }
