@@ -21,7 +21,7 @@
 #define __forceinline __attribute__((always_inline)) inline
 #define NO_SANITIZE(x) __attribute__((no_sanitize(x)))
 #else
-#define NO_SANITIZE(x)
+#define NO_SANITIZE(x) (void)(x)
 #endif // defined(__GNUC__) || defined(__clang__)
 
 #ifdef _MSC_VER
