@@ -93,7 +93,10 @@ UnderwaterParticleVertexToPixel main(
 	// sprite that, although centred behind the eye, would still reach across
 	// the screen in front of it.
 	const float viewDepth = max(
-		dot(GetCamera().view_projection._41_42_43_44, float4(particleCenter, 1)),
+		dot(
+			GetCamera().view_projection._41_42_43_44,
+			float4(particleCenter, 1)
+		),
 		GetCamera().z_near
 	);
 
