@@ -4,6 +4,7 @@
 #include "wiHelper.h"
 #include "wiTextureHelper.h"
 #include "wiProfiler.h"
+#include "wiScene/environment/UnderwaterParticles/UnderwaterParticles.h"
 
 using namespace wi::graphics;
 using namespace wi::enums;
@@ -2350,13 +2351,26 @@ namespace wi
 			// at all counts, as with sprites and emitters above.
 			const bool farSideTrails = wi::renderer::AreTrailsQueued();
 
+			// The suspended particles exist only below the surface, so they are
+			// far side content exactly when the far side is the submerged one -
+			// with the camera under water the far side is the air above it,
+			// where every particle is clipped away. Beyond that the only
+			// question is whether the field, which is centred on the camera,
+			// reaches down as far as the water at all.
+			const bool farSideParticles =
+				farSide == wi::renderer::WATERSIDE_SUBMERGED &&
+				camera->Eye.y
+					- (wi::scene::environment::UnderwaterParticles()
+						.FieldSize() * 0.5f) <= waterTop;
+
 			const bool anyFarSideContent =
 				farSideTransparents ||
 				farSideLights ||
 				farSideSplats ||
 				farSideSpritesOrFonts ||
 				farSideEmitters ||
-				farSideTrails;
+				farSideTrails ||
+				farSideParticles;
 
 			if (anyFarSideContent)
 			{
@@ -2399,6 +2413,10 @@ namespace wi
 				if (farSideEmitters)
 				{
 					wi::renderer::DrawSoftParticles(visibility_main, false, cmd);
+				}
+				if (farSideParticles)
+				{
+					wi::renderer::DrawUnderwaterParticles(visibility_main, cmd);
 				}
 				if (farSideSplats)
 				{
@@ -2562,6 +2580,15 @@ namespace wi
 		}
 		wi::renderer::DrawLightVisualizers(visibility_main, cmd);
 		wi::renderer::DrawSoftParticles(visibility_main, false, cmd);
+		// Unlike the other content here the particles belong to one side of the
+		// water outright, so they are drawn once rather than in both halves.
+		// With the camera above the surface the near side is the air, holding
+		// none of them, and the field has already gone down in the far pass
+		// before the ocean - where the surface refracts it, as it should.
+		if (nearSide != wi::renderer::WATERSIDE_ABOVE)
+		{
+			wi::renderer::DrawUnderwaterParticles(visibility_main, cmd);
+		}
 		wi::renderer::DrawGaussianSplats(*scene, *camera, cmd);
 		wi::renderer::DrawTrails(*camera, cmd, false);
 		if (oceanVisible)

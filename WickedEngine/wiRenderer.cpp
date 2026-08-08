@@ -23,6 +23,7 @@
 #include "wiVoxelGrid.h"
 #include "wiPathQuery.h"
 #include "wiTrailRenderer.h"
+#include "wiScene/environment/UnderwaterParticles/UnderwaterParticles.h"
 
 #include "shaders/ShaderInterop_Postprocess.h"
 #include "shaders/ShaderInterop_Raytracing.h"
@@ -30,6 +31,7 @@
 #include "shaders/ShaderInterop_DDGI.h"
 #include "shaders/ShaderInterop_VXGI.h"
 #include "shaders/ShaderInterop_FSR2.h"
+#include "shaders/ShaderInterop_UnderwaterParticles.h"
 #include "shaders/uvsphere.hlsli"
 #include "shaders/cone.hlsli"
 
@@ -637,6 +639,7 @@ PipelineState PSO_volumetriclight[LightComponent::LIGHTTYPE_COUNT];
 
 PipelineState PSO_renderlightmap;
 PipelineState PSO_paintdecal;
+PipelineState PSO_underwaterparticle;
 
 PipelineState PSO_lensflare;
 
@@ -916,6 +919,7 @@ void LoadShaders()
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::VS, shaders[VSTYPE_DDGI_DEBUG], "ddgi_debugVS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::VS, shaders[VSTYPE_SCREEN], "screenVS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::VS, shaders[VSTYPE_VOXELGRID], "voxelgridVS.cso"); });
+	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::VS, shaders[VSTYPE_UNDERWATERPARTICLE], "underwaterParticleVS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::VS, shaders[VSTYPE_PAINTDECAL], "paintdecalVS.cso"); });
 
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::VS, shaders[VSTYPE_ENVMAP], "envMapVS.cso"); });
@@ -941,6 +945,7 @@ void LoadShaders()
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::PS, shaders[PSTYPE_VOLUMETRICLIGHT_POINT], "volumetricLight_PointPS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::PS, shaders[PSTYPE_VOLUMETRICLIGHT_SPOT], "volumetricLight_SpotPS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::PS, shaders[PSTYPE_VOLUMETRICLIGHT_RECTANGLE], "volumetriclight_rectanglePS.cso"); });
+	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::PS, shaders[PSTYPE_UNDERWATERPARTICLE], "underwaterParticlePS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::PS, shaders[PSTYPE_ENVMAP], "envMapPS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::PS, shaders[PSTYPE_ENVMAP_SKY_STATIC], "envMap_skyPS_static.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::PS, shaders[PSTYPE_ENVMAP_SKY_DYNAMIC], "envMap_skyPS_dynamic.cso"); });
@@ -1504,6 +1509,24 @@ void LoadShaders()
 		desc.dss = &depthStencils[DSSTYPE_DEFAULT]; // Note: depth is used to disallow overlapped pixel/primitive writes with conservative rasterization!
 
 		device->CreatePipelineState(&desc, &PSO_renderlightmap);
+		});
+	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) {
+		PipelineStateDesc desc;
+		desc.vs = &shaders[VSTYPE_UNDERWATERPARTICLE];
+		desc.ps = &shaders[PSTYPE_UNDERWATERPARTICLE];
+		// A sprite turned to face the camera has no back to cull.
+		desc.rs = &rasterizers[RSTYPE_DOUBLESIDED];
+		// The pixel shader premultiplies, so a mote fading out contributes
+		// less light as well as less coverage.
+		desc.bs = &blendStates[BSTYPE_PREMULTIPLIED];
+		// Tested against the scene so a mote behind the sea bed is rejected,
+		// but writing neither depth nor stencil: the particles are unsorted
+		// among themselves, so depth writes would let whichever drew first
+		// hide the rest, and a stencil write would mark the sea as geometry
+		// for every pass keyed off it.
+		desc.dss = &depthStencils[DSSTYPE_DEPTHREAD];
+
+		device->CreatePipelineState(&desc, &PSO_underwaterparticle);
 		});
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) {
 		PipelineStateDesc desc;
@@ -6364,6 +6387,38 @@ void DrawSpritesAndFonts(
 	}
 	device->EventEnd(cmd);
 }
+void DrawUnderwaterParticles(const Visibility& vis, CommandList cmd)
+{
+	if (vis.scene == nullptr || !vis.scene->weather.IsOceanEnabled())
+	{
+		return;
+	}
+
+	device->EventBegin("Underwater Particles", cmd);
+
+	BindCommonResources(cmd);
+	device->BindPipelineState(&PSO_underwaterparticle, cmd);
+
+	// Stateless for now: everything it reports is a constant of marine snow.
+	// It becomes a function of the scene's water medium in a later stage, at
+	// which point it gains the medium and stops being default constructible.
+	const wi::scene::environment::UnderwaterParticles particles;
+
+	UnderwaterParticlePushConstants push;
+	push.fieldCenter = vis.camera->Eye;
+	push.fieldSize = particles.FieldSize();
+	push.driftOffset = particles.DriftOffset(vis.scene->time);
+	push.particleRadius = particles.ParticleRadius();
+	push.particleCount = particles.ParticleCount();
+	device->PushConstants(&push, sizeof(push), cmd);
+
+	// Six vertices per instance, one sprite: the vertex shader has no buffer
+	// to read and builds both triangles from the two system values alone.
+	device->DrawInstanced(6, push.particleCount, 0, 0, cmd);
+
+	device->EventEnd(cmd);
+}
+
 void DrawLightVisualizers(
 	const Visibility& vis,
 	CommandList cmd,

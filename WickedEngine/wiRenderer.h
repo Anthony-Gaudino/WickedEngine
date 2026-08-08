@@ -365,6 +365,26 @@ namespace wi::renderer
 		bool distortion, 
 		wi::graphics::CommandList cmd
 	);
+	/**
+	 * Draws the detritus suspended in the water around the viewer.
+	 *
+	 * Issue this from **both** halves of the transparent pass, as the emitters
+	 * are: the far half before the ocean surface, so its refraction picks the
+	 * particles up, and the near half after, where the surface's depth cannot
+	 * reject them. The pixel shader keeps only the fragments belonging to the
+	 * side being drawn, so a particle straddling the waterline is resolved per
+	 * fragment rather than being classified whole.
+	 *
+	 * Draws nothing when the scene has no ocean.
+	 *
+	 * @param[in] vis - Visibility the particles are drawn for; supplies the
+	 *                  scene and the camera the field centres on.
+	 * @param[in] cmd - Command list to record into.
+	 */
+	void DrawUnderwaterParticles(
+		const Visibility& vis,
+		wi::graphics::CommandList cmd
+	);
 	// Does the gaussian splat culling and sorting for a single camera
 	void UpdateGaussianSplatsForCamera(
 		const wi::scene::Scene& scene,
