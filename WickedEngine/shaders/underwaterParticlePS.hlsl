@@ -50,7 +50,7 @@ half4 main(UnderwaterParticleVertexToPixel input) : SV_TARGET
 	// into a diamond as it shrinks.
 	const float radialSq = dot(input.corner, input.corner);
 	clip(1 - radialSq);
-	half alpha = (half)(1 - radialSq);
+	half alpha = (half)(1 - radialSq) * input.opacity;
 
 	[branch]
 	if (GetCamera().texture_depth_index >= 0)

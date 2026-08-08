@@ -45,6 +45,16 @@ static const float WOBBLE_AMPLITUDE = 0.06;
  */
 static const float WOBBLE_RATE = 0.8;
 
+/**
+ * Smallest radius a particle may be drawn at, in pixels.
+ *
+ * A little over a pixel, so that a sprite always straddles enough of the grid
+ * to be hit consistently as it moves. Larger is steadier still, but the
+ * particle is spread over more of the image and reads as a soft blob rather
+ * than a fleck.
+ */
+static const float MIN_PIXEL_RADIUS = 1.5;
+
 UnderwaterParticleVertexToPixel main(
 	uint vertexID : SV_VertexID,
 	uint instanceID : SV_InstanceID
@@ -74,16 +84,47 @@ UnderwaterParticleVertexToPixel main(
 	particleCenter = particles.fieldCenter + relative
 		- (particles.fieldSize * round(relative / particles.fieldSize));
 
+	// Depth the perspective divide will use. A camera facing offset lies in the
+	// view plane and so does not change it, which is why the whole sprite can
+	// be sized from the centre alone.
+	//
+	// Floored at the near plane rather than at zero: behind the camera this
+	// quantity goes negative, and a negative depth would ask for an enormous
+	// sprite that, although centred behind the eye, would still reach across
+	// the screen in front of it.
+	const float viewDepth = max(
+		dot(GetCamera().view_projection._41_42_43_44, float4(particleCenter, 1)),
+		GetCamera().z_near
+	);
+
+	// Radius on screen, in pixels. The projection's vertical scale takes a
+	// world length to normalized device coordinates, which span two units
+	// across the viewport.
+	const float pixelRadius = particles.particleRadius
+		* GetCamera().projection._22 * 0.5
+		* (float)GetCamera().internal_resolution.y / viewDepth;
+
+	// Anything smaller than a pixel is missed by the rasterizer as often as it
+	// is caught, and a mote that appears and disappears with sub-pixel camera
+	// movement reads as a field of fireflies. So a distant particle is drawn
+	// larger than it is and dimmed to match: spreading fixed light over
+	// `scale^2` times the area costs it `scale^2` of its brightness, which is
+	// the same total contribution the correctly sized sprite would have made.
+	// The dimming is what keeps this from thickening the water - the field
+	// must not fake attenuation the medium already accounts for.
+	const float scale = max(1, MIN_PIXEL_RADIUS / max(pixelRadius, 0.00001));
+
 	const float2 corner = QUAD_CORNERS[vertexID];
 
 	// Camera facing: the sprite's plane is the view plane, so its corners are
 	// the camera's right and up axes taken out of the inverse view matrix.
 	const float3 worldPosition = particleCenter + mul(
 		(float3x3)GetCamera().inverse_view,
-		float3(corner * particles.particleRadius, 0)
+		float3(corner * (particles.particleRadius * scale), 0)
 	);
 
 	UnderwaterParticleVertexToPixel output;
+	output.opacity = (half)(1 / (scale * scale));
 	output.position =
 		mul(GetCamera().view_projection, float4(worldPosition, 1));
 	output.P = worldPosition;

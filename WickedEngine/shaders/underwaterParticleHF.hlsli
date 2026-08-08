@@ -29,6 +29,15 @@ struct UnderwaterParticleVertexToPixel
 	/** Position within the sprite, -1 to 1 on both axes from its centre. */
 	float2 corner : PARTICLECORNER;
 
+	/**
+	 * Fraction of its light this particle still carries, 0 to 1.
+	 *
+	 * Below 1 only where the sprite had to be enlarged to stay resolvable, and
+	 * exactly compensates that enlargement, so a particle emits the same total
+	 * light however many pixels it was spread over.
+	 */
+	nointerpolation half opacity : PARTICLEOPACITY;
+
 	/** Distance to the camera's clip plane, for planar reflection passes. */
 	float clip : SV_ClipDistance0;
 };
