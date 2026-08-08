@@ -4,6 +4,7 @@
 // This is a helper include file pasted into all engine headers, try to keep it minimal!
 // Do not include engine features in this file!
 
+#include <cassert>
 #include <cfloat>
 #include <cstdint>
 #include <type_traits>
@@ -123,24 +124,24 @@ struct StackVector
 {
 	T items[count] = {};
 	unsigned last = 0;
-	constexpr void resize(unsigned size) { last = size; }
+	constexpr void resize(unsigned size) { assert(size <= count); last = size; }
 	constexpr unsigned size() const { return last; }
 	constexpr bool empty() const { return last == 0; }
-	constexpr void push_back(const T& item) { items[last++] = item; }
-	constexpr void push_back(T&& item) { items[last++] = static_cast<T&&>(item); }
+	constexpr void push_back(const T& item) { assert(last < count); items[last++] = item; }
+	constexpr void push_back(T&& item) { assert(last < count); items[last++] = static_cast<T&&>(item); }
 	constexpr void pop_back() { if (!empty()) items[--last] = {}; }
 	constexpr void clear() { for (unsigned i = 0; i < last; ++i) items[i] = {}; last = 0; }
 	constexpr T* data() { return items; }
 	constexpr const T* data() const { return items; }
 	constexpr T* begin() { return items; }
 	constexpr T* end() { return items + last; }
-	constexpr const T& back() const { return items[last - 1]; }
-	constexpr T& back() { return items[last - 1]; }
-	constexpr const T& front() const { return items[0]; }
-	constexpr T& front() { return items[0]; }
+	constexpr const T& back() const { assert(!empty()); return items[last - 1]; }
+	constexpr T& back() { assert(!empty()); return items[last - 1]; }
+	constexpr const T& front() const { assert(!empty()); return items[0]; }
+	constexpr T& front() { assert(!empty()); return items[0]; }
 	constexpr T& emplace_back() { push_back({}); return back(); }
-	constexpr const T& operator[](unsigned index) const { return items[index]; }
-	constexpr T& operator[](unsigned index) { return items[index]; }
+	constexpr const T& operator[](unsigned index) const { assert(index < last); return items[index]; }
+	constexpr T& operator[](unsigned index) { assert(index < last); return items[index]; }
 };
 
 // CPU intrinsics:
