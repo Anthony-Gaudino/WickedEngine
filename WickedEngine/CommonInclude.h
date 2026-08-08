@@ -1,5 +1,4 @@
-#ifndef WICKEDENGINE_COMMONINCLUDE_H
-#define WICKEDENGINE_COMMONINCLUDE_H
+#pragma once
 
 // This is a helper include file pasted into all engine headers, try to keep it minimal!
 // Do not include engine features in this file!
@@ -449,5 +448,3 @@ constexpr auto to_stack_string(const char* str)
 	ret.push_back(str);
 	return ret;
 }
-
-#endif //WICKEDENGINE_COMMONINCLUDE_H
