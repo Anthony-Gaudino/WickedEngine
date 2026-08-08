@@ -34,7 +34,7 @@
 template<typename T>
 constexpr T align(T value, T alignment)
 {
-	return ((value + alignment - T(1)) / alignment) * alignment;
+	return ((value - 1) | (alignment - 1)) + 1;
 }
 
 template<typename T>
