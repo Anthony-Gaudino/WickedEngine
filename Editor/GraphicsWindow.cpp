@@ -1529,6 +1529,41 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 		});
 	AddWidget(&underwaterSnellRTCheckBox);
 
+	underwaterParticlesCheckBox.Create("Underwater Particles: ");
+	underwaterParticlesCheckBox.SetTooltip("Draw the detritus suspended in the water - marine snow - so that light shafts and lamps have something to fall on. How far the field reaches and how thickly it is populated both follow the water clarity set in Weather (turbidity / water type); the slider only scales that.");
+	underwaterParticlesCheckBox.SetSize(XMFLOAT2(hei, hei));
+	underwaterParticlesCheckBox.SetPos(XMFLOAT2(x, y += step));
+
+	if (editor->main->config.GetSection("graphics").Has("underwater_particles"))
+	{
+		editor->renderPath->setUnderwaterParticlesEnabled(editor->main->config.GetSection("graphics").GetBool("underwater_particles"));
+	}
+
+	underwaterParticlesCheckBox.OnClick([=](wi::gui::EventArgs args) {
+		editor->renderPath->setUnderwaterParticlesEnabled(args.bValue);
+		editor->main->config.GetSection("graphics").Set("underwater_particles", args.bValue);
+		editor->main->config.Commit();
+		});
+	AddWidget(&underwaterParticlesCheckBox);
+
+	underwaterParticleDensitySlider.Create(0, 4, 1, 1000, "UnderwaterParticles.Density: ");
+	underwaterParticleDensitySlider.SetText("Density: ");
+	underwaterParticleDensitySlider.SetTooltip("Scales how thickly the particle field is populated. 1 leaves it as the water implies; this is a taste control, not a physical one - the water's own scattering is unaffected either way.");
+	underwaterParticleDensitySlider.SetSize(XMFLOAT2(mod_wid, hei));
+	underwaterParticleDensitySlider.SetPos(XMFLOAT2(x + 100, y));
+
+	if (editor->main->config.GetSection("graphics").Has("underwater_particle_density"))
+	{
+		editor->renderPath->setUnderwaterParticleDensity(editor->main->config.GetSection("graphics").GetFloat("underwater_particle_density"));
+	}
+
+	underwaterParticleDensitySlider.OnSlide([=](wi::gui::EventArgs args) {
+		editor->renderPath->setUnderwaterParticleDensity(args.fValue);
+		editor->main->config.GetSection("graphics").Set("underwater_particle_density", args.fValue);
+		editor->main->config.Commit();
+		});
+	AddWidget(&underwaterParticleDensitySlider);
+
 	underwaterGodRaysProceduralCheckBox.Create("God Rays (Procedural): ");
 	underwaterGodRaysProceduralCheckBox.SetTooltip("Stylised underwater god rays: radial stripes swept around the sun's screen position. Costs almost nothing, but it is screen space - the stripes are not attached to the world and no geometry blocks them. Independent of a light's own Volumetric flag; either or both can be on.");
 	underwaterGodRaysProceduralCheckBox.SetSize(XMFLOAT2(hei, hei));
@@ -2050,6 +2085,8 @@ void GraphicsWindow::UpdateData()
 	underwaterSnellFadeSlider.SetValue(editor->renderPath->getUnderwaterSnellFade());
 	underwaterSnellRTCheckBox.SetCheck(editor->renderPath->getUnderwaterSnellRTEnabled());
 	underwaterGodRaysProceduralCheckBox.SetCheck(editor->renderPath->getUnderwaterGodRaysProceduralEnabled());
+	underwaterParticlesCheckBox.SetCheck(editor->renderPath->getUnderwaterParticlesEnabled());
+	underwaterParticleDensitySlider.SetValue(editor->renderPath->getUnderwaterParticleDensity());
 	bloomCheckBox.SetCheck(editor->renderPath->getBloomEnabled());
 	bloomStrengthSlider.SetValue(editor->renderPath->getBloomThreshold());
 	fxaaCheckBox.SetCheck(editor->renderPath->getFXAAEnabled());
@@ -2324,6 +2361,8 @@ void GraphicsWindow::ResizeLayout()
 	layout.add_right(underwaterSnellFadeSlider);
 	layout.add_right(underwaterSnellRTCheckBox);
 	layout.add_right(underwaterGodRaysProceduralCheckBox);
+	layout.add_right(underwaterParticleDensitySlider);
+	underwaterParticlesCheckBox.SetPos(XMFLOAT2(underwaterParticleDensitySlider.GetPos().x - underwaterParticlesCheckBox.GetSize().x - 80, underwaterParticleDensitySlider.GetPos().y));
 	layout.add_right(bloomStrengthSlider);
 	bloomCheckBox.SetPos(XMFLOAT2(bloomStrengthSlider.GetPos().x - bloomCheckBox.GetSize().x - 80, bloomStrengthSlider.GetPos().y));
 	layout.add_right(fxaaCheckBox);

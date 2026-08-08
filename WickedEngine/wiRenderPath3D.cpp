@@ -2358,10 +2358,12 @@ namespace wi
 			// question is whether the field, which is centred on the camera,
 			// reaches down as far as the water at all.
 			const bool farSideParticles =
+				getUnderwaterParticlesEnabled() &&
 				farSide == wi::renderer::WATERSIDE_SUBMERGED &&
 				camera->Eye.y
 					- (wi::scene::environment::UnderwaterParticles(
-						scene->weather.oceanParameters.waterMedium)
+						scene->weather.oceanParameters.waterMedium,
+						getUnderwaterParticleDensity())
 							.FieldSize() * 0.5f) <= waterTop;
 
 			const bool anyFarSideContent =
@@ -2417,7 +2419,8 @@ namespace wi
 				}
 				if (farSideParticles)
 				{
-					wi::renderer::DrawUnderwaterParticles(visibility_main, cmd);
+					wi::renderer::DrawUnderwaterParticles(
+						visibility_main, getUnderwaterParticleDensity(), cmd);
 				}
 				if (farSideSplats)
 				{
@@ -2586,9 +2589,11 @@ namespace wi
 		// With the camera above the surface the near side is the air, holding
 		// none of them, and the field has already gone down in the far pass
 		// before the ocean - where the surface refracts it, as it should.
-		if (nearSide != wi::renderer::WATERSIDE_ABOVE)
+		if (getUnderwaterParticlesEnabled() &&
+			nearSide != wi::renderer::WATERSIDE_ABOVE)
 		{
-			wi::renderer::DrawUnderwaterParticles(visibility_main, cmd);
+			wi::renderer::DrawUnderwaterParticles(
+				visibility_main, getUnderwaterParticleDensity(), cmd);
 		}
 		wi::renderer::DrawGaussianSplats(*scene, *camera, cmd);
 		wi::renderer::DrawTrails(*camera, cmd, false);

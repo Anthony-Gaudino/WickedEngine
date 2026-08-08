@@ -46,7 +46,7 @@ namespace wi::scene::environment { class UnderwaterParticles; }
  *
  * Example usage:
  * @code
- * const UnderwaterParticles particles(ocean.params.waterMedium);
+ * const UnderwaterParticles particles(ocean.params.waterMedium, 1.0F);
  * const uint32_t count = particles.ParticleCount();
  * const float size = particles.FieldSize();
  * const XMFLOAT3 drift = particles.DriftOffset(sceneTime);
@@ -78,6 +78,17 @@ class wi::scene::environment::UnderwaterParticles final
 		 * edited in between.
 		 */
 		wi::scene::environment::WaterMedium medium;
+
+		/**
+		 * Scales how thickly the field is populated, 1 leaving it as the water
+		 * implies.
+		 *
+		 * The one authored quantity here, and a *taste* control rather than a
+		 * physical one - which is why it lives with the graphics settings and
+		 * not in the scene. How much detritus the water carries is already
+		 * said by the medium; this only says how much of it to draw.
+		 */
+		float density = 1.0F;
 	} props;
 
 	/*
@@ -95,9 +106,12 @@ class wi::scene::environment::UnderwaterParticles final
 	 *
 	 * @param[in] medium - The water the particles drift in. Supplies both the
 	 *                     reach of the field and how thickly it is populated.
+	 * @param[in] density - Scales the population, 1 leaving it as the medium
+	 *                      implies. Clamped to non-negative.
 	 */
-	explicit UnderwaterParticles(
-		const wi::scene::environment::WaterMedium& medium
+	UnderwaterParticles(
+		const wi::scene::environment::WaterMedium& medium,
+		float density
 	) noexcept;
 
 	// Methods

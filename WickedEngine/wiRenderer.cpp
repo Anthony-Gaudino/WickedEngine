@@ -6387,9 +6387,23 @@ void DrawSpritesAndFonts(
 	}
 	device->EventEnd(cmd);
 }
-void DrawUnderwaterParticles(const Visibility& vis, CommandList cmd)
+void DrawUnderwaterParticles(
+	const Visibility& vis,
+	const float density,
+	CommandList cmd
+)
 {
 	if (vis.scene == nullptr || !vis.scene->weather.IsOceanEnabled())
+	{
+		return;
+	}
+
+	const wi::scene::environment::UnderwaterParticles particles(
+		vis.scene->weather.oceanParameters.waterMedium, density);
+
+	// Water with nothing suspended in it, or the density turned right down.
+	// Asked before any state is bound, so that off costs one comparison.
+	if (particles.ParticleCount() == 0)
 	{
 		return;
 	}
@@ -6398,9 +6412,6 @@ void DrawUnderwaterParticles(const Visibility& vis, CommandList cmd)
 
 	BindCommonResources(cmd);
 	device->BindPipelineState(&PSO_underwaterparticle, cmd);
-
-	const wi::scene::environment::UnderwaterParticles particles(
-		vis.scene->weather.oceanParameters.waterMedium);
 
 	UnderwaterParticlePushConstants push;
 	push.fieldCenter = vis.camera->Eye;

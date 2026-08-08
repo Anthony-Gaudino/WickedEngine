@@ -50,6 +50,7 @@ namespace wi
 		float underwaterMagnification = 1.33f;
 		float underwaterSnellStrength = 1.0f;
 		float underwaterSnellFade = 1.0f;
+		float underwaterParticleDensity = 1.0f;
 		uint32_t screenSpaceShadowSampleCount = 16;
 		float screenSpaceShadowRange = 1;
 		float eyeadaptionKey = 0.115f;
@@ -98,6 +99,7 @@ namespace wi
 		bool underwaterSnellEnabled = true;
 		bool underwaterSnellRTEnabled = true;
 		bool underwaterGodRaysProceduralEnabled = true;
+		bool underwaterParticlesEnabled = true;
 		bool ditherEnabled = true;
 		bool occlusionCullingEnabled = true;
 		bool sceneUpdateEnabled = true;
@@ -269,6 +271,7 @@ namespace wi
 		[[nodiscard]] constexpr float getUnderwaterMagnification() const { return underwaterMagnification; }
 		[[nodiscard]] constexpr float getUnderwaterSnellStrength() const { return underwaterSnellStrength; }
 		[[nodiscard]] constexpr float getUnderwaterSnellFade() const { return underwaterSnellFade; }
+		[[nodiscard]] constexpr float getUnderwaterParticleDensity() const { return underwaterParticleDensity; }
 		constexpr uint32_t getScreenSpaceShadowSampleCount() const { return screenSpaceShadowSampleCount; }
 		constexpr float getScreenSpaceShadowRange() const { return screenSpaceShadowRange; }
 		constexpr float getEyeAdaptionKey() const { return eyeadaptionKey; }
@@ -316,6 +319,7 @@ namespace wi
 		[[nodiscard]] constexpr bool getUnderwaterSnellEnabled() const { return underwaterSnellEnabled; }
 		[[nodiscard]] constexpr bool getUnderwaterSnellRTEnabled() const { return underwaterSnellRTEnabled; }
 		[[nodiscard]] constexpr bool getUnderwaterGodRaysProceduralEnabled() const { return underwaterGodRaysProceduralEnabled; }
+		[[nodiscard]] constexpr bool getUnderwaterParticlesEnabled() const { return underwaterParticlesEnabled; }
 		constexpr bool getDitherEnabled() const { return ditherEnabled; }
 		constexpr bool getOcclusionCullingEnabled() const { return occlusionCullingEnabled; }
 		constexpr bool getSceneUpdateEnabled() const { return sceneUpdateEnabled; }
@@ -345,6 +349,7 @@ namespace wi
 		constexpr void setUnderwaterMagnification(float value) { underwaterMagnification = value; }
 		constexpr void setUnderwaterSnellStrength(float value) { underwaterSnellStrength = value; }
 		constexpr void setUnderwaterSnellFade(float value) { underwaterSnellFade = value; }
+		constexpr void setUnderwaterParticleDensity(float value) { underwaterParticleDensity = value; }
 		constexpr void setScreenSpaceShadowSampleCount(uint32_t value) { screenSpaceShadowSampleCount = value; }
 		constexpr void setScreenSpaceShadowRange(float value) { screenSpaceShadowRange = value; }
 		constexpr void setEyeAdaptionKey(float value) { eyeadaptionKey = value; }
@@ -391,6 +396,7 @@ namespace wi
 		constexpr void setUnderwaterSnellEnabled(bool value) { underwaterSnellEnabled = value; }
 		constexpr void setUnderwaterSnellRTEnabled(bool value) { underwaterSnellRTEnabled = value; }
 		constexpr void setUnderwaterGodRaysProceduralEnabled(bool value) { underwaterGodRaysProceduralEnabled = value; }
+		constexpr void setUnderwaterParticlesEnabled(bool value) { underwaterParticlesEnabled = value; }
 		constexpr void setDitherEnabled(bool value) { ditherEnabled = value; }
 		constexpr void setOcclusionCullingEnabled(bool value) { occlusionCullingEnabled = value; }
 		constexpr void setSceneUpdateEnabled(bool value) { sceneUpdateEnabled = value; }

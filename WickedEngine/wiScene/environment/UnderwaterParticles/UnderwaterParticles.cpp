@@ -57,10 +57,18 @@ namespace
 	/**
 	 * Largest number of particles that may be drawn.
 	 *
-	 * The presets stay well under this; it exists so that a hand-authored
-	 * medium cannot turn one draw call into an unbounded one.
+	 * A safety net for a hand-authored medium, not a budget the presets are
+	 * expected to meet - **it must stay above anything the density control can
+	 * ask for**, or that control goes dead at the top of its range without
+	 * saying so.
+	 *
+	 * The worst case is Jerlov oceanic IB, which asks for 9417 at density 1:
+	 * it sits at the peak of the product, still carrying a 47.6 m field while
+	 * having real turbidity, where clearer water has too few particles and
+	 * murkier water too small a field. Four times that is 37668, so this
+	 * leaves headroom to a density of about 7.
 	 */
-	constexpr uint32_t MAX_PARTICLE_COUNT = 32768;
+	constexpr uint32_t MAX_PARTICLE_COUNT = 65536;
 
 	/**
 	 * Radius of a single particle, in metres.
@@ -93,8 +101,11 @@ Public
 // Constructors
 //==============================================================================
 
-UnderwaterParticles::UnderwaterParticles(const WaterMedium& medium) noexcept
-	: props{ medium }
+UnderwaterParticles::UnderwaterParticles(
+	const WaterMedium& medium,
+	const float density
+) noexcept
+	: props{ medium, std::max(0.0F, density) }
 {
 }
 
@@ -113,7 +124,8 @@ float UnderwaterParticles::FieldSize() const noexcept
 uint32_t UnderwaterParticles::ParticleCount() const noexcept
 {
 	const float size = FieldSize();
-	const float density = PARTICLES_PER_TURBIDITY * props.medium.Turbidity();
+	const float density =
+		PARTICLES_PER_TURBIDITY * props.medium.Turbidity() * props.density;
 	const float count = density * size * size * size;
 
 	return static_cast<uint32_t>(std::clamp(

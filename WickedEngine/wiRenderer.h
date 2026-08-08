@@ -379,10 +379,13 @@ namespace wi::renderer
 	 *
 	 * @param[in] vis - Visibility the particles are drawn for; supplies the
 	 *                  scene and the camera the field centres on.
+	 * @param[in] density - Scales how thickly the field is populated, 1
+	 *                      leaving it as the scene's water implies.
 	 * @param[in] cmd - Command list to record into.
 	 */
 	void DrawUnderwaterParticles(
 		const Visibility& vis,
+		float density,
 		wi::graphics::CommandList cmd
 	);
 	// Does the gaussian splat culling and sorting for a single camera
