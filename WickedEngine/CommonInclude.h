@@ -298,7 +298,7 @@ inline unsigned long long countbits(unsigned long long value)
 {
 	return __builtin_popcountll(value);
 }
-inline unsigned long firstbithigh(unsigned int value)
+inline unsigned int firstbithigh(unsigned int value)
 {
 	if (value == 0)
 	{
@@ -314,7 +314,7 @@ inline unsigned long firstbithigh(unsigned long value)
 	}
 	return __builtin_clzl(value);
 }
-inline unsigned long firstbithigh(unsigned long long value)
+inline unsigned long long firstbithigh(unsigned long long value)
 {
 	if (value == 0)
 	{
@@ -322,7 +322,7 @@ inline unsigned long firstbithigh(unsigned long long value)
 	}
 	return __builtin_clzll(value);
 }
-inline unsigned long firstbitlow(unsigned int value)
+inline unsigned int firstbitlow(unsigned int value)
 {
 	if (value == 0)
 	{
@@ -338,7 +338,7 @@ inline unsigned long firstbitlow(unsigned long value)
 	}
 	return __builtin_ctzl(value);
 }
-inline unsigned long firstbitlow(unsigned long long value)
+inline unsigned long long firstbitlow(unsigned long long value)
 {
 	if (value == 0)
 	{
