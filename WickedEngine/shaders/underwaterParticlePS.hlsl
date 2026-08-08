@@ -1,14 +1,32 @@
 /**
  * Underwater particle pixel shader.
  *
- * Shades one mote of suspended detritus. The particles are drawn on both sides
- * of the water surface - the transparent pass issues them once before the ocean
- * and once after, exactly as it does the emitters - so the first thing this
- * does is drop the half that does not belong to the side being drawn.
+ * Shades one mote of suspended detritus: a small, dull, rough scatterer lit by
+ * whatever reaches it through the water, and fogged by the water between it
+ * and the eye.
+ *
+ * Both of those come free from the shared lighting path. Every light already
+ * arrives dimmed and shifted by the water it crossed, and the ambient term
+ * already arrives through the column of water standing over the point, so a
+ * mote beside a lamp is lit in the lamp's colour while one twenty metres off
+ * is not - which is the whole reason the field is worth drawing.
  */
 
+#define TRANSPARENT // uses transparent light lists
+
+// Note the absence of DISABLE_TRANSPARENT_SHADOWMAP, which the emitters set.
+// Their reason is that a camera facing sprite self-shadows badly against the
+// layer it casts into; these particles are never drawn in a shadow pass, so
+// they cast nothing and cannot self-shadow. Keeping the layer is the point:
+// the ocean surface writes its caustics there rather than any occlusion, and
+// motes lighting up as the filaments sweep over them is the clearest thing
+// the field has to show.
+
 #include "globals.hlsli"
-#include "underwaterHF.hlsli"
+// Not objectHF.hlsli, which the emitters use: it declares the object push
+// constant block, and a shader may only have one. This field carries its own.
+#include "shadingHF.hlsli"
+#include "waterFogHF.hlsli"
 #include "underwaterParticleHF.hlsli"
 
 /**
@@ -29,6 +47,15 @@ static const float SOFT_FADE_DISTANCE = 0.25;
  * off-white rather than anything bright.
  */
 static const half3 PARTICLE_ALBEDO = half3(0.75, 0.73, 0.68);
+
+/**
+ * Specular reflectance of a particle at normal incidence.
+ *
+ * Water's own value. An aggregate this sodden is barely a separate substance
+ * from the water around it, and it presents no smooth face to reflect from in
+ * any case - the roughness below leaves almost nothing of this.
+ */
+static const half PARTICLE_F0 = 0.02;
 
 half4 main(UnderwaterParticleVertexToPixel input) : SV_TARGET
 {
@@ -52,11 +79,12 @@ half4 main(UnderwaterParticleVertexToPixel input) : SV_TARGET
 	clip(1 - radialSq);
 	half alpha = (half)(1 - radialSq) * input.opacity;
 
+	const float2 screenUV =
+		input.position.xy * GetCamera().internal_resolution_rcp;
+
 	[branch]
 	if (GetCamera().texture_depth_index >= 0)
 	{
-		const float2 screenUV =
-			input.position.xy * GetCamera().internal_resolution_rcp;
 		const float sceneDepth = compute_lineardepth(
 			texture_depth.SampleLevel(sampler_linear_clamp, screenUV, 0));
 		const float particleDepth = compute_lineardepth(input.position.z);
@@ -65,5 +93,46 @@ half4 main(UnderwaterParticleVertexToPixel input) : SV_TARGET
 			(sceneDepth - particleDepth) / SOFT_FADE_DISTANCE);
 	}
 
-	return half4(PARTICLE_ALBEDO * alpha, alpha);
+	// Shade the sprite as the sphere it stands for rather than as the disc it
+	// is, so a mote has a lit side and a dark one and the field gains some
+	// shape under a nearby lamp. In view space the visible hemisphere is the
+	// one facing the camera, which is the negative z half.
+	const float3 viewNormal =
+		float3(input.corner, -sqrt(saturate(1 - radialSq)));
+
+	float3 toEye = GetCamera().position - input.P;
+	const float distanceToEye = length(toEye);
+	toEye /= max(distanceToEye, 0.00001);
+
+	Surface surface;
+	surface.init();
+	surface.P = input.P;
+	surface.N = (half3)normalize(
+		mul((float3x3)GetCamera().inverse_view, viewNormal));
+	surface.V = (half3)toEye;
+	surface.albedo = PARTICLE_ALBEDO;
+	surface.f0 = PARTICLE_F0;
+	surface.roughness = 1;
+	surface.opacity = alpha;
+	surface.pixel = (min16uint2)input.position.xy;
+	surface.screenUV = screenUV;
+	surface.update();
+
+	Lighting lighting;
+	lighting.create(0, 0, GetAmbient(surface.N), 0);
+
+	TiledLighting(surface, lighting, GetFlatTileIndex(surface.pixel));
+
+	half4 color = half4(0, 0, 0, alpha);
+	ApplyLighting(surface, lighting, color);
+
+	// Premultiplied from here, matching the blend state. The water's veiling
+	// light then has to be scaled by the coverage too, or a mote covering a
+	// tenth of a pixel would paint haze across the nine tenths it never
+	// touched - which is why this takes the premultiplied fog rather than the
+	// plain one the opaque geometry uses.
+	color.rgb *= color.a;
+	ApplyWaterFogPremultiplied(screenUV, input.P, color);
+
+	return color;
 }
