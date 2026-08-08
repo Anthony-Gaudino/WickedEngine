@@ -88,8 +88,8 @@ constexpr T smoothstep(T edge0, T edge1, T x)
 	return t * t * (T(3) - T(2) * t);
 }
 
-template <typename float4, typename float2>
-constexpr float bilinear(float4 gather, float2 pixel_frac)
+template <typename Vec4, typename Vec2>
+constexpr float bilinear(Vec4 gather, Vec2 pixel_frac)
 {
 	const float top_row = lerp(gather.w, gather.z, pixel_frac.x);
 	const float bottom_row = lerp(gather.x, gather.y, pixel_frac.x);
