@@ -101,17 +101,18 @@ constexpr auto bilinear(Vec4 gather, Vec2 pixel_frac)
 }
 
 // Stack allocated string utility:
-template <unsigned capacity = 256>
+template <unsigned Capacity = 256>
 struct StackString
 {
-	char chars[capacity] = {};
+	char chars[Capacity] = {};
 	unsigned cnt = 0;
-	static_assert(capacity > 1);
+	static_assert(Capacity > 1);
 	constexpr operator const char* () const { return chars; }
 	constexpr const char* const c_str() const { return chars; }
-	constexpr void push_back(const char* str) { if (!str) return; while (*str != 0 && (cnt < (capacity - 1))) { chars[cnt++] = *str; str++; } }
+	constexpr void push_back(const char* str) { if (!str) return; while (*str != 0 && (cnt < (Capacity - 1))) { chars[cnt++] = *str; str++; } }
 	constexpr unsigned size() const { return cnt; }
 	constexpr unsigned length() const { return cnt; }
+	constexpr unsigned capacity() const { return Capacity; }
 	constexpr bool empty() const { return cnt == 0; }
 	constexpr StackString() = default;
 	constexpr StackString(const StackString&) = default;
@@ -128,6 +129,7 @@ struct StackVector
 	constexpr void resize(unsigned size) { assert(size <= count); last = size; }
 	constexpr unsigned size() const { return last; }
 	constexpr bool empty() const { return last == 0; }
+	constexpr unsigned capacity() const { return count; }
 	constexpr void push_back(const T& item) { assert(last < count); items[last++] = item; }
 	constexpr void push_back(T&& item) { assert(last < count); items[last++] = static_cast<T&&>(item); }
 	constexpr void pop_back() { if (!empty()) items[--last] = {}; }
