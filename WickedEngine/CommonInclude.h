@@ -70,7 +70,7 @@ constexpr T frac(T x)
 }
 
 template <typename T>
-constexpr float lerp(T x, T y, T a)
+constexpr T lerp(T x, T y, T a)
 {
 	return x * (1 - a) + y * a;
 }
