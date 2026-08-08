@@ -5,6 +5,7 @@
 
 #include <cassert>
 #include <cfloat>
+#include <cmath>
 #include <cstdint>
 #include <type_traits>
 
@@ -66,9 +67,8 @@ constexpr T saturate(T x)
 template <typename T>
 constexpr T frac(T x)
 {
-	T f = x - T(int(x));
-	f = f < 0 ? (1 + f) : f;
-	return f;
+	static_assert(std::is_floating_point_v<T>, "frac only supports floating-point types");
+	return x - std::floor(x);
 }
 
 template <typename T>
