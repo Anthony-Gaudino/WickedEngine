@@ -398,7 +398,7 @@ constexpr bool has_flag(E lhs, E rhs)
 	return (lhs & rhs) == rhs;
 }
 template<typename T, typename U>
-constexpr void set_flag(T& flags, const U flag, const bool set)
+constexpr void set_flag(T& flags, U flag, bool set)
 {
 	if (set)
 	{
