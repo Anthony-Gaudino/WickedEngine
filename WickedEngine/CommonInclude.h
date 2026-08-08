@@ -8,7 +8,7 @@
 #include <cstdint>
 #include <type_traits>
 
-#define arraysize(a) (sizeof(a) / sizeof(a[0]))
+#define arraysize(a) (sizeof(a) / sizeof((a)[0]))
 
 #ifndef NOMINMAX
 #define NOMINMAX
