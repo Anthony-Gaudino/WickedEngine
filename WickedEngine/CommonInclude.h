@@ -40,7 +40,7 @@ constexpr T align(T value, T alignment)
 template<typename T>
 constexpr bool is_aligned(T value, T alignment)
 {
-	return align(value, alignment) == value;
+	return (value & (alignment - 1)) == 0;
 }
 
 template <typename T>
