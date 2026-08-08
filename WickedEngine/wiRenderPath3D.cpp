@@ -2360,8 +2360,9 @@ namespace wi
 			const bool farSideParticles =
 				farSide == wi::renderer::WATERSIDE_SUBMERGED &&
 				camera->Eye.y
-					- (wi::scene::environment::UnderwaterParticles()
-						.FieldSize() * 0.5f) <= waterTop;
+					- (wi::scene::environment::UnderwaterParticles(
+						scene->weather.oceanParameters.waterMedium)
+							.FieldSize() * 0.5f) <= waterTop;
 
 			const bool anyFarSideContent =
 				farSideTransparents ||

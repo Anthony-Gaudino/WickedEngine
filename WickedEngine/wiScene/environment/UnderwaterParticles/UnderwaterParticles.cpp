@@ -9,6 +9,7 @@
 
 #include "wiScene/environment/UnderwaterParticles/UnderwaterParticles.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 
@@ -18,24 +19,48 @@ using namespace wi::scene::environment;
 namespace
 {
 	/**
-	 * Edge length of the cube the particles occupy, in metres.
+	 * Shortest distance the field is allowed to reach, in metres.
 	 *
-	 * Large enough that the far face sits beyond the distance at which the
-	 * water's own haze has swallowed everything in all but the clearest
-	 * presets, so the boundary falls where there is nothing left to see.
+	 * The wrapping face sits one reach from the eye, and the murkiest water
+	 * here can only be seen through for about 60 cm. Following that literally
+	 * would recycle particles inside arm's reach, where the eye tracks
+	 * individual motes and would catch them vanishing. Everything past the
+	 * true sighting range is hidden by the haze regardless, so the extra
+	 * volume is cheap insurance.
 	 */
-	constexpr float FIELD_SIZE = 40.0F;
+	constexpr float MIN_FIELD_REACH = 4.0F;
 
 	/**
-	 * Number of particles filling the field.
+	 * Furthest the field is allowed to reach, in metres.
 	 *
-	 * Spread through 64000 cubic metres this is roughly one particle every two
-	 * cubic metres, which puts a few hundred within the five metres where they
-	 * are individually resolvable and leaves the rest to merge into texture.
-	 * Six vertices each, so the draw is comparable in size to the ocean
-	 * surface's own clipmap.
+	 * Economy rather than physics. Past roughly this distance a particle is
+	 * enlarged to the renderer's minimum sprite size and dimmed by the square
+	 * of that enlargement, which leaves it contributing a hundredth of its
+	 * light or less. Volume grows as the cube of the reach, so following the
+	 * clearest ocean water out to its full fifty metres would multiply the
+	 * particle count by two orders of magnitude to add nothing anyone can see.
 	 */
-	constexpr uint32_t PARTICLE_COUNT = 32768;
+	constexpr float MAX_FIELD_REACH = 25.0F;
+
+	/**
+	 * Visible flakes per cubic metre, per unit of turbidity.
+	 *
+	 * A **calibrated proportionality, not an inversion**: see the note on
+	 * UnderwaterParticles::ParticleCount for why a scattering coefficient
+	 * cannot be turned into a number density of visible flakes. Chosen so that
+	 * moderately turbid water - Jerlov oceanic III, turbidity 0.5 - puts a
+	 * little over a hundred motes inside the few metres where they read
+	 * individually, which is populated without being soup.
+	 */
+	constexpr float PARTICLES_PER_TURBIDITY = 1.1F;
+
+	/**
+	 * Largest number of particles that may be drawn.
+	 *
+	 * The presets stay well under this; it exists so that a hand-authored
+	 * medium cannot turn one draw call into an unbounded one.
+	 */
+	constexpr uint32_t MAX_PARTICLE_COUNT = 32768;
 
 	/**
 	 * Radius of a single particle, in metres.
@@ -65,17 +90,34 @@ Public
 ################################################################################
 */
 
+// Constructors
+//==============================================================================
+
+UnderwaterParticles::UnderwaterParticles(const WaterMedium& medium) noexcept
+	: props{ medium }
+{
+}
+
 // Methods
 //==============================================================================
 
 float UnderwaterParticles::FieldSize() const noexcept
 {
-	return FIELD_SIZE;
+	const float reach = std::clamp(
+		props.medium.VisibilityDistance(), MIN_FIELD_REACH, MAX_FIELD_REACH);
+
+	// The viewer stands at the centre, so the cube's edge is twice its reach.
+	return 2.0F * reach;
 }
 
 uint32_t UnderwaterParticles::ParticleCount() const noexcept
 {
-	return PARTICLE_COUNT;
+	const float size = FieldSize();
+	const float density = PARTICLES_PER_TURBIDITY * props.medium.Turbidity();
+	const float count = density * size * size * size;
+
+	return static_cast<uint32_t>(std::clamp(
+		count, 0.0F, static_cast<float>(MAX_PARTICLE_COUNT)));
 }
 
 float UnderwaterParticles::ParticleRadius() const noexcept

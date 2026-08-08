@@ -6399,10 +6399,8 @@ void DrawUnderwaterParticles(const Visibility& vis, CommandList cmd)
 	BindCommonResources(cmd);
 	device->BindPipelineState(&PSO_underwaterparticle, cmd);
 
-	// Stateless for now: everything it reports is a constant of marine snow.
-	// It becomes a function of the scene's water medium in a later stage, at
-	// which point it gains the medium and stops being default constructible.
-	const wi::scene::environment::UnderwaterParticles particles;
+	const wi::scene::environment::UnderwaterParticles particles(
+		vis.scene->weather.oceanParameters.waterMedium);
 
 	UnderwaterParticlePushConstants push;
 	push.fieldCenter = vis.camera->Eye;
