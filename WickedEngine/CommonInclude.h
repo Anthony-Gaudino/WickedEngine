@@ -40,11 +40,17 @@
 #endif // defined(__GNUC__) || defined(__clang__)
 
 #ifdef _MSC_VER
-#define WI_DISABLE_DEPRECATED_BEGIN __pragma(warning(push)) __pragma(warning(disable: 4996))
-#define WI_DISABLE_DEPRECATED_END __pragma(warning(pop))
+#define WI_DISABLE_DEPRECATED_BEGIN \
+	__pragma(warning(push)) \
+	__pragma(warning(disable: 4996))
+#define WI_DISABLE_DEPRECATED_END \
+	__pragma(warning(pop))
 #else
-#define WI_DISABLE_DEPRECATED_BEGIN _Pragma("GCC diagnostic push") _Pragma("GCC diagnostic ignored \"-Wdeprecated-declarations\"")
-#define WI_DISABLE_DEPRECATED_END _Pragma("GCC diagnostic pop")
+#define WI_DISABLE_DEPRECATED_BEGIN \
+	_Pragma("GCC diagnostic push") \
+	_Pragma("GCC diagnostic ignored \"-Wdeprecated-declarations\"")
+#define WI_DISABLE_DEPRECATED_END \
+	_Pragma("GCC diagnostic pop")
 #endif // _MSC_VER
 
 /*
@@ -122,7 +128,10 @@ template<typename T>
  * @return \f$ x^2 \f$
  */
 template <typename T>
-[[nodiscard]] constexpr T sqr(T x) noexcept { return x * x; }
+[[nodiscard]] constexpr T sqr(T x) noexcept
+{
+	return x * x;
+}
 
 /**
  * Computes the fourth power of a value.
@@ -132,7 +141,10 @@ template <typename T>
  * @return \f$ x^4 \f$
  */
 template <typename T>
-[[nodiscard]] constexpr T pow4(T x) noexcept { return sqr(sqr(x)); }
+[[nodiscard]] constexpr T pow4(T x) noexcept
+{
+	return sqr(sqr(x));
+}
 
 /**
  * Clamps a value between two bounds.
@@ -174,7 +186,11 @@ template <typename T>
 template <typename T>
 [[nodiscard]] constexpr T frac(T x) noexcept
 {
-	static_assert(std::is_floating_point_v<T>, "frac only supports floating-point types");
+	static_assert(
+		std::is_floating_point_v<T>,
+		"frac only supports floating-point types"
+	);
+
 	return x - std::floor(x);
 }
 
@@ -231,6 +247,7 @@ template <typename T>
 [[nodiscard]] constexpr T smoothstep(T edge0, T edge1, T x) noexcept
 {
 	const T t = saturate((x - edge0) / (edge1 - edge0));
+
 	return t * t * (T(3) - T(2) * t);
 }
 
@@ -260,8 +277,10 @@ template <typename Vec4, typename Vec2>
 		decltype(gather.x)>
 {
 	using T = decltype(gather.x);
-	const T top_row = lerp(gather.w, gather.z, pixel_frac.x);
+
+	const T top_row    = lerp(gather.w, gather.z, pixel_frac.x);
 	const T bottom_row = lerp(gather.x, gather.y, pixel_frac.x);
+
 	return lerp(top_row, bottom_row, pixel_frac.y);
 }
 
@@ -295,28 +314,52 @@ struct StackString
 	 *
 	 * @return Null-terminated C-string pointer.
 	 */
-	[[nodiscard]] constexpr operator const char* () const noexcept { return chars; }
+	[[nodiscard]] constexpr operator const char* () const noexcept
+	{
+		return chars;
+	}
 	
 	/**
 	 * Returns the C-string pointer.
 	 *
 	 * @return Null-terminated C-string pointer.
 	 */
-	[[nodiscard]] constexpr const char* const c_str() const noexcept { return chars; }
+	[[nodiscard]] constexpr const char* const c_str() const noexcept
+	{
+		return chars;
+	}
 	
 	/**
 	 * Appends a null-terminated string.
 	 *
 	 * @param[in] str - Null-terminated string to append. nullptr is ignored.
 	 */
-	constexpr void push_back(const char* str) noexcept { if (!str) return; while (*str != 0 && (cnt < (Capacity - 1))) { chars[cnt++] = *str; str++; } }
+	constexpr void push_back(const char* str) noexcept
+	{
+		if (!str)
+		{
+			return;
+		}
+
+		while (*str != 0 && (cnt < (Capacity - 1)))
+		{
+			chars[cnt++] = *str;
+			str++;
+		}
+	}
 	
 	/**
 	 * Appends a single character.
 	 *
 	 * @param[in] c - Character to append.
 	 */
-	constexpr void push_back(char c) noexcept { if (cnt < (Capacity - 1)) { chars[cnt++] = c; } }
+	constexpr void push_back(char c) noexcept
+	{
+		if (cnt < (Capacity - 1))
+		{
+			chars[cnt++] = c;
+		}
+	}
 	
 	/**
 	 * Appends a single character (operator overload).
@@ -325,7 +368,12 @@ struct StackString
 	 *
 	 * @return Reference to this StackString for chaining.
 	 */
-	[[nodiscard]] constexpr StackString& operator+=(char c) noexcept { push_back(c); return *this; }
+	[[nodiscard]] constexpr StackString& operator+=(char c) noexcept
+	{
+		push_back(c);
+
+		return *this;
+	}
 	
 	/**
 	 * Appends a null-terminated string (operator overload).
@@ -334,38 +382,72 @@ struct StackString
 	 *
 	 * @return Reference to this StackString for chaining.
 	 */
-	[[nodiscard]] constexpr StackString& operator+=(const char* str) noexcept { push_back(str); return *this; }
+	[[nodiscard]] constexpr StackString& operator+=(const char* str) noexcept
+	{
+		push_back(str);
+
+		return *this;
+	}
 	
 	/**
 	 * Returns the current string length (number of characters).
 	 *
 	 * @return Number of characters in the string.
 	 */
-	[[nodiscard]] constexpr unsigned size() const noexcept { return cnt; }
+	[[nodiscard]] constexpr unsigned size() const noexcept
+	{
+		return cnt;
+	}
 	
 	/**
 	 * Returns the current string length (alias for size()).
 	 *
 	 * @return Number of characters in the string.
 	 */
-	[[nodiscard]] constexpr unsigned length() const noexcept { return cnt; }
+	[[nodiscard]] constexpr unsigned length() const noexcept
+	{
+		return cnt;
+	}
 	
 	/**
 	 * Returns the compile-time capacity of the string.
 	 *
 	 * @return Maximum number of characters (including null terminator).
 	 */
-	[[nodiscard]] constexpr unsigned capacity() const noexcept { return Capacity; }
+	[[nodiscard]] constexpr unsigned capacity() const noexcept
+	{
+		return Capacity;
+	}
 	
 	/**
 	 * Checks if the string is empty.
 	 *
 	 * @return true if string length is 0, false otherwise.
 	 */
-	[[nodiscard]] constexpr bool empty() const noexcept { return cnt == 0; }
+	[[nodiscard]] constexpr bool empty() const noexcept
+	{
+		return cnt == 0;
+	}
 	
+	/**
+	 * Default constructor.
+	 *
+	 * Creates an empty string.
+	 */
 	constexpr StackString() = default;
+
+	/**
+	 * Copy constructor.
+	 *
+	 * Performs memberwise copy of the string data.
+	 */
 	constexpr StackString(const StackString&) = default;
+
+	/**
+	 * Move constructor.
+	 *
+	 * Performs memberwise move of the string data.
+	 */
 	constexpr StackString(StackString&&) = default;
 	
 	/**
@@ -373,7 +455,10 @@ struct StackString
 	 *
 	 * @param[in] str - Null-terminated string to copy.
 	 */
-	constexpr StackString(const char* str) { push_back(str); }
+	constexpr StackString(const char* str)
+	{
+		push_back(str);
+	}
 };
 
 /**
@@ -407,28 +492,42 @@ struct StackVector
 	 * @param[in] size - New logical size. Must not exceed compile-time
 	 *                   capacity.
 	 */
-	constexpr void set_size(unsigned size) noexcept { assert(size <= count); last = size; }
+	constexpr void set_size(unsigned size) noexcept
+	{
+		assert(size <= count);
+
+		last = size;
+	}
 	
 	/**
 	 * Returns the current number of elements.
 	 *
 	 * @return Number of elements in the vector.
 	 */
-	[[nodiscard]] constexpr unsigned size() const noexcept { return last; }
+	[[nodiscard]] constexpr unsigned size() const noexcept
+	{
+		return last;
+	}
 	
 	/**
 	 * Checks if the vector is empty.
 	 *
 	 * @return true if size is 0, false otherwise.
 	 */
-	[[nodiscard]] constexpr bool empty() const noexcept { return last == 0; }
+	[[nodiscard]] constexpr bool empty() const noexcept
+	{
+		return last == 0;
+	}
 	
 	/**
 	 * Returns the compile-time capacity of the vector.
 	 *
 	 * @return Maximum number of elements.
 	 */
-	[[nodiscard]] constexpr unsigned capacity() const noexcept { return count; }
+	[[nodiscard]] constexpr unsigned capacity() const noexcept
+	{
+		return count;
+	}
 	
 	/**
 	 * Appends an element by copy.
@@ -437,7 +536,12 @@ struct StackVector
 	 *
 	 * @note Asserts if vector is full.
 	 */
-	constexpr void push_back(const T& item) noexcept { assert(last < count); items[last++] = item; }
+	constexpr void push_back(const T& item) noexcept
+	{
+		assert(last < count);
+
+		items[last++] = item;
+	}
 	
 	/**
 	 * Appends an element by move.
@@ -446,47 +550,78 @@ struct StackVector
 	 *
 	 * @note Asserts if vector is full.
 	 */
-	constexpr void push_back(T&& item) noexcept { assert(last < count); items[last++] = static_cast<T&&>(item); }
+	constexpr void push_back(T&& item) noexcept
+	{
+		assert(last < count);
+
+		items[last++] = static_cast<T&&>(item);
+	}
 	
 	/**
 	 * Removes the last element.
 	 *
 	 * @note No-op if vector is empty.
 	 */
-	constexpr void pop_back() noexcept { if (!empty()) items[--last] = {}; }
+	constexpr void pop_back() noexcept
+	{
+		if (!empty())
+		{
+			items[--last] = {};
+		}
+	}
 	
 	/**
 	 * Clears all elements (sets size to 0).
 	 */
-	constexpr void clear() noexcept { for (unsigned i = 0; i < last; ++i) items[i] = {}; last = 0; }
+	constexpr void clear() noexcept
+	{
+		for (unsigned i = 0; i < last; ++i)
+		{
+			items[i] = {};
+		}
+
+		last = 0;
+	}
 	
 	/**
 	 * Returns pointer to the first element.
 	 *
 	 * @return Pointer to the first element.
 	 */
-	[[nodiscard]] constexpr T* data() noexcept { return items; }
+	[[nodiscard]] constexpr T* data() noexcept
+	{
+		return items;
+	}
 	
 	/**
 	 * Returns const pointer to the first element.
 	 *
 	 * @return Const pointer to the first element.
 	 */
-	[[nodiscard]] constexpr const T* data() const noexcept { return items; }
+	[[nodiscard]] constexpr const T* data() const noexcept
+	{
+		return items;
+	}
 	
 	/**
 	 * Returns iterator to the first element.
 	 *
 	 * @return Pointer to the first element.
 	 */
-	[[nodiscard]] constexpr T* begin() noexcept { return items; }
+	[[nodiscard]] constexpr T* begin() noexcept
+	{
+		return items;
+	}
 	
 	/**
 	 * Returns iterator past the last element.
 	 *
 	 * @return Pointer past the last element.
 	 */
-	[[nodiscard]] constexpr T* end() noexcept { return items + last; }
+	[[nodiscard]] constexpr T* end() noexcept
+	{
+		return items + last;
+	}
 	
 	/**
 	 * Returns reference to the last element.
@@ -495,7 +630,12 @@ struct StackVector
 	 *
 	 * @note Asserts if vector is empty.
 	 */
-	constexpr const T& back() const noexcept { assert(!empty()); return items[last - 1]; }
+	constexpr const T& back() const noexcept
+	{
+		assert(!empty());
+
+		return items[last - 1];
+	}
 	
 	/**
 	 * Returns mutable reference to the last element.
@@ -504,7 +644,12 @@ struct StackVector
 	 *
 	 * @note Asserts if vector is empty.
 	 */
-	constexpr T& back() noexcept { assert(!empty()); return items[last - 1]; }
+	constexpr T& back() noexcept
+	{
+		assert(!empty());
+
+		return items[last - 1];
+	}
 	
 	/**
 	 * Returns reference to the first element.
@@ -513,7 +658,12 @@ struct StackVector
 	 *
 	 * @note Asserts if vector is empty.
 	 */
-	constexpr const T& front() const noexcept { assert(!empty()); return items[0]; }
+	constexpr const T& front() const noexcept
+	{
+		assert(!empty());
+
+		return items[0];
+	}
 	
 	/**
 	 * Returns mutable reference to the first element.
@@ -522,14 +672,24 @@ struct StackVector
 	 *
 	 * @note Asserts if vector is empty.
 	 */
-	constexpr T& front() noexcept { assert(!empty()); return items[0]; }
+	constexpr T& front() noexcept
+	{
+		assert(!empty());
+
+		return items[0];
+	}
 	
 	/**
 	 * Constructs an element in-place at the end.
 	 *
 	 * @return Reference to the newly constructed element.
 	 */
-	constexpr T& emplace_back() noexcept { push_back({}); return back(); }
+	constexpr T& emplace_back() noexcept
+	{
+		push_back({});
+
+		return back();
+	}
 	
 	/**
 	 * Returns const reference to element at index.
@@ -540,7 +700,12 @@ struct StackVector
 	 *
 	 * @note Asserts if index >= size().
 	 */
-	constexpr const T& operator[](unsigned index) const noexcept { assert(index < last); return items[index]; }
+	constexpr const T& operator[](unsigned index) const noexcept
+	{
+		assert(index < last);
+
+		return items[index];
+	}
 	
 	/**
 	 * Returns mutable reference to element at index.
@@ -551,7 +716,12 @@ struct StackVector
 	 *
 	 * @note Asserts if index >= size().
 	 */
-	constexpr T& operator[](unsigned index) noexcept { assert(index < last); return items[index]; }
+	constexpr T& operator[](unsigned index) noexcept
+	{
+		assert(index < last);
+
+		return items[index];
+	}
 	
 	/**
 	 * Returns const reference to element at index (bounds-checked alias).
@@ -562,7 +732,12 @@ struct StackVector
 	 *
 	 * @note Asserts if index >= size().
 	 */
-	constexpr const T& at(unsigned index) const noexcept { assert(index < last); return items[index]; }
+	constexpr const T& at(unsigned index) const noexcept
+	{
+		assert(index < last);
+
+		return items[index];
+	}
 	
 	/**
 	 * Returns mutable reference to element at index (bounds-checked alias).
@@ -573,8 +748,14 @@ struct StackVector
 	 *
 	 * @note Asserts if index >= size().
 	 */
-	constexpr T& at(unsigned index) noexcept { assert(index < last); return items[index]; }
-};
+	constexpr T& at(unsigned index) noexcept
+	{
+		assert(index < last);
+
+		return items[index];
+	}
+	
+	};
 
 /*
 ################################################################################
@@ -597,7 +778,10 @@ CPU Intrinsics
  *
  * @return The original value before the operation.
  */
-[[nodiscard]] inline long AtomicAnd(volatile long* ptr, long mask) noexcept
+[[nodiscard]] inline long AtomicAnd(
+	volatile long* ptr,
+	long mask
+) noexcept
 {
 	return _InterlockedAnd(ptr, mask);
 }
@@ -610,7 +794,10 @@ CPU Intrinsics
  *
  * @return The original value before the operation.
  */
-[[nodiscard]] inline long long AtomicAnd(volatile long long* ptr, long long mask) noexcept
+[[nodiscard]] inline long long AtomicAnd(
+	volatile long long* ptr,
+	long long mask
+) noexcept
 {
 	return _InterlockedAnd64(ptr, mask);
 }
@@ -623,7 +810,10 @@ CPU Intrinsics
  *
  * @return The original value before the operation.
  */
-[[nodiscard]] inline long AtomicOr(volatile long* ptr, long mask) noexcept
+[[nodiscard]] inline long AtomicOr(
+	volatile long* ptr,
+	long mask
+) noexcept
 {
 	return _InterlockedOr(ptr, mask);
 }
@@ -636,7 +826,10 @@ CPU Intrinsics
  *
  * @return The original value before the operation.
  */
-[[nodiscard]] inline long long AtomicOr(volatile long long* ptr, long long mask) noexcept
+[[nodiscard]] inline long long AtomicOr(
+	volatile long long* ptr,
+	long long mask
+) noexcept
 {
 	return _InterlockedOr64(ptr, mask);
 }
@@ -649,7 +842,10 @@ CPU Intrinsics
  *
  * @return The original value before the operation.
  */
-[[nodiscard]] inline long AtomicXor(volatile long* ptr, long mask) noexcept
+[[nodiscard]] inline long AtomicXor(
+	volatile long* ptr,
+	long mask
+) noexcept
 {
 	return _InterlockedXor(ptr, mask);
 }
@@ -662,7 +858,10 @@ CPU Intrinsics
  *
  * @return The original value before the operation.
  */
-[[nodiscard]] inline long long AtomicXor(volatile long long* ptr, long long mask) noexcept
+[[nodiscard]] inline long long AtomicXor(
+	volatile long long* ptr,
+	long long mask
+) noexcept
 {
 	return _InterlockedXor64(ptr, mask);
 }
@@ -675,7 +874,10 @@ CPU Intrinsics
  *
  * @return The original value before the addition.
  */
-[[nodiscard]] inline long AtomicAdd(volatile long* ptr, long val) noexcept
+[[nodiscard]] inline long AtomicAdd(
+	volatile long* ptr,
+	long val
+) noexcept
 {
 	return _InterlockedExchangeAdd(ptr, val);
 }
@@ -688,10 +890,14 @@ CPU Intrinsics
  *
  * @return The original value before the addition.
  */
-[[nodiscard]] inline long long AtomicAdd(volatile long long* ptr, long long val) noexcept
+[[nodiscard]] inline long long AtomicAdd(
+	volatile long long* ptr,
+	long long val
+) noexcept
 {
 	return _InterlockedExchangeAdd64(ptr, val);
 }
+
 /*
 ################################################################################
 Bit Manipulation (Windows)
@@ -729,7 +935,9 @@ Bit Manipulation (Windows)
  *
  * @return Number of set bits (0-64).
  */
-[[nodiscard]] inline unsigned long long countbits(unsigned long long value) noexcept
+[[nodiscard]] inline unsigned long long countbits(
+	unsigned long long value
+) noexcept
 {
 	return __popcnt64(value);
 }
@@ -748,10 +956,12 @@ Bit Manipulation (Windows)
 [[nodiscard]] inline unsigned int firstbithigh(unsigned int value) noexcept
 {
 	unsigned long bit_index;
+
 	if (_BitScanReverse(&bit_index, (unsigned long)value))
 	{
 		return 31u - (unsigned int)bit_index;
 	}
+
 	return 32u;
 }
 
@@ -767,10 +977,12 @@ Bit Manipulation (Windows)
 [[nodiscard]] inline unsigned long firstbithigh(unsigned long value) noexcept
 {
 	unsigned long bit_index;
+
 	if (_BitScanReverse64(&bit_index, (unsigned long long)value))
 	{
 		return 31ul - bit_index;
 	}
+
 	return 32ul;
 }
 
@@ -783,13 +995,17 @@ Bit Manipulation (Windows)
  *
  * @return Index of most significant set bit (0-63), or 64 if value is 0.
  */
-[[nodiscard]] inline unsigned long long firstbithigh(unsigned long long value) noexcept
+[[nodiscard]] inline unsigned long long firstbithigh(
+	unsigned long long value
+) noexcept
 {
 	unsigned long bit_index;
+
 	if (_BitScanReverse64(&bit_index, value))
 	{
 		return 63ull - bit_index;
 	}
+
 	return 64ull;
 }
 
@@ -805,10 +1021,12 @@ Bit Manipulation (Windows)
 [[nodiscard]] inline unsigned int firstbitlow(unsigned int value) noexcept
 {
 	unsigned long bit_index;
+
 	if (_BitScanForward(&bit_index, value))
 	{
 		return (unsigned int)bit_index;
 	}
+
 	return 32u;
 }
 
@@ -825,10 +1043,12 @@ Bit Manipulation (Windows)
 [[nodiscard]] inline unsigned long firstbitlow(unsigned long value) noexcept
 {
 	unsigned long bit_index;
+
 	if (_BitScanForward64(&bit_index, (unsigned long long)value))
 	{
 		return bit_index;
 	}
+
 	return 32ul;
 }
 
@@ -841,17 +1061,20 @@ Bit Manipulation (Windows)
  *
  * @return Index of least significant set bit (0-63), or 64 if value is 0.
  */
-[[nodiscard]] inline unsigned long firstbitlow(unsigned long long value) noexcept
+[[nodiscard]] inline unsigned long firstbitlow(
+	unsigned long long value
+) noexcept
 {
 	unsigned long bit_index;
+
 	if (_BitScanForward64(&bit_index, value))
 	{
 		return bit_index;
 	}
+
 	return 64ul;
 }
 #else
-// Linux, PlayStation:
 
 /*
 ################################################################################
@@ -867,7 +1090,10 @@ Atomic Operations (Linux/PlayStation)
  *
  * @return The original value before the operation.
  */
-[[nodiscard]] inline long AtomicAnd(volatile long* ptr, long mask) noexcept
+[[nodiscard]] inline long AtomicAnd(
+	volatile long* ptr,
+	long mask
+) noexcept
 {
 	return __atomic_fetch_and(ptr, mask, __ATOMIC_SEQ_CST);
 }
@@ -880,7 +1106,10 @@ Atomic Operations (Linux/PlayStation)
  *
  * @return The original value before the operation.
  */
-[[nodiscard]] inline long long AtomicAnd(volatile long long* ptr, long long mask) noexcept
+[[nodiscard]] inline long long AtomicAnd(
+	volatile long long* ptr,
+	long long mask
+) noexcept
 {
 	return __atomic_fetch_and(ptr, mask, __ATOMIC_SEQ_CST);
 }
@@ -893,7 +1122,10 @@ Atomic Operations (Linux/PlayStation)
  *
  * @return The original value before the operation.
  */
-[[nodiscard]] inline long AtomicOr(volatile long* ptr, long mask) noexcept
+[[nodiscard]] inline long AtomicOr(
+	volatile long* ptr,
+	long mask
+) noexcept
 {
 	return __atomic_fetch_or(ptr, mask, __ATOMIC_SEQ_CST);
 }
@@ -906,7 +1138,10 @@ Atomic Operations (Linux/PlayStation)
  *
  * @return The original value before the operation.
  */
-[[nodiscard]] inline long long AtomicOr(volatile long long* ptr, long long mask) noexcept
+[[nodiscard]] inline long long AtomicOr(
+	volatile long long* ptr,
+	long long mask
+) noexcept
 {
 	return __atomic_fetch_or(ptr, mask, __ATOMIC_SEQ_CST);
 }
@@ -919,7 +1154,10 @@ Atomic Operations (Linux/PlayStation)
  *
  * @return The original value before the operation.
  */
-[[nodiscard]] inline long AtomicXor(volatile long* ptr, long mask) noexcept
+[[nodiscard]] inline long AtomicXor(
+	volatile long* ptr,
+	long mask
+) noexcept
 {
 	return __atomic_fetch_xor(ptr, mask, __ATOMIC_SEQ_CST);
 }
@@ -932,7 +1170,10 @@ Atomic Operations (Linux/PlayStation)
  *
  * @return The original value before the operation.
  */
-[[nodiscard]] inline long long AtomicXor(volatile long long* ptr, long long mask) noexcept
+[[nodiscard]] inline long long AtomicXor(
+	volatile long long* ptr,
+	long long mask
+) noexcept
 {
 	return __atomic_fetch_xor(ptr, mask, __ATOMIC_SEQ_CST);
 }
@@ -945,7 +1186,10 @@ Atomic Operations (Linux/PlayStation)
  *
  * @return The original value before the addition.
  */
-[[nodiscard]] inline long AtomicAdd(volatile long* ptr, long val) noexcept
+[[nodiscard]] inline long AtomicAdd(
+	volatile long* ptr,
+	long val
+) noexcept
 {
 	return __atomic_fetch_add(ptr, val, __ATOMIC_SEQ_CST);
 }
@@ -958,7 +1202,10 @@ Atomic Operations (Linux/PlayStation)
  *
  * @return The original value before the addition.
  */
-[[nodiscard]] inline long long AtomicAdd(volatile long long* ptr, long long val) noexcept
+[[nodiscard]] inline long long AtomicAdd(
+	volatile long long* ptr,
+	long long val
+) noexcept
 {
 	return __atomic_fetch_add(ptr, val, __ATOMIC_SEQ_CST);
 }
@@ -1000,7 +1247,9 @@ Bit Manipulation (Linux/PlayStation)
  *
  * @return Number of set bits (0-64).
  */
-[[nodiscard]] inline unsigned long long countbits(unsigned long long value) noexcept
+[[nodiscard]] inline unsigned long long countbits(
+	unsigned long long value
+) noexcept
 {
 	return __builtin_popcountll(value);
 }
@@ -1022,6 +1271,7 @@ Bit Manipulation (Linux/PlayStation)
 	{
 		return 32u;
 	}
+
 	return __builtin_clz(value);
 }
 
@@ -1040,6 +1290,7 @@ Bit Manipulation (Linux/PlayStation)
 	{
 		return sizeof(unsigned long) * 8;
 	}
+
 	return __builtin_clzl(value);
 }
 
@@ -1052,12 +1303,15 @@ Bit Manipulation (Linux/PlayStation)
  *
  * @return Index of most significant set bit (0-63), or 64 if value is 0.
  */
-[[nodiscard]] inline unsigned long long firstbithigh(unsigned long long value) noexcept
+[[nodiscard]] inline unsigned long long firstbithigh(
+	unsigned long long value
+) noexcept
 {
 	if (value == 0)
 	{
 		return 64ull;
 	}
+
 	return __builtin_clzll(value);
 }
 
@@ -1076,6 +1330,7 @@ Bit Manipulation (Linux/PlayStation)
 	{
 		return 32u;
 	}
+
 	return __builtin_ctz(value);
 }
 
@@ -1094,6 +1349,7 @@ Bit Manipulation (Linux/PlayStation)
 	{
 		return sizeof(unsigned long) * 8;
 	}
+
 	return __builtin_ctzl(value);
 }
 
@@ -1106,12 +1362,15 @@ Bit Manipulation (Linux/PlayStation)
  *
  * @return Index of least significant set bit (0-63), or 64 if value is 0.
  */
-[[nodiscard]] inline unsigned long long firstbitlow(unsigned long long value) noexcept
+[[nodiscard]] inline unsigned long long firstbitlow(
+	unsigned long long value
+) noexcept
 {
 	if (value == 0)
 	{
 		return 64ull;
 	}
+
 	return __builtin_ctzll(value);
 }
 #endif // _WIN32
@@ -1131,7 +1390,9 @@ Atomic Load
  *
  * @return The loaded value.
  */
-[[nodiscard]] inline long AtomicLoad(const volatile long* ptr) noexcept
+[[nodiscard]] inline long AtomicLoad(
+	const volatile long* ptr
+) noexcept
 {
 	return AtomicOr((volatile long*)ptr, 0);
 }
@@ -1145,7 +1406,9 @@ Atomic Load
  *
  * @return The loaded value.
  */
-[[nodiscard]] inline long long AtomicLoad(const volatile long long* ptr) noexcept
+[[nodiscard]] inline long long AtomicLoad(
+	const volatile long long* ptr
+) noexcept
 {
 	return AtomicOr((volatile long long*)ptr, 0);
 }
@@ -1176,7 +1439,9 @@ struct enable_bitmask_operators : std::false_type {};
  * @tparam E - Enum type.
  */
 template<typename E>
-using EnableIfBitmaskOps = std::enable_if_t<enable_bitmask_operators<E>::value, int>;
+using EnableIfBitmaskOps = std::enable_if_t<
+	enable_bitmask_operators<E>::value, int
+>;
 
 /**
  * Bitwise OR for bitmask enums.
@@ -1190,6 +1455,7 @@ template<typename E, EnableIfBitmaskOps<E> = 0>
 constexpr E operator|(E lhs, E rhs) noexcept
 {
 	using U = std::underlying_type_t<E>;
+
 	return static_cast<E>(static_cast<U>(lhs) | static_cast<U>(rhs));
 }
 
@@ -1205,7 +1471,9 @@ template<typename E, EnableIfBitmaskOps<E> = 0>
 constexpr E operator|=(E& lhs, E rhs) noexcept
 {
 	using U = std::underlying_type_t<E>;
+
 	lhs = static_cast<E>(static_cast<U>(lhs) | static_cast<U>(rhs));
+
 	return lhs;
 }
 
@@ -1221,6 +1489,7 @@ template<typename E, EnableIfBitmaskOps<E> = 0>
 constexpr E operator&(E lhs, E rhs) noexcept
 {
 	using U = std::underlying_type_t<E>;
+
 	return static_cast<E>(static_cast<U>(lhs) & static_cast<U>(rhs));
 }
 
@@ -1236,7 +1505,9 @@ template<typename E, EnableIfBitmaskOps<E> = 0>
 constexpr E operator&=(E& lhs, E rhs) noexcept
 {
 	using U = std::underlying_type_t<E>;
+
 	lhs = static_cast<E>(static_cast<U>(lhs) & static_cast<U>(rhs));
+
 	return lhs;
 }
 
@@ -1251,7 +1522,9 @@ template<typename E, EnableIfBitmaskOps<E> = 0>
 constexpr E operator~(E rhs) noexcept
 {
 	using U = std::underlying_type_t<E>;
+
 	rhs = static_cast<E>(~static_cast<U>(rhs));
+
 	return rhs;
 }
 
@@ -1288,6 +1561,7 @@ constexpr void set_flag(T& flags, U flag, bool set) noexcept
 		flags &= ~static_cast<T>(flag);
 	}
 }
+
 /*
 ################################################################################
 Path Utilities
@@ -1316,6 +1590,7 @@ Path Utilities
 [[nodiscard]] constexpr const char* relative_path(const char* path) noexcept
 {
 	const char* startPosition = path;
+
 	for (const char* currentCharacter = path; *currentCharacter != '\0'; ++currentCharacter)
 	{
 		if (*currentCharacter == '\\' || *currentCharacter == '/')
@@ -1346,6 +1621,7 @@ Path Utilities
 {
 	StackString ret;
 	ret.push_back(relative_path(path));
+
 	return ret;
 }
 
@@ -1375,5 +1651,6 @@ String Utilities
 {
 	StackString ret;
 	ret.push_back(str);
+
 	return ret;
 }
