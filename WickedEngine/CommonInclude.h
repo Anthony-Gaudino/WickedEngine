@@ -74,7 +74,7 @@ template <typename T>
 template <typename T>
 [[nodiscard]] constexpr T lerp(T x, T y, T a) noexcept
 {
-	return x * (1 - a) + y * a;
+	return x + a * (y - x);
 }
 
 template <typename T>
