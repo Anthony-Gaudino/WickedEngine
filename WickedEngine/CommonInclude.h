@@ -4,7 +4,6 @@
 // Do not include engine features in this file!
 
 #include <cassert>
-#include <cfloat>
 #include <cmath>
 #include <cstdint>
 #include <type_traits>
