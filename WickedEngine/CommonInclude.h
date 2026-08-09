@@ -387,33 +387,33 @@ template<typename E>
 using EnableIfBitmaskOps = std::enable_if_t<enable_bitmask_operators<E>::value, int>;
 
 template<typename E, EnableIfBitmaskOps<E> = 0>
-constexpr E operator|(E lhs, E rhs)
+constexpr E operator|(E lhs, E rhs) noexcept
 {
 	using U = std::underlying_type_t<E>;
 	return static_cast<E>(static_cast<U>(lhs) | static_cast<U>(rhs));
 }
 template<typename E, EnableIfBitmaskOps<E> = 0>
-constexpr E operator|=(E& lhs, E rhs)
+constexpr E operator|=(E& lhs, E rhs) noexcept
 {
 	using U = std::underlying_type_t<E>;
 	lhs = static_cast<E>(static_cast<U>(lhs) | static_cast<U>(rhs));
 	return lhs;
 }
 template<typename E, EnableIfBitmaskOps<E> = 0>
-constexpr E operator&(E lhs, E rhs)
+constexpr E operator&(E lhs, E rhs) noexcept
 {
 	using U = std::underlying_type_t<E>;
 	return static_cast<E>(static_cast<U>(lhs) & static_cast<U>(rhs));
 }
 template<typename E, EnableIfBitmaskOps<E> = 0>
-constexpr E operator&=(E& lhs, E rhs)
+constexpr E operator&=(E& lhs, E rhs) noexcept
 {
 	using U = std::underlying_type_t<E>;
 	lhs = static_cast<E>(static_cast<U>(lhs) & static_cast<U>(rhs));
 	return lhs;
 }
 template<typename E, EnableIfBitmaskOps<E> = 0>
-constexpr E operator~(E rhs)
+constexpr E operator~(E rhs) noexcept
 {
 	using U = std::underlying_type_t<E>;
 	rhs = static_cast<E>(~static_cast<U>(rhs));
