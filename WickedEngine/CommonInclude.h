@@ -131,6 +131,9 @@ struct StackString
 	[[nodiscard]] constexpr operator const char* () const noexcept { return chars; }
 	[[nodiscard]] constexpr const char* const c_str() const noexcept { return chars; }
 	constexpr void push_back(const char* str) noexcept { if (!str) return; while (*str != 0 && (cnt < (Capacity - 1))) { chars[cnt++] = *str; str++; } }
+	constexpr void push_back(char c) noexcept { if (cnt < (Capacity - 1)) { chars[cnt++] = c; } }
+	[[nodiscard]] constexpr StackString& operator+=(char c) noexcept { push_back(c); return *this; }
+	[[nodiscard]] constexpr StackString& operator+=(const char* str) noexcept { push_back(str); return *this; }
 	[[nodiscard]] constexpr unsigned size() const noexcept { return cnt; }
 	[[nodiscard]] constexpr unsigned length() const noexcept { return cnt; }
 	[[nodiscard]] constexpr unsigned capacity() const noexcept { return Capacity; }
