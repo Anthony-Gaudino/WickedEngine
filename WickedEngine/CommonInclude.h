@@ -35,63 +35,63 @@
 // Simple common math helpers:
 
 template<typename T>
-constexpr T align(T value, T alignment)
+[[nodiscard]] constexpr T align(T value, T alignment) noexcept
 {
 	return ((value - 1) | (alignment - 1)) + 1;
 }
 
 template<typename T>
-constexpr bool is_aligned(T value, T alignment)
+[[nodiscard]] constexpr bool is_aligned(T value, T alignment) noexcept
 {
 	return (value & (alignment - 1)) == 0;
 }
 
 template <typename T>
-constexpr T sqr(T x) { return x * x; }
+[[nodiscard]] constexpr T sqr(T x) noexcept { return x * x; }
 
 template <typename T>
-constexpr T pow4(T x) { return sqr(sqr(x)); }
+[[nodiscard]] constexpr T pow4(T x) noexcept { return sqr(sqr(x)); }
 
 template <typename T>
-constexpr T clamp(T x, T a, T b)
+[[nodiscard]] constexpr T clamp(T x, T a, T b) noexcept
 {
 	return x < a ? a : (x > b ? b : x);
 }
 
 template <typename T>
-constexpr T saturate(T x)
+[[nodiscard]] constexpr T saturate(T x) noexcept
 {
 	return clamp(x, T(0), T(1));
 }
 
 template <typename T>
-constexpr T frac(T x)
+[[nodiscard]] constexpr T frac(T x) noexcept
 {
 	static_assert(std::is_floating_point_v<T>, "frac only supports floating-point types");
 	return x - std::floor(x);
 }
 
 template <typename T>
-constexpr T lerp(T x, T y, T a)
+[[nodiscard]] constexpr T lerp(T x, T y, T a) noexcept
 {
 	return x * (1 - a) + y * a;
 }
 
 template <typename T>
-constexpr T inverse_lerp(T value1, T value2, T pos)
+[[nodiscard]] constexpr T inverse_lerp(T value1, T value2, T pos) noexcept
 {
 	return value2 == value1 ? T(0) : ((pos - value1) / (value2 - value1));
 }
 
 template <typename T>
-constexpr T smoothstep(T edge0, T edge1, T x)
+[[nodiscard]] constexpr T smoothstep(T edge0, T edge1, T x) noexcept
 {
 	const T t = saturate((x - edge0) / (edge1 - edge0));
 	return t * t * (T(3) - T(2) * t);
 }
 
 template <typename Vec4, typename Vec2>
-constexpr auto bilinear(Vec4 gather, Vec2 pixel_frac)
+[[nodiscard]] constexpr auto bilinear(Vec4 gather, Vec2 pixel_frac) noexcept
 {
 	using T = decltype(gather.x);
 	const T top_row = lerp(gather.w, gather.z, pixel_frac.x);
@@ -106,13 +106,13 @@ struct StackString
 	char chars[Capacity] = {};
 	unsigned cnt = 0;
 	static_assert(Capacity > 1);
-	constexpr operator const char* () const { return chars; }
-	constexpr const char* const c_str() const { return chars; }
-	constexpr void push_back(const char* str) { if (!str) return; while (*str != 0 && (cnt < (Capacity - 1))) { chars[cnt++] = *str; str++; } }
-	constexpr unsigned size() const { return cnt; }
-	constexpr unsigned length() const { return cnt; }
-	constexpr unsigned capacity() const { return Capacity; }
-	constexpr bool empty() const { return cnt == 0; }
+	[[nodiscard]] constexpr operator const char* () const noexcept { return chars; }
+	[[nodiscard]] constexpr const char* const c_str() const noexcept { return chars; }
+	constexpr void push_back(const char* str) noexcept { if (!str) return; while (*str != 0 && (cnt < (Capacity - 1))) { chars[cnt++] = *str; str++; } }
+	[[nodiscard]] constexpr unsigned size() const noexcept { return cnt; }
+	[[nodiscard]] constexpr unsigned length() const noexcept { return cnt; }
+	[[nodiscard]] constexpr unsigned capacity() const noexcept { return Capacity; }
+	[[nodiscard]] constexpr bool empty() const noexcept { return cnt == 0; }
 	constexpr StackString() = default;
 	constexpr StackString(const StackString&) = default;
 	constexpr StackString(StackString&&) = default;
@@ -125,25 +125,25 @@ struct StackVector
 {
 	T items[count] = {};
 	unsigned last = 0;
-	constexpr void set_size(unsigned size) { assert(size <= count); last = size; }
-	constexpr unsigned size() const { return last; }
-	constexpr bool empty() const { return last == 0; }
-	constexpr unsigned capacity() const { return count; }
-	constexpr void push_back(const T& item) { assert(last < count); items[last++] = item; }
-	constexpr void push_back(T&& item) { assert(last < count); items[last++] = static_cast<T&&>(item); }
-	constexpr void pop_back() { if (!empty()) items[--last] = {}; }
-	constexpr void clear() { for (unsigned i = 0; i < last; ++i) items[i] = {}; last = 0; }
-	constexpr T* data() { return items; }
-	constexpr const T* data() const { return items; }
-	constexpr T* begin() { return items; }
-	constexpr T* end() { return items + last; }
-	constexpr const T& back() const { assert(!empty()); return items[last - 1]; }
-	constexpr T& back() { assert(!empty()); return items[last - 1]; }
-	constexpr const T& front() const { assert(!empty()); return items[0]; }
-	constexpr T& front() { assert(!empty()); return items[0]; }
-	constexpr T& emplace_back() { push_back({}); return back(); }
-	constexpr const T& operator[](unsigned index) const { assert(index < last); return items[index]; }
-	constexpr T& operator[](unsigned index) { assert(index < last); return items[index]; }
+	constexpr void set_size(unsigned size) noexcept { assert(size <= count); last = size; }
+	[[nodiscard]] constexpr unsigned size() const noexcept { return last; }
+	[[nodiscard]] constexpr bool empty() const noexcept { return last == 0; }
+	[[nodiscard]] constexpr unsigned capacity() const noexcept { return count; }
+	constexpr void push_back(const T& item) noexcept { assert(last < count); items[last++] = item; }
+	constexpr void push_back(T&& item) noexcept { assert(last < count); items[last++] = static_cast<T&&>(item); }
+	constexpr void pop_back() noexcept { if (!empty()) items[--last] = {}; }
+	constexpr void clear() noexcept { for (unsigned i = 0; i < last; ++i) items[i] = {}; last = 0; }
+	[[nodiscard]] constexpr T* data() noexcept { return items; }
+	[[nodiscard]] constexpr const T* data() const noexcept { return items; }
+	[[nodiscard]] constexpr T* begin() noexcept { return items; }
+	[[nodiscard]] constexpr T* end() noexcept { return items + last; }
+	constexpr const T& back() const noexcept { assert(!empty()); return items[last - 1]; }
+	constexpr T& back() noexcept { assert(!empty()); return items[last - 1]; }
+	constexpr const T& front() const noexcept { assert(!empty()); return items[0]; }
+	constexpr T& front() noexcept { assert(!empty()); return items[0]; }
+	constexpr T& emplace_back() noexcept { push_back({}); return back(); }
+	constexpr const T& operator[](unsigned index) const noexcept { assert(index < last); return items[index]; }
+	constexpr T& operator[](unsigned index) noexcept { assert(index < last); return items[index]; }
 };
 
 // CPU intrinsics:
@@ -153,51 +153,51 @@ struct StackVector
 #if defined(_M_ARM64)
 #include <arm64intr.h>
 #endif // _M_ARM64
-inline long AtomicAnd(volatile long* ptr, long mask)
+[[nodiscard]] inline long AtomicAnd(volatile long* ptr, long mask) noexcept
 {
 	return _InterlockedAnd(ptr, mask);
 }
-inline long long AtomicAnd(volatile long long* ptr, long long mask)
+[[nodiscard]] inline long long AtomicAnd(volatile long long* ptr, long long mask) noexcept
 {
 	return _InterlockedAnd64(ptr, mask);
 }
-inline long AtomicOr(volatile long* ptr, long mask)
+[[nodiscard]] inline long AtomicOr(volatile long* ptr, long mask) noexcept
 {
 	return _InterlockedOr(ptr, mask);
 }
-inline long long AtomicOr(volatile long long* ptr, long long mask)
+[[nodiscard]] inline long long AtomicOr(volatile long long* ptr, long long mask) noexcept
 {
 	return _InterlockedOr64(ptr, mask);
 }
-inline long AtomicXor(volatile long* ptr, long mask)
+[[nodiscard]] inline long AtomicXor(volatile long* ptr, long mask) noexcept
 {
 	return _InterlockedXor(ptr, mask);
 }
-inline long long AtomicXor(volatile long long* ptr, long long mask)
+[[nodiscard]] inline long long AtomicXor(volatile long long* ptr, long long mask) noexcept
 {
 	return _InterlockedXor64(ptr, mask);
 }
-inline long AtomicAdd(volatile long* ptr, long val)
+[[nodiscard]] inline long AtomicAdd(volatile long* ptr, long val) noexcept
 {
 	return _InterlockedExchangeAdd(ptr, val);
 }
-inline long long AtomicAdd(volatile long long* ptr, long long val)
+[[nodiscard]] inline long long AtomicAdd(volatile long long* ptr, long long val) noexcept
 {
 	return _InterlockedExchangeAdd64(ptr, val);
 }
-inline unsigned int countbits(unsigned int value)
+[[nodiscard]] inline unsigned int countbits(unsigned int value) noexcept
 {
 	return __popcnt(value);
 }
-inline unsigned long countbits(unsigned long value)
+[[nodiscard]] inline unsigned long countbits(unsigned long value) noexcept
 {
 	return (unsigned long)__popcnt64((unsigned long long)value);
 }
-inline unsigned long long countbits(unsigned long long value)
+[[nodiscard]] inline unsigned long long countbits(unsigned long long value) noexcept
 {
 	return __popcnt64(value);
 }
-inline unsigned int firstbithigh(unsigned int value)
+[[nodiscard]] inline unsigned int firstbithigh(unsigned int value) noexcept
 {
 	unsigned long bit_index;
 	if (_BitScanReverse(&bit_index, (unsigned long)value))
@@ -206,7 +206,7 @@ inline unsigned int firstbithigh(unsigned int value)
 	}
 	return 0;
 }
-inline unsigned long firstbithigh(unsigned long value)
+[[nodiscard]] inline unsigned long firstbithigh(unsigned long value) noexcept
 {
 	unsigned long bit_index;
 	if (_BitScanReverse64(&bit_index, (unsigned long long)value))
@@ -215,7 +215,7 @@ inline unsigned long firstbithigh(unsigned long value)
 	}
 	return 0;
 }
-inline unsigned long firstbithigh(unsigned long long value)
+[[nodiscard]] inline unsigned long long firstbithigh(unsigned long long value) noexcept
 {
 	unsigned long bit_index;
 	if (_BitScanReverse64(&bit_index, value))
@@ -224,7 +224,7 @@ inline unsigned long firstbithigh(unsigned long long value)
 	}
 	return 0;
 }
-inline unsigned int firstbitlow(unsigned int value)
+[[nodiscard]] inline unsigned int firstbitlow(unsigned int value) noexcept
 {
 	unsigned long bit_index;
 	if (_BitScanForward(&bit_index, value))
@@ -233,7 +233,7 @@ inline unsigned int firstbitlow(unsigned int value)
 	}
 	return 0;
 }
-inline unsigned long firstbitlow(unsigned long value)
+[[nodiscard]] inline unsigned long firstbitlow(unsigned long value) noexcept
 {
 	unsigned long bit_index;
 	if (_BitScanForward64(&bit_index, (unsigned long long)value))
@@ -242,7 +242,7 @@ inline unsigned long firstbitlow(unsigned long value)
 	}
 	return 0;
 }
-inline unsigned long firstbitlow(unsigned long long value)
+[[nodiscard]] inline unsigned long firstbitlow(unsigned long long value) noexcept
 {
 	unsigned long bit_index;
 	if (_BitScanForward64(&bit_index, value))
@@ -253,51 +253,51 @@ inline unsigned long firstbitlow(unsigned long long value)
 }
 #else
 // Linux, PlayStation:
-inline long AtomicAnd(volatile long* ptr, long mask)
+[[nodiscard]] inline long AtomicAnd(volatile long* ptr, long mask) noexcept
 {
 	return __atomic_fetch_and(ptr, mask, __ATOMIC_SEQ_CST);
 }
-inline long long AtomicAnd(volatile long long* ptr, long long mask)
+[[nodiscard]] inline long long AtomicAnd(volatile long long* ptr, long long mask) noexcept
 {
 	return __atomic_fetch_and(ptr, mask, __ATOMIC_SEQ_CST);
 }
-inline long AtomicOr(volatile long* ptr, long mask)
+[[nodiscard]] inline long AtomicOr(volatile long* ptr, long mask) noexcept
 {
 	return __atomic_fetch_or(ptr, mask, __ATOMIC_SEQ_CST);
 }
-inline long long AtomicOr(volatile long long* ptr, long long mask)
+[[nodiscard]] inline long long AtomicOr(volatile long long* ptr, long long mask) noexcept
 {
 	return __atomic_fetch_or(ptr, mask, __ATOMIC_SEQ_CST);
 }
-inline long AtomicXor(volatile long* ptr, long mask)
+[[nodiscard]] inline long AtomicXor(volatile long* ptr, long mask) noexcept
 {
 	return __atomic_fetch_xor(ptr, mask, __ATOMIC_SEQ_CST);
 }
-inline long long AtomicXor(volatile long long* ptr, long long mask)
+[[nodiscard]] inline long long AtomicXor(volatile long long* ptr, long long mask) noexcept
 {
 	return __atomic_fetch_xor(ptr, mask, __ATOMIC_SEQ_CST);
 }
-inline long AtomicAdd(volatile long* ptr, long val)
+[[nodiscard]] inline long AtomicAdd(volatile long* ptr, long val) noexcept
 {
 	return __atomic_fetch_add(ptr, val, __ATOMIC_SEQ_CST);
 }
-inline long long AtomicAdd(volatile long long* ptr, long long val)
+[[nodiscard]] inline long long AtomicAdd(volatile long long* ptr, long long val) noexcept
 {
 	return __atomic_fetch_add(ptr, val, __ATOMIC_SEQ_CST);
 }
-inline unsigned int countbits(unsigned int value)
+[[nodiscard]] inline unsigned int countbits(unsigned int value) noexcept
 {
 	return __builtin_popcount(value);
 }
-inline unsigned long countbits(unsigned long value)
+[[nodiscard]] inline unsigned long countbits(unsigned long value) noexcept
 {
 	return __builtin_popcountl(value);
 }
-inline unsigned long long countbits(unsigned long long value)
+[[nodiscard]] inline unsigned long long countbits(unsigned long long value) noexcept
 {
 	return __builtin_popcountll(value);
 }
-inline unsigned int firstbithigh(unsigned int value)
+[[nodiscard]] inline unsigned int firstbithigh(unsigned int value) noexcept
 {
 	if (value == 0)
 	{
@@ -305,7 +305,7 @@ inline unsigned int firstbithigh(unsigned int value)
 	}
 	return __builtin_clz(value);
 }
-inline unsigned long firstbithigh(unsigned long value)
+[[nodiscard]] inline unsigned long firstbithigh(unsigned long value) noexcept
 {
 	if (value == 0)
 	{
@@ -313,7 +313,7 @@ inline unsigned long firstbithigh(unsigned long value)
 	}
 	return __builtin_clzl(value);
 }
-inline unsigned long long firstbithigh(unsigned long long value)
+[[nodiscard]] inline unsigned long long firstbithigh(unsigned long long value) noexcept
 {
 	if (value == 0)
 	{
@@ -321,7 +321,7 @@ inline unsigned long long firstbithigh(unsigned long long value)
 	}
 	return __builtin_clzll(value);
 }
-inline unsigned int firstbitlow(unsigned int value)
+[[nodiscard]] inline unsigned int firstbitlow(unsigned int value) noexcept
 {
 	if (value == 0)
 	{
@@ -329,7 +329,7 @@ inline unsigned int firstbitlow(unsigned int value)
 	}
 	return __builtin_ctz(value);
 }
-inline unsigned long firstbitlow(unsigned long value)
+[[nodiscard]] inline unsigned long firstbitlow(unsigned long value) noexcept
 {
 	if (value == 0)
 	{
@@ -337,7 +337,7 @@ inline unsigned long firstbitlow(unsigned long value)
 	}
 	return __builtin_ctzl(value);
 }
-inline unsigned long long firstbitlow(unsigned long long value)
+[[nodiscard]] inline unsigned long long firstbitlow(unsigned long long value) noexcept
 {
 	if (value == 0)
 	{
@@ -347,11 +347,11 @@ inline unsigned long long firstbitlow(unsigned long long value)
 }
 #endif // _WIN32
 
-inline long AtomicLoad(const volatile long* ptr)
+[[nodiscard]] inline long AtomicLoad(const volatile long* ptr) noexcept
 {
 	return AtomicOr((volatile long*)ptr, 0);
 }
-inline long long AtomicLoad(const volatile long long* ptr)
+[[nodiscard]] inline long long AtomicLoad(const volatile long long* ptr) noexcept
 {
 	return AtomicOr((volatile long long*)ptr, 0);
 }
@@ -398,12 +398,12 @@ constexpr E operator~(E rhs)
 	return rhs;
 }
 template<typename E, EnableIfBitmaskOps<E> = 0>
-constexpr bool has_flag(E lhs, E rhs)
+[[nodiscard]] constexpr bool has_flag(E lhs, E rhs) noexcept
 {
 	return (lhs & rhs) == rhs;
 }
 template<typename T, typename U>
-constexpr void set_flag(T& flags, U flag, bool set)
+constexpr void set_flag(T& flags, U flag, bool set) noexcept
 {
 	if (set)
 	{
@@ -415,7 +415,7 @@ constexpr void set_flag(T& flags, U flag, bool set)
 	}
 }
 // Extract file name from a path at compile-time
-constexpr const char* relative_path(const char* path)
+[[nodiscard]] constexpr const char* relative_path(const char* path) noexcept
 {
 	const char* startPosition = path;
 	for (const char* currentCharacter = path; *currentCharacter != '\0'; ++currentCharacter)
@@ -434,7 +434,7 @@ constexpr const char* relative_path(const char* path)
 	return startPosition;
 }
 
-constexpr auto relative_path_storage(const char* path)
+[[nodiscard]] constexpr auto relative_path_storage(const char* path) noexcept
 {
 	StackString ret;
 	ret.push_back(relative_path(path));
@@ -442,7 +442,7 @@ constexpr auto relative_path_storage(const char* path)
 }
 
 // Convert string literal to StackString at compile-time
-constexpr auto to_stack_string(const char* str)
+[[nodiscard]] constexpr auto to_stack_string(const char* str) noexcept
 {
 	StackString ret;
 	ret.push_back(str);
