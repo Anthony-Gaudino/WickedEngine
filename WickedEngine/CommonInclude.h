@@ -80,6 +80,8 @@ template <typename T>
 template <typename T>
 [[nodiscard]] constexpr T inverse_lerp(T value1, T value2, T pos) noexcept
 {
+	// If value1 == value2, range is zero - return 0 as safe fallback.
+	// This handles degenerate cases (zero-size AABBs, flat terrain, etc.)
 	return value2 == value1 ? T(0) : ((pos - value1) / (value2 - value1));
 }
 
