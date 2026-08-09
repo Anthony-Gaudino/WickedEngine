@@ -169,6 +169,8 @@ struct StackVector
 	constexpr T& emplace_back() noexcept { push_back({}); return back(); }
 	constexpr const T& operator[](unsigned index) const noexcept { assert(index < last); return items[index]; }
 	constexpr T& operator[](unsigned index) noexcept { assert(index < last); return items[index]; }
+	constexpr const T& at(unsigned index) const noexcept { assert(index < last); return items[index]; }
+	constexpr T& at(unsigned index) noexcept { assert(index < last); return items[index]; }
 };
 
 // CPU intrinsics:
