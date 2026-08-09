@@ -206,7 +206,7 @@ struct StackVector
 	{
 		return 31u - (unsigned int)bit_index;
 	}
-	return 0;
+	return 32u;
 }
 [[nodiscard]] inline unsigned long firstbithigh(unsigned long value) noexcept
 {
@@ -215,7 +215,7 @@ struct StackVector
 	{
 		return 31ul - bit_index;
 	}
-	return 0;
+	return 32ul;
 }
 [[nodiscard]] inline unsigned long long firstbithigh(unsigned long long value) noexcept
 {
@@ -224,7 +224,7 @@ struct StackVector
 	{
 		return 63ull - bit_index;
 	}
-	return 0;
+	return 64ull;
 }
 [[nodiscard]] inline unsigned int firstbitlow(unsigned int value) noexcept
 {
@@ -233,7 +233,7 @@ struct StackVector
 	{
 		return (unsigned int)bit_index;
 	}
-	return 0;
+	return 32u;
 }
 [[nodiscard]] inline unsigned long firstbitlow(unsigned long value) noexcept
 {
@@ -242,7 +242,7 @@ struct StackVector
 	{
 		return bit_index;
 	}
-	return 0;
+	return 32ul;
 }
 [[nodiscard]] inline unsigned long firstbitlow(unsigned long long value) noexcept
 {
@@ -251,7 +251,7 @@ struct StackVector
 	{
 		return bit_index;
 	}
-	return 0;
+	return 64ul;
 }
 #else
 // Linux, PlayStation:
@@ -303,7 +303,7 @@ struct StackVector
 {
 	if (value == 0)
 	{
-		return 0;
+		return 32u;
 	}
 	return __builtin_clz(value);
 }
@@ -311,7 +311,7 @@ struct StackVector
 {
 	if (value == 0)
 	{
-		return 0;
+		return sizeof(unsigned long) * 8;
 	}
 	return __builtin_clzl(value);
 }
@@ -319,7 +319,7 @@ struct StackVector
 {
 	if (value == 0)
 	{
-		return 0;
+		return 64ull;
 	}
 	return __builtin_clzll(value);
 }
@@ -327,7 +327,7 @@ struct StackVector
 {
 	if (value == 0)
 	{
-		return 0;
+		return 32u;
 	}
 	return __builtin_ctz(value);
 }
@@ -335,7 +335,7 @@ struct StackVector
 {
 	if (value == 0)
 	{
-		return 0;
+		return sizeof(unsigned long) * 8;
 	}
 	return __builtin_ctzl(value);
 }
@@ -343,7 +343,7 @@ struct StackVector
 {
 	if (value == 0)
 	{
-		return 0;
+		return 64ull;
 	}
 	return __builtin_ctzll(value);
 }
