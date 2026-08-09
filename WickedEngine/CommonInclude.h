@@ -37,13 +37,34 @@
 template<typename T>
 [[nodiscard]] constexpr T align(T value, T alignment) noexcept
 {
-	return ((value - 1) | (alignment - 1)) + 1;
+	// Fast path for power-of-2 alignments (most common in graphics):
+	// Uses bitwise operations: (value + alignment - 1) & ~(alignment - 1)
+	// General case for arbitrary alignment:
+	// Uses division: ((value + alignment - 1) / alignment) * alignment
+	const T mask = alignment - 1;
+
+	if ((alignment & mask) == 0) // power of 2
+	{
+		return (value + mask) & ~mask;
+	}
+
+	// General case - safe for any alignment
+	return ((value + alignment - 1) / alignment) * alignment;
 }
 
 template<typename T>
 [[nodiscard]] constexpr bool is_aligned(T value, T alignment) noexcept
 {
-	return (value & (alignment - 1)) == 0;
+	// Fast path for power-of-2 alignments (most common in graphics)
+	const T mask = alignment - 1;
+
+	if ((alignment & mask) == 0) // power of 2
+	{
+		return (value & mask) == 0;
+	}
+
+	// General case
+	return value % alignment == 0;
 }
 
 template <typename T>
