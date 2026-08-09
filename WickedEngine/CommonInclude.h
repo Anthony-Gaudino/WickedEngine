@@ -114,6 +114,14 @@ template <typename T>
 
 template <typename Vec4, typename Vec2>
 [[nodiscard]] constexpr auto bilinear(Vec4 gather, Vec2 pixel_frac) noexcept
+	-> std::enable_if_t<
+		std::is_arithmetic_v<decltype(gather.x)> &&
+		std::is_arithmetic_v<decltype(gather.y)> &&
+		std::is_arithmetic_v<decltype(gather.z)> &&
+		std::is_arithmetic_v<decltype(gather.w)> &&
+		std::is_arithmetic_v<decltype(pixel_frac.x)> &&
+		std::is_arithmetic_v<decltype(pixel_frac.y)>,
+		decltype(gather.x)>
 {
 	using T = decltype(gather.x);
 	const T top_row = lerp(gather.w, gather.z, pixel_frac.x);
