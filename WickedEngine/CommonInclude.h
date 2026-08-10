@@ -948,6 +948,36 @@ CPU Intrinsics
 	return _InterlockedExchangeAdd64(ptr, val);
 }
 
+/**
+ * Atomically loads a 32-bit value.
+ *
+ * @param[in] ptr - Pointer to the value.
+ *
+ * @return The loaded value.
+ */
+[[nodiscard]] inline long AtomicLoad(
+	const volatile long* ptr
+) noexcept
+{
+	// _InterlockedOr with 0 acts as atomic load on Windows.
+	// The cast is safe because atomic load doesn't modify memory.
+	return _InterlockedOr((volatile long*)ptr, 0);
+}
+
+/**
+ * Atomically loads a 64-bit value.
+ *
+ * @param[in] ptr - Pointer to the value.
+ *
+ * @return The loaded value.
+ */
+[[nodiscard]] inline long long AtomicLoad(
+	const volatile long long* ptr
+) noexcept
+{
+	return _InterlockedOr64((volatile long long*)ptr, 0);
+}
+
 /*
 ################################################################################
 Bit Manipulation (Windows)
@@ -1260,6 +1290,34 @@ Atomic Operations (Linux/PlayStation)
 	return __atomic_fetch_add(ptr, val, __ATOMIC_SEQ_CST);
 }
 
+/**
+ * Atomically loads a 32-bit value.
+ *
+ * @param[in] ptr - Pointer to the value.
+ *
+ * @return The loaded value.
+ */
+[[nodiscard]] inline long AtomicLoad(
+	const volatile long* ptr
+) noexcept
+{
+	return __atomic_load_n(ptr, __ATOMIC_SEQ_CST);
+}
+
+/**
+ * Atomically loads a 64-bit value.
+ *
+ * @param[in] ptr - Pointer to the value.
+ *
+ * @return The loaded value.
+ */
+[[nodiscard]] inline long long AtomicLoad(
+	const volatile long long* ptr
+) noexcept
+{
+	return __atomic_load_n(ptr, __ATOMIC_SEQ_CST);
+}
+
 /*
 ################################################################################
 Bit Manipulation (Linux/PlayStation)
@@ -1424,44 +1482,6 @@ Bit Manipulation (Linux/PlayStation)
 	return __builtin_ctzll(value);
 }
 #endif // _WIN32
-
-/*
-################################################################################
-Atomic Load
-################################################################################
-*/
-
-/**
- * Atomically loads a 32-bit value.
- *
- * Implemented as atomic OR with 0.
- *
- * @param[in] ptr - Pointer to the value.
- *
- * @return The loaded value.
- */
-[[nodiscard]] inline long AtomicLoad(
-	const volatile long* ptr
-) noexcept
-{
-	return AtomicOr((volatile long*)ptr, 0);
-}
-
-/**
- * Atomically loads a 64-bit value.
- *
- * Implemented as atomic OR with 0.
- *
- * @param[in] ptr - Pointer to the value.
- *
- * @return The loaded value.
- */
-[[nodiscard]] inline long long AtomicLoad(
-	const volatile long long* ptr
-) noexcept
-{
-	return AtomicOr((volatile long long*)ptr, 0);
-}
 
 /*
 ################################################################################
