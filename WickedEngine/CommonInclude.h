@@ -486,28 +486,28 @@ struct StackString
 	 *
 	 * Creates an empty string.
 	 */
-	constexpr StackString() = default;
+	constexpr StackString() noexcept = default;
 
 	/**
 	 * Copy constructor.
 	 *
 	 * Performs memberwise copy of the string data.
 	 */
-	constexpr StackString(const StackString&) = default;
+	constexpr StackString(const StackString&) noexcept = default;
 
 	/**
 	 * Move constructor.
 	 *
 	 * Performs memberwise move of the string data.
 	 */
-	constexpr StackString(StackString&&) = default;
+	constexpr StackString(StackString&&) noexcept = default;
 	
 	/**
 	 * Constructs from a C-string.
 	 *
 	 * @param[in] str - Null-terminated string to copy.
 	 */
-	constexpr StackString(const char* str)
+	constexpr StackString(const char* str) noexcept
 	{
 		push_back(str);
 	}
