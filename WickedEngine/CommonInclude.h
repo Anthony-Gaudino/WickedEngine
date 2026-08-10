@@ -75,10 +75,14 @@ Math Helpers
  * @return The smallest multiple of `alignment` that is >= `value`.
  *
  * @note Fast path for power-of-2 alignments uses bitwise operations.
+ * @pre `alignment != 0`
  */
 template<typename T>
 [[nodiscard]] constexpr T align(T value, T alignment) noexcept
 {
+	static_assert(std::is_unsigned_v<T>, "align requires unsigned integer type");
+	assert(alignment != 0);
+
 	// Fast path for power-of-2 alignments (most common in graphics):
 	// Uses bitwise operations: (value + alignment - 1) & ~(alignment - 1)
 	// General case for arbitrary alignment:
@@ -103,10 +107,15 @@ template<typename T>
  * @param[in] alignment - Alignment boundary (must be > 0).
  *
  * @return true if `value` is a multiple of `alignment`, false otherwise.
+ *
+ * @pre `alignment != 0`
  */
 template<typename T>
 [[nodiscard]] constexpr bool is_aligned(T value, T alignment) noexcept
 {
+	static_assert(std::is_unsigned_v<T>, "is_aligned requires unsigned integer type");
+	assert(alignment != 0);
+
 	// Fast path for power-of-2 alignments (most common in graphics)
 	const T mask = alignment - 1;
 
