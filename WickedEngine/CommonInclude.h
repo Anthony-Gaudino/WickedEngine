@@ -258,7 +258,46 @@ template <typename T>
 
 	return t * t * (T(3) - T(2) * t);
 }
-
+ 
+/**
+ * Type trait to detect if a type has .x, .y arithmetic members (Vec2-like).
+ */
+template <typename T, typename = void>
+struct is_vec2_like : std::false_type {};
+ 
+template <typename T>
+struct is_vec2_like<T,
+    std::void_t<
+        decltype(std::declval<T>().x),
+        decltype(std::declval<T>().y)
+    >
+> : std::integral_constant<bool,
+    std::is_arithmetic_v<decltype(std::declval<T>().x)> &&
+    std::is_arithmetic_v<decltype(std::declval<T>().y)>
+> {};
+ 
+/**
+ * Type trait to detect if a type has .x, .y, .z, .w arithmetic members
+ * (Vec4-like).
+ */
+template <typename T, typename = void>
+struct is_vec4_like : std::false_type {};
+ 
+template <typename T>
+struct is_vec4_like<T,
+    std::void_t<
+        decltype(std::declval<T>().x),
+        decltype(std::declval<T>().y),
+        decltype(std::declval<T>().z),
+        decltype(std::declval<T>().w)
+    >
+> : std::integral_constant<bool,
+    std::is_arithmetic_v<decltype(std::declval<T>().x)> &&
+    std::is_arithmetic_v<decltype(std::declval<T>().y)> &&
+    std::is_arithmetic_v<decltype(std::declval<T>().z)> &&
+    std::is_arithmetic_v<decltype(std::declval<T>().w)>
+> {};
+ 
 /**
  * Bilinear interpolation on a 2x2 grid.
  *
@@ -273,16 +312,10 @@ template <typename T>
  * @note Vec4 must have .x, .y, .z, .w arithmetic members.
  * @note Vec2 must have .x, .y arithmetic members.
  */
-template <typename Vec4, typename Vec2>
+template <typename Vec4, typename Vec2,
+    std::enable_if_t<is_vec4_like<Vec4>::value && is_vec2_like<Vec2>::value, int> = 0>
 [[nodiscard]] constexpr auto bilinear(Vec4 gather, Vec2 pixel_frac) noexcept
-	-> std::enable_if_t<
-		std::is_arithmetic_v<decltype(gather.x)> &&
-		std::is_arithmetic_v<decltype(gather.y)> &&
-		std::is_arithmetic_v<decltype(gather.z)> &&
-		std::is_arithmetic_v<decltype(gather.w)> &&
-		std::is_arithmetic_v<decltype(pixel_frac.x)> &&
-		std::is_arithmetic_v<decltype(pixel_frac.y)>,
-		decltype(gather.x)>
+    -> decltype(gather.x)
 {
 	using T = decltype(gather.x);
 
