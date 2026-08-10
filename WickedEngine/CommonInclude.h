@@ -198,8 +198,13 @@ template <typename T>
 		std::is_floating_point_v<T>,
 		"frac only supports floating-point types"
 	);
+	T intpart;
 
-	return x - std::floor(x);
+	T f = std::modf(x, &intpart);
+
+	// std::modf returns fractional part with same sign as x.
+	// For negative x, we need to add 1 to get [0, 1) range.
+	return f < 0 ? f + T(1) : f;
 }
 
 /**
