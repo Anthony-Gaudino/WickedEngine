@@ -304,8 +304,14 @@ template <typename Vec4, typename Vec2>
 template <unsigned Capacity = 256>
 struct StackString
 {
+	/** Character storage buffer (including null terminator). */
 	char chars[Capacity] = {};
+
+	/**
+	 * Current number of characters in the string (excludes null terminator).
+	 */
 	unsigned cnt = 0;
+
 	static_assert(Capacity > 1);
 	
 	/**
@@ -482,7 +488,10 @@ struct StackString
 template<typename T, unsigned count>
 struct StackVector
 {
+	/** Element storage array (fixed compile-time capacity). */
 	T items[count] = {};
+
+	/** Current number of elements in the vector (logical size). */
 	unsigned last = 0;
 	
 	/**
@@ -1619,6 +1628,7 @@ Path Utilities
 [[nodiscard]] constexpr auto relative_path_storage(const char* path) noexcept
 {
 	StackString ret;
+
 	ret.push_back(relative_path(path));
 
 	return ret;
@@ -1649,6 +1659,7 @@ String Utilities
 [[nodiscard]] constexpr auto to_stack_string(const char* str) noexcept
 {
 	StackString ret;
+
 	ret.push_back(str);
 
 	return ret;
