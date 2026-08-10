@@ -310,7 +310,7 @@ template <typename Vec4, typename Vec2>
  * printf("%s\n", str.c_str()); // "hello world!"
  * ```
  */
-template <unsigned Capacity = 256>
+template <std::size_t Capacity = 256>
 struct StackString
 {
 	/** Character storage buffer (including null terminator). */
@@ -319,7 +319,7 @@ struct StackString
 	/**
 	 * Current number of characters in the string (excludes null terminator).
 	 */
-	unsigned cnt = 0;
+	std::size_t cnt = 0;
 
 	static_assert(Capacity > 1);
 	
@@ -408,30 +408,30 @@ struct StackString
 	 *
 	 * @return Number of characters in the string.
 	 */
-	[[nodiscard]] constexpr unsigned size() const noexcept
-	{
-		return cnt;
-	}
+[[nodiscard]] constexpr std::size_t size() const noexcept
+{
+	return cnt;
+}
 	
-	/**
-	 * Returns the current string length (alias for size()).
-	 *
-	 * @return Number of characters in the string.
-	 */
-	[[nodiscard]] constexpr unsigned length() const noexcept
-	{
-		return cnt;
-	}
+/**
+ * Returns the current string length (alias for size()).
+ *
+ * @return Number of characters in the string.
+ */
+[[nodiscard]] constexpr std::size_t length() const noexcept
+{
+	return cnt;
+}
 	
-	/**
-	 * Returns the compile-time capacity of the string.
-	 *
-	 * @return Maximum number of characters (including null terminator).
-	 */
-	[[nodiscard]] constexpr unsigned capacity() const noexcept
-	{
-		return Capacity;
-	}
+/**
+ * Returns the compile-time capacity of the string.
+ *
+ * @return Maximum number of characters (including null terminator).
+ */
+[[nodiscard]] constexpr std::size_t capacity() const noexcept
+{
+	return Capacity;
+}
 	
 	/**
 	 * Checks if the string is empty.
@@ -494,14 +494,14 @@ struct StackString
  * for (int v : vec) { printf("%d ", v); } // 1 2 3
  * ```
  */
-template<typename T, unsigned count>
+template<typename T, std::size_t count>
 struct StackVector
 {
 	/** Element storage array (fixed compile-time capacity). */
 	T items[count] = {};
 
 	/** Current number of elements in the vector (logical size). */
-	unsigned last = 0;
+	std::size_t last = 0;
 	
 	/**
 	 * Sets the logical size of the vector.
@@ -509,7 +509,7 @@ struct StackVector
 	 * @param[in] size - New logical size. Must not exceed compile-time
 	 *                   capacity.
 	 */
-	constexpr void set_size(unsigned size) noexcept
+	constexpr void set_size(std::size_t size) noexcept
 	{
 		assert(size <= count);
 
@@ -521,7 +521,7 @@ struct StackVector
 	 *
 	 * @return Number of elements in the vector.
 	 */
-	[[nodiscard]] constexpr unsigned size() const noexcept
+	[[nodiscard]] constexpr std::size_t size() const noexcept
 	{
 		return last;
 	}
@@ -541,7 +541,7 @@ struct StackVector
 	 *
 	 * @return Maximum number of elements.
 	 */
-	[[nodiscard]] constexpr unsigned capacity() const noexcept
+	[[nodiscard]] constexpr std::size_t capacity() const noexcept
 	{
 		return count;
 	}
@@ -592,7 +592,7 @@ struct StackVector
 	 */
 	constexpr void clear() noexcept
 	{
-		for (unsigned i = 0; i < last; ++i)
+		for (std::size_t i = 0; i < last; ++i)
 		{
 			items[i] = {};
 		}
@@ -717,7 +717,7 @@ struct StackVector
 	 *
 	 * @note Asserts if index >= size().
 	 */
-	constexpr const T& operator[](unsigned index) const noexcept
+	constexpr const T& operator[](std::size_t index) const noexcept
 	{
 		assert(index < last);
 
@@ -733,7 +733,7 @@ struct StackVector
 	 *
 	 * @note Asserts if index >= size().
 	 */
-	constexpr T& operator[](unsigned index) noexcept
+	constexpr T& operator[](std::size_t index) noexcept
 	{
 		assert(index < last);
 
@@ -749,7 +749,7 @@ struct StackVector
 	 *
 	 * @note Asserts if index >= size().
 	 */
-	constexpr const T& at(unsigned index) const noexcept
+	constexpr const T& at(std::size_t index) const noexcept
 	{
 		assert(index < last);
 
@@ -765,7 +765,7 @@ struct StackVector
 	 *
 	 * @note Asserts if index >= size().
 	 */
-	constexpr T& at(unsigned index) noexcept
+	constexpr T& at(std::size_t index) noexcept
 	{
 		assert(index < last);
 
