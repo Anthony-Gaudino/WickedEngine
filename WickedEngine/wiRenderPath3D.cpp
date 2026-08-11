@@ -1368,6 +1368,17 @@ namespace wi
 					cmd
 				);
 
+				// The splat sort is per camera and has to happen outside the
+				// render pass. It writes the same buffers the main camera's
+				// sort does, and reads them back in the draw below - which is
+				// safe only because this command list is begun, and so
+				// submitted, before the transparent pass that sorts for the
+				// main camera. The env probe path already relies on the same
+				// ordering.
+				wi::renderer::UpdateGaussianSplatsForCamera(
+					*scene, camera_reflection, cmd
+				);
+
 				device->EventBegin("Planar reflections", cmd);
 				auto range = wi::profiler::BeginRangeGPU("Planar Reflections", cmd);
 
@@ -1452,6 +1463,7 @@ namespace wi
 				}
 
 				wi::renderer::DrawSoftParticles(visibility_reflection, false, cmd);
+				wi::renderer::DrawGaussianSplats(*scene, camera_reflection, cmd);
 				wi::renderer::DrawSpritesAndFonts(*scene, camera_reflection, false, cmd);
 				// Keep the queue: the main camera draws these same trails, on a
 				// job that may still be recording. RenderPath3D::Render clears

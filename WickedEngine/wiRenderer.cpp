@@ -6120,6 +6120,35 @@ void DrawSoftParticles(
 
 	wi::profiler::EndRange(range);
 }
+/**
+ * Collects the gaussian splat models a camera can see.
+ *
+ * Both the sort and the draw need this set - the sort to know what to feed the
+ * GPU, the draw to know whether the indirect arguments it is about to consume
+ * were written for its own camera. It is recomputed for each rather than
+ * carried between them, because the two are recorded on different command
+ * lists, from different jobs, for different cameras. The loop is over models,
+ * not splats, so repeating it is cheap.
+ *
+ * @param[in] scene - Scene holding the splat models.
+ * @param[in] camera - Camera to cull against.
+ * @param[out] models - Receives the visible models. Cleared first.
+ */
+static void CullGaussianSplats(
+	const Scene& scene,
+	const CameraComponent& camera,
+	wi::vector<const wi::GaussianSplatModel*>& models
+)
+{
+	models.clear();
+	for (size_t i = 0; i < scene.gaussian_splats.GetCount(); ++i)
+	{
+		const wi::GaussianSplatModel& splat = scene.gaussian_splats[i];
+		if (!camera.frustum.CheckBoxFast(splat.aabb))
+			continue;
+		models.push_back(&splat);
+	}
+}
 void UpdateGaussianSplatsForCamera(
 	const Scene& scene,
 	const CameraComponent& camera,
@@ -6129,14 +6158,7 @@ void UpdateGaussianSplatsForCamera(
 	if (!scene.gaussian_scene.IsValid())
 		return;
 	thread_local wi::vector<const wi::GaussianSplatModel*> visible_gaussian_models;
-	visible_gaussian_models.clear();
-	for (size_t i = 0; i < scene.gaussian_splats.GetCount(); ++i)
-	{
-		const wi::GaussianSplatModel& splat = scene.gaussian_splats[i];
-		if (!camera.frustum.CheckBoxFast(splat.aabb))
-			continue;
-		visible_gaussian_models.push_back(&splat);
-	}
+	CullGaussianSplats(scene, camera, visible_gaussian_models);
 	if (visible_gaussian_models.empty())
 		return;
 
@@ -6150,6 +6172,13 @@ void DrawGaussianSplats(
 )
 {
 	if (!scene.gaussian_scene.IsValid())
+		return;
+	// The sort above leaves the indirect arguments untouched when this camera
+	// sees nothing, so a draw issued regardless would replay whatever the last
+	// camera to sort left in them. More than one camera sorts per frame.
+	thread_local wi::vector<const wi::GaussianSplatModel*> visible_gaussian_models;
+	CullGaussianSplats(scene, camera, visible_gaussian_models);
+	if (visible_gaussian_models.empty())
 		return;
 	scene.gaussian_scene.Draw(cmd);
 }

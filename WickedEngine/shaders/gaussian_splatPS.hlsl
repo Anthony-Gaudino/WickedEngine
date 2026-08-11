@@ -17,6 +17,14 @@ float4 main(float4 pos : SV_Position, half4 color : COLOR, half2 localPos : LOCA
 	const float2 screenUV = pos.xy * GetCamera().internal_resolution_rcp;
 	const float3 P = reconstruct_position(screenUV, pos.z);
 
+	// A planar reflection camera carries a clip plane, and nothing behind the
+	// mirror may show up in the reflected view. The mesh draw paths get that
+	// from their vertex shaders as an SV_ClipDistance; this one resolves it per
+	// pixel, on the same traced plane the water side below uses, so a splat
+	// straddling the mirror is cut rather than kept or dropped whole. Every
+	// other camera carries a zero plane, which keeps the fragment.
+	clip(dot(float4(P, 1), GetCamera().clip_plane));
+
 	// Half of this model may belong on the far side of the water surface, where
 	// the transparent pass issued it as a separate draw.
 	ClipToWaterSide(
