@@ -143,7 +143,7 @@ float4 main(VertexToPixel input) : SV_Target
 			// much water the ray actually crosses, and with the medium's own
 			// scattering coefficient instead of an authored fog density.
 			shadow *= (half3)(
-				water.InScatter(P, Lwater, V, FLT_MAX)
+				water.InScatter(P, Lwater, V, FLT_MAX, L.y)
 				* water.ViewTransmittance(
 					cameraDistance - marchedDistance - stepSize)
 				* stepIntegralWeight

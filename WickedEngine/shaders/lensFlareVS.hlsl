@@ -91,10 +91,13 @@ VertexOut main(uint vertexID : SV_VertexID)
 			// below it are both handled - and the sun's flare dies out as it
 			// drops, most of a low sun reflecting off the surface rather than
 			// entering the water at all.
+			const float3 toLightNormalized =
+				toLight / max(distanceToLight, 0.00001);
 			Out.waterTransmittance = medium.LightTransmittance(
 				GetCamera().position,
-				toLight / max(distanceToLight, 0.00001),
-				distanceToLight
+				toLightNormalized,
+				distanceToLight,
+				toLightNormalized.y
 			);
 		}
 	}

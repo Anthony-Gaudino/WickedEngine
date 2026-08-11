@@ -153,7 +153,7 @@ float4 main(VertexToPixel input) : SV_TARGET
 		{
 			// Physical single scattering, attenuated on both legs.
 			attenuation *= (half3)(
-				water.InScatter(P, L, V, dist)
+				water.InScatter(P, L, V, dist, L.y)
 				* water.ViewTransmittance(
 					cameraDistance - marchedDistance - stepSize)
 				* stepIntegralWeight

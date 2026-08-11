@@ -54,8 +54,16 @@ struct Lighting
 // WaterLightTransmittance already separates the two, since it clips the path at
 // the surface: a light above returns a zero-length path, only a light below
 // returns the real one. The test is just which side the light is on.
+//
+// cos_theta_above is the angle to the light measured ABOVE the surface, before
+// any refraction. L cannot stand in for it: a directional light hands over a
+// direction already bent into the water, and the surface reflects on the angle
+// the light struck it at, not on the steeper one it travels at afterwards.
 inline half3 attenuation_water(
-	in Surface surface, in half3 L, in float dist_to_light
+	in Surface surface,
+	in half3 L,
+	in float dist_to_light,
+	in float cos_theta_above
 )
 {
 #ifdef WATER
@@ -66,7 +74,8 @@ inline half3 attenuation_water(
 	}
 #endif // WATER
 	return WaterLightTransmittance(
-		surface.P, surface.waterSurfaceHeight, L, dist_to_light);
+		surface.P, surface.waterSurfaceHeight, L, dist_to_light,
+		cos_theta_above);
 }
 
 // Transmittance of the water above a submerged point, for the downwelling
@@ -156,7 +165,7 @@ inline half3 WaterSubsurfaceScattering(
 	// Both interfaces: the share admitted at the back, and the share not
 	// reflected away on the way out. The generic term has neither.
 	const half entering =
-		(half)FresnelTransmittanceIntoWater(RefractIntoWater(L).y);
+		(half)FresnelTransmittanceIntoWater(L.y);
 
 	return lightColor * (half3)(scatterAlbedo * transmitted) * phase
 		* entering * (1 - surface.F)
@@ -249,7 +258,7 @@ inline void light_directional(in ShaderEntity light, in Surface surface, inout L
 	// Water crossed on the way down to a submerged point. The slant path from
 	// the surface, so it lengthens as the sun drops - and the refracted
 	// direction, because that is the one the light actually travelled.
-	light_color *= attenuation_water(surface, RefractIntoWater(L), FLT_MAX);
+	light_color *= attenuation_water(surface, RefractIntoWater(L), FLT_MAX, L.y);
 
 	lighting.direct.diffuse = mad(light_color, BRDF_GetDiffuse(surface, surface_to_light), lighting.direct.diffuse);
 	lighting.direct.specular = mad(light_color, BRDF_GetSpecular(surface, surface_to_light), lighting.direct.specular);
@@ -351,7 +360,7 @@ inline void light_point(in ShaderEntity light, in Surface surface, inout Lightin
 	// Water crossed on the way to a submerged point. Only the submerged part of
 	// the path counts, so a lamp hanging above the surface still lights what is
 	// under it. dist2 * dist_rcp is the distance to the light.
-	light_color *= attenuation_water(surface, L, dist2 * dist_rcp);
+	light_color *= attenuation_water(surface, L, dist2 * dist_rcp, L.y);
 
 	lighting.direct.diffuse = mad(light_color, BRDF_GetDiffuse(surface, surface_to_light), lighting.direct.diffuse);
 
@@ -482,7 +491,7 @@ inline void light_spot(in ShaderEntity light, in Surface surface, inout Lighting
 		
 	// Water crossed on the way to a submerged point, over the submerged part of
 	// the path only. dist2 * dist_rcp is the distance to the light.
-	light_color *= attenuation_water(surface, L, dist2 * dist_rcp);
+	light_color *= attenuation_water(surface, L, dist2 * dist_rcp, L.y);
 
 	lighting.direct.diffuse = mad(light_color, BRDF_GetDiffuse(surface, surface_to_light), lighting.direct.diffuse);
 
@@ -618,7 +627,7 @@ inline void light_rect(in ShaderEntity light, in Surface surface, inout Lighting
 	
 	// Water crossed on the way to a submerged point, measured to the same
 	// closest point on the rectangle that the falloff above uses.
-	light_color *= attenuation_water(surface, L, dist2 * dist_rcp);
+	light_color *= attenuation_water(surface, L, dist2 * dist_rcp, L.y);
 
 	half3 light_color_diffuse = light_color * light_area * PI; // I increase the light color by the surface area, because I want larger lights to illuminate more.
 	

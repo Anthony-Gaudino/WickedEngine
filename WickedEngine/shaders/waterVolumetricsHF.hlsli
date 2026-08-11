@@ -205,10 +205,19 @@ static const float WATER_FLUORESCENCE_BAND_RESPONSE = 0.079;
  * puts out a setting sun for anything below the surface, smoothly, rather than
  * leaving it lit until the moment it dips below the horizon.
  *
- * Parameterised by the SUBMERGED angle, which is what the shading code has to
- * hand, and converted back through Snell's law - exact for a directional light,
- * whose direction really was refracted, and an approximation for a local one,
- * which is treated as though it had been.
+ * Parameterised by the AIR-SIDE angle, because that is the angle the light
+ * actually struck the surface at and the only one the reflectance depends on.
+ * Every caller has it: a directional light refracts its direction downwards
+ * immediately after asking, and a local light is never refracted at all, so the
+ * straight line towards it is what it has.
+ *
+ * Taking the submerged angle instead and inverting Snell's law to recover this
+ * one cannot work for a local light, whose direction was never bent: past 48.6
+ * degrees off vertical there is no submerged ray that steep, the inversion runs
+ * out of domain, and the transmittance falls to exactly zero. That is a real
+ * statement about what an underwater viewer can SEE of the world above; it says
+ * nothing about what a lamp can light, and as a cutoff on illumination it drew
+ * a hard-edged disc of light under every local lamp.
  *
  * Uses Schlick's approximation, which for this index ratio matches the exact
  * unpolarized Fresnel equations to better than a part in a thousand on the
@@ -216,31 +225,22 @@ static const float WATER_FLUORESCENCE_BAND_RESPONSE = 0.079;
  *
  * Example usage:
  * @code
- * light_color *= FresnelTransmittanceIntoWater(Lwater.y);
+ * light_color *= FresnelTransmittanceIntoWater(L.y);
  * @endcode
  *
  * References:
  * https://en.wikipedia.org/wiki/Fresnel_equations
  *
- * @param[in] cosThetaSubmerged - Cosine of the angle between straight up and
- *                                the direction towards the light, taken below
- *                                the surface.
+ * @param[in] cosThetaAbove - Cosine of the angle between straight up and the
+ *                            direction towards the light, taken ABOVE the
+ *                            surface, before any refraction.
  *
  * @return Transmitted fraction, in [0, 1]. 0 for a light at or below the
  *         horizon, which delivers nothing through the surface at all.
  */
-float FresnelTransmittanceIntoWater(float cosThetaSubmerged)
+float FresnelTransmittanceIntoWater(float cosThetaAbove)
 {
-	// Snell's law back to the air side. The reflectance is governed by the
-	// angle the light struck the surface at, not by the steeper one it travels
-	// at afterwards, and the two differ by a lot - the whole hemisphere above
-	// maps into a cone of 48.6 degrees below.
-	const float cosBelow = saturate(cosThetaSubmerged);
-	const float sinBelow = sqrt(saturate(1 - cosBelow * cosBelow));
-	const float sinAbove = saturate(sinBelow * WATER_REFRACTIVE_INDEX);
-	const float cosAbove = sqrt(saturate(1 - sinAbove * sinAbove));
-
-	const float grazing = pow5(1 - cosAbove);
+	const float grazing = pow5(1 - saturate(cosThetaAbove));
 
 	return (1 - WATER_FRESNEL_NORMAL_REFLECTANCE) * (1 - grazing);
 }
@@ -797,13 +797,20 @@ struct WaterVolumetrics
 	 * @param[in] toLight - Normalized direction from the sample to the light.
 	 * @param[in] distanceToLight - Distance to the light, or `FLT_MAX` for a
 	 *                              directional light.
+	 * @param[in] cosThetaAbove - Cosine of the angle to the light taken ABOVE
+	 *                            the surface, before any refraction. Passed
+	 *                            separately because `toLight` has already been
+	 *                            bent for a directional light and no longer
+	 *                            carries the angle the surface reflects on.
+	 *                            Ignored for a light that is itself submerged.
 	 *
 	 * @return Per-channel surviving fraction, in [0, 1].
 	 */
 	float3 LightTransmittance(
 		float3 samplePos,
 		float3 toLight,
-		float distanceToLight
+		float distanceToLight,
+		float cosThetaAbove
 	)
 	{
 		const float path =
@@ -814,7 +821,7 @@ struct WaterVolumetrics
 		// reflected away rather than coming down. A submerged light crosses
 		// nothing and keeps all of it.
 		const float crossing = (path < distanceToLight)
-			? FresnelTransmittanceIntoWater(toLight.y)
+			? FresnelTransmittanceIntoWater(cosThetaAbove)
 			: 1;
 
 		return crossing * exp(-path * sigmaT);
@@ -853,6 +860,9 @@ struct WaterVolumetrics
 	 * @param[in] toEye - Normalized direction from the sample to the eye.
 	 * @param[in] distanceToLight - Distance to the light, or `FLT_MAX` for a
 	 *                              directional light.
+	 * @param[in] cosThetaAbove - Cosine of the angle to the light taken ABOVE
+	 *                            the surface, before any refraction. See
+	 *                            `LightTransmittance`.
 	 *
 	 * @return Per-channel scattered radiance per metre, before the light's own
 	 *         colour, falloff and shadow term.
@@ -861,11 +871,12 @@ struct WaterVolumetrics
 		float3 samplePos,
 		float3 toLight,
 		float3 toEye,
-		float distanceToLight
+		float distanceToLight,
+		float cosThetaAbove
 	)
 	{
-		const float3 lightTransmittance =
-			LightTransmittance(samplePos, toLight, distanceToLight);
+		const float3 lightTransmittance = LightTransmittance(
+			samplePos, toLight, distanceToLight, cosThetaAbove);
 
 		// This HgPhase peaks at cosTheta = -1, so dot(toLight, toEye) puts the
 		// peak where the eye looks along the light's own direction of travel -
@@ -1061,7 +1072,7 @@ WaterVolumetrics GetWaterVolumetricsAtEye(float2 screenUV)
  * Example usage:
  * @code
  * light_color *= WaterLightTransmittance(
- *     surface.P, surface.waterSurfaceHeight, L, dist);
+ *     surface.P, surface.waterSurfaceHeight, L, dist, L.y);
  * @endcode
  *
  * @param[in] samplePos - The lit point, in world space.
@@ -1069,6 +1080,9 @@ WaterVolumetrics GetWaterVolumetricsAtEye(float2 screenUV)
  * @param[in] toLight - Normalized direction from the lit point to the light.
  * @param[in] distanceToLight - Distance to the light, or `FLT_MAX` for a
  *                              directional light.
+ * @param[in] cosThetaAbove - Cosine of the angle to the light taken ABOVE the
+ *                            surface, before any refraction. See
+ *                            `WaterVolumetrics::LightTransmittance`.
  *
  * @return Per-channel surviving fraction, in [0, 1]. 1 at or above the surface,
  *         so callers need no test of their own.
@@ -1077,7 +1091,8 @@ half3 WaterLightTransmittance(
 	float3 samplePos,
 	float waterHeight,
 	float3 toLight,
-	float distanceToLight
+	float distanceToLight,
+	float cosThetaAbove
 )
 {
 	const WaterVolumetrics water = GetWaterVolumetrics(samplePos, waterHeight);
@@ -1088,7 +1103,8 @@ half3 WaterLightTransmittance(
 		return 1;
 	}
 
-	return (half3)water.LightTransmittance(samplePos, toLight, distanceToLight);
+	return (half3)water.LightTransmittance(
+		samplePos, toLight, distanceToLight, cosThetaAbove);
 }
 
 /**

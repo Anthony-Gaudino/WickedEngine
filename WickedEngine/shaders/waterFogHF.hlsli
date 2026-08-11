@@ -212,11 +212,11 @@ WaterFog MakeWaterFog(
 	// sun reached the water - without it the water would still glow at sunset
 	// while everything in it went dark.
 	//
-	// RefractIntoWater rather than refractedLightDir above: the two agree while
-	// the sun is up, but refract() keeps bending a sun that has already set
-	// into a downward ray, whose cosine would read as light still getting in.
-	sunLight *=
-		(half)FresnelTransmittanceIntoWater(RefractIntoWater(L).y);
+	// The unrefracted direction, which is the angle the light struck the surface
+	// at and the only one the reflectance depends on. It also settles a sun that
+	// has already set without a special case: L.y goes negative, the saturate
+	// inside takes it to zero, and nothing gets in.
+	sunLight *= (half)FresnelTransmittanceIntoWater(L.y);
 
 	[branch]
 	if (godRays)

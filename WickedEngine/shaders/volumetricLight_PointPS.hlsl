@@ -106,7 +106,7 @@ float4 main(VertexToPixel input) : SV_TARGET
 			// legs, so a submerged lamp loses its warm end within a metre or
 			// two and fades with distance instead of carrying forever.
 			attenuation *= (half3)(
-				water.InScatter(P, L, V, dist)
+				water.InScatter(P, L, V, dist, L.y)
 				* water.ViewTransmittance(
 					cameraDistance - marchedDistance - stepSize)
 				* stepIntegralWeight

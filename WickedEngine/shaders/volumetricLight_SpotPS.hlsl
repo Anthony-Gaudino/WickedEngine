@@ -162,7 +162,7 @@ float4 main(VertexToPixel input) : SV_TARGET
 				// inside the cone gate because the transmittance is analytic -
 				// there is no running state to advance on rejected samples.
 				attenuation *= (half3)(
-					water.InScatter(P, L, V, dist)
+					water.InScatter(P, L, V, dist, L.y)
 					* water.ViewTransmittance(
 						cameraDistance - marchedDistance - stepSize)
 					* stepIntegralWeight
