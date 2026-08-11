@@ -1058,7 +1058,12 @@ float4 main(PixelInput input, in bool is_frontface : SV_IsFrontFace APPEND_COVER
 		Texture2D<half4> texture_refraction = bindless_textures_half4[descriptor_index(camera.texture_refraction_index)];
 		// First sample using full perturbation:
 		float2 refraction_uv = ScreenCoord.xy + surface.bumpColor.rg;
-		float refraction_depth = find_max_depth(refraction_uv, 2, 2);
+		// Reach set by the scene copy's texel, not the depth buffer's: the copy
+		// is a fraction of the screen resolution, so a UV landing merely NEAR a
+		// solid still reads a texel carrying it.
+		float2 refraction_dim;
+		texture_refraction.GetDimensions(refraction_dim.x, refraction_dim.y);
+		float refraction_depth = find_max_depth(refraction_uv, 2, rcp(refraction_dim));
 		float3 refraction_position = reconstruct_position(refraction_uv, refraction_depth);
 		float water_depth = -dot(float4(refraction_position, 1), water_plane);
 		if(camera_above_water)

@@ -1505,17 +1505,37 @@ inline float3 reconstruct_position(in float2 uv, in float z)
 	return reconstruct_position(uv, z, GetCamera());
 }
 
-inline float find_max_depth(in float2 uv, in int radius, in float lod)
+/**
+ * Nearest opaque surface within a neighbourhood of a screen UV.
+ *
+ * Under reverse-Z the nearest surface carries the greatest device depth, hence
+ * the maximum.
+ *
+ * Always reads mip 0. The depth pyramid reduces with `min`, which under
+ * reverse-Z is the FARTHEST surface, so no coarser level still holds the near
+ * geometry this looks for - a coarse texel straddling a silhouette reports the
+ * background behind the object instead of the object.
+ *
+ * The caller gives the step in UV rather than in pixels, because the reach
+ * that matters is set by whatever texture the result will be used to clear,
+ * not by the depth buffer's own resolution.
+ *
+ * @param[in] uv - Screen UV at the centre of the neighbourhood.
+ * @param[in] radius - Half-width of the tap grid, in taps. Cost is
+ *                     `(2 * radius + 1)^2` samples.
+ * @param[in] stepUV - Spacing between taps, in UV. The neighbourhood reaches
+ *                     `radius * stepUV` in each direction.
+ *
+ * @return Greatest device depth found, that is, the nearest surface.
+ */
+inline float find_max_depth(in float2 uv, in int radius, in float2 stepUV)
 {
-	uint2 dim;
-	texture_depth.GetDimensions(dim.x, dim.y);
-	float2 dim_rcp = rcp(dim);
 	float ret = 0;
 	for (int x = -radius; x <= radius;++x)
 	{
 		for (int y = -radius; y <= radius;++y)
 		{
-			ret = max(ret, texture_depth.SampleLevel(sampler_point_clamp, uv + float2(x, y) * dim_rcp, lod));
+			ret = max(ret, texture_depth.SampleLevel(sampler_point_clamp, uv + float2(x, y) * stepUV, 0));
 		}
 	}
 	return ret;

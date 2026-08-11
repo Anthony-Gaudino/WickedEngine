@@ -257,7 +257,19 @@ float4 main(PSIn input) : SV_TARGET
 		Texture2D texture_refraction = bindless_textures[descriptor_index(camera.texture_refraction_index)];
 		// First sample using full perturbation:
 		float2 refraction_uv = ScreenCoord.xy + surface.N.xz * bump_strength;
-		float refraction_depth = find_max_depth(refraction_uv, 2, 2);
+
+		// Reject against the neighbourhood the SCENE COPY resolves, not the one
+		// the depth buffer does. The copy is a fraction of the screen
+		// resolution, so a silhouette in it is several full resolution pixels
+		// wide: a UV landing merely NEAR a solid, without landing on it, still
+		// reads a texel carrying that solid, and paints it into the water. Two
+		// texels of reach covers the copy's own footprint and the second texel
+		// bilinear filtering pulls in.
+		float2 refraction_dim;
+		texture_refraction.GetDimensions(refraction_dim.x, refraction_dim.y);
+		const float2 refraction_texel = rcp(refraction_dim);
+
+		float refraction_depth = find_max_depth(refraction_uv, 2, refraction_texel);
 		float3 refraction_position = reconstruct_position(refraction_uv, refraction_depth);
 		water_depth = -dot(float4(refraction_position, 1), water_plane);
 		water_depth += texture_ocean_displacementmap.SampleLevel(sampler_linear_wrap, refraction_position.xz * xOceanPatchSizeRecip, 0).z; // texture contains xzy!
