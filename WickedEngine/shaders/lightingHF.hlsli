@@ -43,20 +43,30 @@ struct Lighting
 // so it arrives dimmed and shifted towards blue exactly as the water between
 // that point and the eye shifts what leaves it. 1 above the surface.
 //
-// A surface flagged WATER is the air/water interface itself, so nothing is ever
-// above it. The measurement below now follows the wave surface rather than the
-// flat plane, which is what a trough needed, but the exemption stands on its
-// own: the interface has no water over it whatever shape it takes.
+// A surface flagged WATER is the air/water interface itself, so a light in the
+// AIR crosses no water to reach it, whatever shape the waves take - and the
+// share of that light the surface admits belongs to the BRDF here, not to this.
+// A light UNDER the surface is the opposite case: the whole column between it
+// and the underside is water, and is as real as any other path through it.
+// Exempting that too left a submerged lamp glinting on the underside from
+// further away than it could light the sea bed beneath it.
+//
+// WaterLightTransmittance already separates the two, since it clips the path at
+// the surface: a light above returns a zero-length path, only a light below
+// returns the real one. The test is just which side the light is on.
 inline half3 attenuation_water(
 	in Surface surface, in half3 L, in float dist_to_light
 )
 {
 #ifdef WATER
-	return 1;
-#else
+	[branch]
+	if (L.y >= 0)
+	{
+		return 1;
+	}
+#endif // WATER
 	return WaterLightTransmittance(
 		surface.P, surface.waterSurfaceHeight, L, dist_to_light);
-#endif // WATER
 }
 
 // Transmittance of the water above a submerged point, for the downwelling

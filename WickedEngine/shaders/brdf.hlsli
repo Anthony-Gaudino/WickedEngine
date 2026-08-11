@@ -124,6 +124,35 @@ struct SurfaceToLight
 
 		F = F_Schlick(surface.f0, VdotH);
 
+#ifdef WATER
+		[branch]
+		if (surface.internal_ior > 0)
+		{
+			// This interface is being shaded from inside the denser medium,
+			// where the reflectance curve is not the one Schlick is being asked
+			// for above. Evaluated on the incidence angle it returns the AIR
+			// side curve - a couple of percent all the way to grazing. The
+			// dense side instead climbs to TOTAL reflection at the critical
+			// angle and stays there, which is why a submerged lamp glints off
+			// the underside of the water far brighter than the same lamp seen
+			// from above it.
+			//
+			// Schlick evaluated at the TRANSMITTED angle is that curve: the
+			// transmitted ray swings towards grazing as incidence approaches
+			// critical, so the term runs to one exactly as the ray disappears.
+			// Past that there is no transmitted ray at all, which is the
+			// negative radicand below.
+			//
+			// \[
+			// \sin^2\theta_t = \eta^2 (1 - \cos^2\theta_i)
+			// \]
+			const half sinT2 = sqr(surface.internal_ior) * (1 - sqr(VdotH));
+			F = sinT2 >= 1
+				? (half3)1
+				: F_Schlick(surface.f0, sqrt(saturate(1 - sinT2)));
+		}
+#endif // WATER
+
 #ifdef ANISOTROPIC
 		TdotL = dot(surface.aniso.T.xyz, L);
 		BdotL = dot(surface.aniso.B, L);

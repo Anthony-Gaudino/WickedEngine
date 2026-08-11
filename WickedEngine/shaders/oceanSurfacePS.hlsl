@@ -146,6 +146,29 @@ float4 main(PSIn input) : SV_TARGET
 	surface.roughness = (half)sqrt(sqrt(oceanAlphaSq));
 	surface.P = input.GetPos3D();
 	surface.N = normalize(float3(gradient.x, xOceanTexelLength * 2, gradient.y));
+
+	// The wave normal is built pointing up out of the water, which is the wrong
+	// side to shade from when the eye is under the surface: every dot taken
+	// against it comes out negative, NdotV saturates to zero and the specular
+	// lobe goes with it, so a submerged lamp casts no glint at all on the
+	// underside. Face the normal into the medium the viewer is actually in.
+	//
+	// Costs nothing elsewhere: reflect() is even in N, so the planar reflection
+	// vectors below are untouched, the critical angle test takes an abs, and
+	// the refraction offset only has its direction mirrored. What does change,
+	// correctly, is that the ambient now arrives from below.
+	if (camera_below_water)
+	{
+		surface.N = -surface.N;
+
+		// Water against air, seen from the water. Switches the direct specular
+		// Fresnel to the dense-side curve, which reaches total reflection at
+		// the critical angle rather than sitting at the two percent an air-side
+		// f0 returns - the difference between a submerged lamp glinting off the
+		// underside and it being invisible there.
+		surface.internal_ior = 1.333;
+	}
+
 	surface.V = V;
 	// Kept at 1 for the gate it holds open, not for the wrap diffuse it looks
 	// like it buys: ApplyLighting lerps the whole diffuse term away wherever

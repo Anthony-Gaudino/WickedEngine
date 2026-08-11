@@ -94,6 +94,12 @@ struct Surface
 	half4 sss;				// subsurface scattering color * amount
 	half4 sss_inv;			// 1 / (1 + sss)
 	half water_thickness;	// water a wave presents to light behind it, metres
+	// Relative index of refraction when this interface is being shaded from
+	// INSIDE the denser medium - 1.333 for water looked at from underneath.
+	// Zero, the default, means an ordinary air-side interface, and the direct
+	// specular Fresnel keeps its air-side form. Only read where WATER is
+	// defined; see SurfaceToLight::create for what it changes and why.
+	half internal_ior;
 	// World height of the ocean surface over P, fetched once in update().
 	// Asked once per light otherwise - by attenuation_water, for every light
 	// reaching this point - and it is the same answer every time.
@@ -157,6 +163,7 @@ struct Surface
 		sss = 0;
 		sss_inv = 1;
 		water_thickness = 0;
+		internal_ior = 0;
 		// The still plane until update() measures the waves, so a surface that
 		// never gets updated behaves as everything did before the waves were
 		// consulted at all, rather than as though the sea were at the origin.
