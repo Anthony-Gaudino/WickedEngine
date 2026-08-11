@@ -126,17 +126,59 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		float surface_dist = length(V);
 		V /= surface_dist;
 
-		// The ocean is not rendered into the lineardepth unfortunately, so we also trace it:
-		//	Otherwise the ocean surface could be same as infinite depth and incorrectly fogged
-		float3 ocean_surface_pos = intersectPlaneClampInfinite(campos, -V, float3(0, 1, 0), ocean.water_height);
-		float2 ocean_surface_uv = ocean_surface_pos.xz * ocean.patch_size_rcp;
-		Texture2D texture_displacementmap = bindless_textures[descriptor_index(ocean.texture_displacementmap)];
-		const float3 displacement = texture_displacementmap.SampleLevel(sampler_linear_wrap, ocean_surface_uv, 0).xzy;
-		ocean_surface_pos += displacement;
-		const float ocean_dist = length(ocean_surface_pos - campos);
-
 		// View ray from the eye into the scene:
 		const float3 rayDir = -V;
+
+		// The ocean is not rendered into the lineardepth unfortunately, so we
+		// also trace it: Otherwise the ocean surface could be same as infinite
+		// depth and incorrectly fogged
+		//
+		// Traced against the DISPLACED surface rather than the still plane,
+		// because the eye can stand above that plane and still be under water -
+		// anywhere inside a crest. An upward ray that misses the plane is
+		// answered with a point z_far away along its horizontal heading, and
+		// that heading is a function of the ray's azimuth alone, so every wave
+		// lookup taken at it fans out into stripes about the vertical.
+		//
+		// Two steps of a height field solve: the first lands the hit at the
+		// right horizontal position, the second corrects the height there. The
+		// window only ever looks within the critical angle of vertical, where
+		// the surface is close to single valued. The refinement is kept only
+		// while it still lands in front of the eye, because a grazing ray
+		// re-intersected against a height field walks away rather than
+		// converging.
+		const float3 ocean_up = float3(0, 1, 0);
+		float ocean_dist = intersectPlaneClampInfiniteDist(
+			campos, rayDir, ocean_up, ocean_drawn_surface_height(campos));
+		[branch]
+		if (ocean_dist > 0)
+		{
+			const float refined_dist = intersectPlaneClampInfiniteDist(
+				campos, rayDir, ocean_up,
+				ocean_drawn_surface_height(campos + rayDir * ocean_dist));
+			if (refined_dist > 0)
+			{
+				ocean_dist = refined_dist;
+			}
+		}
+
+		// Whether this ray leaves the water through the surface at all.
+		//
+		// A ray cast from an eye that stands above the surface over its own
+		// position never does - the dry half of a camera straddling a crest,
+		// where the water it is looking through is ahead of the eye rather than
+		// over it. A vertical solve cannot find a crossing that is not
+		// overhead; that needs a march along the ray. Every quantity the window
+		// is built from is meaningless without a crossing, so it is switched
+		// off rather than handed the nearest wrong answer.
+		const bool ocean_surface_ahead = ocean_dist > 0;
+		ocean_dist = max(ocean_dist, 0);
+
+		// Undisplaced horizontal position, which is what the surface shader
+		// builds its own wave lookups from - the solve above moves the hit
+		// vertically only, so this correspondence holds.
+		const float3 ocean_surface_pos = campos + rayDir * ocean_dist;
+		const float2 ocean_surface_uv = ocean_surface_pos.xz * ocean.patch_size_rcp;
 
 		// The medium, for Snell's window below. This pass no longer fogs
 		// anything: every fragment applied the water's fog over its own view
@@ -245,7 +287,8 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			// color regardless of what is above. This also skips the ray-traced
 			// window entirely at the light-reach depth, saving that cost.
 			const bool windowActive =
-				(cone * upward * openWater) > 0.0
+				ocean_surface_ahead
+				&& (cone * upward * openWater) > 0.0
 				&& any(refractedDir)
 				&& pathFade > 0.003;
 
@@ -298,7 +341,9 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			// god-ray texture inside the window as it hazed out. What replaces
 			// it is the surrounding underwater view, through the blend below.
 			const float3 windowContent = aboveWater * pathTransmittance;
-			const float windowShape = saturate(cone * upward * openWater);
+			const float windowShape = ocean_surface_ahead
+				? saturate(cone * upward * openWater)
+				: 0;
 			const float windowBlend = saturate(windowShape * underwater_snell);
 			color.rgb = lerp(color.rgb, windowContent, windowBlend);
 
