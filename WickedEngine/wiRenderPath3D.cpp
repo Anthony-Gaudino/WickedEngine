@@ -745,10 +745,8 @@ namespace wi
 		// is exact, whereas a test on the eye alone has to be loose enough to
 		// clear the wave displacement.
 		//
-		// Deliberately NOT set on camera_reflection below: a planar
-		// reflection's eye is the mirror of the real one, so it sits below the
-		// surface exactly when the real camera is above it, and every
-		// above-water object in the reflection would be fogged.
+		// Set on camera_reflection below only while the real eye is submerged -
+		// see the reasoning there.
 		if (scene->weather.IsOceanEnabled())
 		{
 			camera->shadercamera_options |= SHADERCAMERA_OPTION_WATER_FOG;
@@ -801,6 +799,33 @@ namespace wi
 		camera_reflection.scissor.bottom = (int)depthBuffer_Reflection_render.desc.height;
 		camera_reflection.sample_count = depthBuffer_Reflection_render.desc.sample_count;
 		camera_reflection.shadercamera_options = SHADERCAMERA_OPTION_NONE;
+
+		// The reflection's own fragments carry the water they are seen through,
+		// the way every other draw does.
+		//
+		// Only while the real eye is submerged, because a mirrored segment is
+		// not half wet and half dry the way it looks. Reflect across the water
+		// plane and every part of it maps to a real leg on the SAME side as the
+		// real eye: with the eye below, the mirrored ray's above-plane half is
+		// the real surface-to-eye leg and its below-plane half the real
+		// object-to-surface leg, and both are genuinely under water. With the
+		// eye above, the whole mirrored ray maps to legs that are in air, and
+		// fogging it would put water over a reflection of the sky.
+		//
+		// GetWaterFog measures against the plane, so submerged it contributes
+		// exactly the object-to-surface leg and nothing more - the
+		// surface-to-eye column is applied once to the whole fragment by
+		// ApplyWaterFogAtSurface in oceanSurfacePS, and must not be counted
+		// here as well.
+		//
+		// God rays deliberately left off: they sweep a screen space pattern
+		// around where the sun projects, and a mirrored view has no such point.
+		if (scene->weather.IsOceanEnabled() &&
+			camera->Eye.y <= scene->weather.oceanParameters.waterHeight)
+		{
+			camera_reflection.shadercamera_options |=
+				SHADERCAMERA_OPTION_WATER_FOG;
+		}
 		camera_reflection.texture_primitiveID_index = -1;
 		camera_reflection.texture_depth_index = device->GetDescriptorIndex(&depthBuffer_Reflection, SubresourceType::SRV);
 		camera_reflection.texture_velocity_index = -1;
