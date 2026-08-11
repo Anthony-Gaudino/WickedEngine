@@ -121,6 +121,7 @@ namespace wi
 		wi::graphics::Texture rtVelocity; // optional R16G16_FLOAT
 		wi::graphics::Texture rtReflection; // contains the scene rendered for planar reflections
 		wi::graphics::Texture rtReflection_render; // contains the scene rendered for planar reflections, can be MSAA
+		wi::graphics::Texture rtSceneCopy_Reflection; // opaque half of the planar reflection, for the transparents in it to refract
 		wi::graphics::Texture rtRaytracedDiffuse; // raytraced diffuse screen space texture
 		wi::graphics::Texture rtSSR; // standard screen-space reflection results
 		wi::graphics::Texture rtSSGI; // standard screen-space GI results

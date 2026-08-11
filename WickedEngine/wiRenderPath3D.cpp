@@ -808,7 +808,11 @@ namespace wi
 		camera_reflection.buffer_entitytiles_index = device->GetDescriptorIndex(&tiledLightResources_planarReflection.entityTiles, SubresourceType::SRV);
 		camera_reflection.texture_reflection_index = -1;
 		camera_reflection.texture_reflection_depth_index = -1;
-		camera_reflection.texture_refraction_index = -1;
+		// The opaque half of the reflection, downsampled between the two halves
+		// of the reflection colour pass. Bound here rather than there because
+		// the camera constant buffer carries a descriptor index, not content:
+		// the pass records the copy before any draw that reads it.
+		camera_reflection.texture_refraction_index = device->GetDescriptorIndex(&rtSceneCopy_Reflection, SubresourceType::SRV);
 		camera_reflection.texture_waterriples_index = -1;
 		camera_reflection.texture_ao_index = -1;
 		camera_reflection.texture_ssr_index = -1;
@@ -1382,56 +1386,66 @@ namespace wi
 				device->EventBegin("Planar reflections", cmd);
 				auto range = wi::profiler::BeginRangeGPU("Planar Reflections", cmd);
 
-				if (depthBuffer_Reflection_render.desc.sample_count > 1)
-				{
-					RenderPassImage rp[] = {
-						RenderPassImage::RenderTarget(
+				// The reflection is drawn in two halves, for the same reason
+				// the main view is: what a transparent refracts has to already
+				// exist as a texture before the transparent is drawn. The main
+				// view's own scene copy cannot stand in here, being a different
+				// projection of the scene entirely, so the reflection takes its
+				// own between the halves.
+				const bool reflectionMSAA =
+					depthBuffer_Reflection_render.desc.sample_count > 1;
+				auto beginReflectionPass = [&](
+					RenderPassImage::LoadOp load,
+					RenderPassImage::StoreOp store
+				) {
+					RenderPassImage rp[3];
+					uint32_t rp_count = 0;
+					if (reflectionMSAA)
+					{
+						rp[rp_count++] = RenderPassImage::RenderTarget(
 							&rtReflection_render,
-							RenderPassImage::LoadOp::CLEAR,
-							RenderPassImage::StoreOp::DONTCARE,
+							load,
+							store,
 							ResourceState::RENDERTARGET,
 							ResourceState::RENDERTARGET
-						),
-						RenderPassImage::Resolve(&rtReflection),
-						RenderPassImage::DepthStencil(
-							&depthBuffer_Reflection_render,
-							RenderPassImage::LoadOp::LOAD,
-							RenderPassImage::StoreOp::STORE,
-							ResourceState::SHADER_RESOURCE,
-							ResourceState::DEPTHSTENCIL,
-							ResourceState::SHADER_RESOURCE
-						),
-					};
-					device->RenderPassBegin(rp, arraysize(rp), cmd);
-				}
-				else
-				{
-					RenderPassImage rp[] = {
-						RenderPassImage::RenderTarget(
+						);
+						rp[rp_count++] = RenderPassImage::Resolve(&rtReflection);
+					}
+					else
+					{
+						rp[rp_count++] = RenderPassImage::RenderTarget(
 							&rtReflection_render,
-							RenderPassImage::LoadOp::CLEAR,
-							RenderPassImage::StoreOp::STORE,
+							load,
+							store,
 							ResourceState::SHADER_RESOURCE,
 							ResourceState::SHADER_RESOURCE
-						),
-						RenderPassImage::DepthStencil(
-							&depthBuffer_Reflection_render,
-							RenderPassImage::LoadOp::LOAD,
-							RenderPassImage::StoreOp::STORE,
-							ResourceState::SHADER_RESOURCE,
-							ResourceState::DEPTHSTENCIL,
-							ResourceState::SHADER_RESOURCE
-						),
-					};
-					device->RenderPassBegin(rp, arraysize(rp), cmd);
-				}
+						);
+					}
+					rp[rp_count++] = RenderPassImage::DepthStencil(
+						&depthBuffer_Reflection_render,
+						RenderPassImage::LoadOp::LOAD,
+						RenderPassImage::StoreOp::STORE,
+						ResourceState::SHADER_RESOURCE,
+						ResourceState::DEPTHSTENCIL,
+						ResourceState::SHADER_RESOURCE
+					);
+					device->RenderPassBegin(rp, rp_count, cmd);
 
-				Viewport vp;
-				vp.width = (float)depthBuffer_Reflection_render.GetDesc().width;
-				vp.height = (float)depthBuffer_Reflection_render.GetDesc().height;
-				vp.min_depth = 0;
-				vp.max_depth = 1;
-				device->BindViewports(1, &vp, cmd);
+					Viewport vp;
+					vp.width = (float)depthBuffer_Reflection_render.GetDesc().width;
+					vp.height = (float)depthBuffer_Reflection_render.GetDesc().height;
+					vp.min_depth = 0;
+					vp.max_depth = 1;
+					device->BindViewports(1, &vp, cmd);
+				};
+
+				// Everything a transparent in the reflection can see through
+				// itself. The MSAA samples have to be kept rather than dropped
+				// at the resolve, since the second half loads them back.
+				beginReflectionPass(
+					RenderPassImage::LoadOp::CLEAR,
+					RenderPassImage::StoreOp::STORE
+				);
 
 				wi::renderer::DrawScene(
 					visibility_reflection,
@@ -1443,17 +1457,16 @@ namespace wi
 					wi::renderer::DRAWSCENE_SKIP_PLANAR_REFLECTION_OBJECTS
 				);
 				wi::renderer::DrawSky(*scene, cmd);
-				wi::renderer::DrawScene(
-					visibility_reflection,
-					RENDERPASS_MAIN,
-					cmd,
-					wi::renderer::DRAWSCENE_TRANSPARENT |
-					wi::renderer::DRAWSCENE_SKIP_PLANAR_REFLECTION_OBJECTS
-				); // separate renderscene, to be drawn after opaque and transparent sort order
 
 				if (scene->weather.IsRealisticSky() && scene->weather.IsRealisticSkyAerialPerspective())
 				{
-					// Blend Aerial Perspective on top:
+					// Blend Aerial Perspective on top. It is the atmosphere
+					// between the eye and the OPAQUE surface at each pixel,
+					// resolved from the depth prepass and zero where the sky
+					// shows, so it belongs to this half and only this half:
+					// after it the copy below carries the haze, and nothing
+					// nearer than the opaque surface is painted with the haze
+					// that stands in front of it.
 					device->EventBegin("Aerial Perspective Reflection Blend", cmd);
 					wi::image::Params fx;
 					fx.enableFullScreen();
@@ -1461,6 +1474,36 @@ namespace wi
 					wi::image::Draw(&aerialperspectiveResources_reflection.texture_output, fx, cmd);
 					device->EventEnd(cmd);
 				}
+
+				device->RenderPassEnd(cmd);
+
+				// A linear mip chain rather than the main view's gaussian one:
+				// that needs a scratch texture of its own, and at a quarter of
+				// a reflection the difference is below what the roughness mip
+				// lookup can show.
+				device->EventBegin("Reflection Scene MIP Chain", cmd);
+				wi::renderer::Postprocess_Downsample4x(
+					rtReflection, rtSceneCopy_Reflection, cmd
+				);
+				wi::renderer::GenerateMipChain(
+					rtSceneCopy_Reflection, wi::renderer::MIPGENFILTER_LINEAR, cmd
+				);
+				device->EventEnd(cmd);
+
+				beginReflectionPass(
+					RenderPassImage::LoadOp::LOAD,
+					reflectionMSAA
+						? RenderPassImage::StoreOp::DONTCARE
+						: RenderPassImage::StoreOp::STORE
+				);
+
+				wi::renderer::DrawScene(
+					visibility_reflection,
+					RENDERPASS_MAIN,
+					cmd,
+					wi::renderer::DRAWSCENE_TRANSPARENT |
+					wi::renderer::DRAWSCENE_SKIP_PLANAR_REFLECTION_OBJECTS
+				); // separate renderscene, to be drawn after opaque and transparent sort order
 
 				wi::renderer::DrawSoftParticles(visibility_reflection, false, cmd);
 				wi::renderer::DrawGaussianSplats(*scene, camera_reflection, cmd);
@@ -3581,8 +3624,13 @@ namespace wi
 			desc.sample_count = planarReflectionMSAASampleCount;
 			if (desc.sample_count > 1)
 			{
+				// Deliberately not TRANSIENT_ATTACHMENT, though nothing ever
+				// samples this texture: the reflection is drawn in two render
+				// passes so that its transparents have an opaque copy to
+				// refract, and the second loads what the first stored. Transient
+				// memory does not survive a pass boundary. rtMain_render is not
+				// transient for the same reason.
 				desc.bind_flags = BindFlag::RENDER_TARGET;
-				desc.misc_flags = ResourceMiscFlag::TRANSIENT_ATTACHMENT;
 				desc.layout = ResourceState::RENDERTARGET;
 			}
 			else
@@ -3618,12 +3666,29 @@ namespace wi
 				depthBuffer_Reflection = depthBuffer_Reflection_render;
 			}
 
+			{
+				// Quartered against the reflection rather than against the
+				// screen, so the refraction blurs by the same fraction of the
+				// image it does in the main view however the reflection is
+				// scaled.
+				TextureDesc desc;
+				desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+				desc.format = wi::renderer::format_rendertarget_main;
+				desc.width = std::max(1u, rtReflection.desc.width / 4);
+				desc.height = std::max(1u, rtReflection.desc.height / 4);
+				desc.mip_levels = std::max(1u, std::min(8u, (uint32_t)std::log2(std::max(desc.width, desc.height))));
+				device->CreateTextureZeroed(&desc, &rtSceneCopy_Reflection);
+				device->SetName(&rtSceneCopy_Reflection, "renderpath3D.rtSceneCopy_Reflection");
+				device->CreateMipgenSubresources(rtSceneCopy_Reflection);
+			}
+
 			wi::renderer::CreateTiledLightResources(tiledLightResources_planarReflection, XMUINT2(depthBuffer_Reflection.desc.width, depthBuffer_Reflection.desc.height));
 		}
 		else
 		{
 			rtReflection_render = {};
 			rtReflection = {};
+			rtSceneCopy_Reflection = {};
 			depthBuffer_Reflection_render = {};
 			depthBuffer_Reflection = {};
 			tiledLightResources_planarReflection = {};
