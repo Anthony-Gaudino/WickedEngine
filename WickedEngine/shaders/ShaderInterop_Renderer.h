@@ -848,6 +848,15 @@ enum SHADER_ENTITY_FLAGS
 	ENTITY_FLAG_LIGHT_STATIC = 1 << 0,
 	ENTITY_FLAG_LIGHT_CASTING_SHADOW = 1 << 1,
 	ENTITY_FLAG_LIGHT_VOLUMETRICCLOUDS = 1 << 2,
+
+	/**
+	 * The light scatters off the medium it shines through.
+	 *
+	 * Needed on the entity, unlike the volumetric light draws which are issued
+	 * per light and can decide on the CPU: the froxel volume iterates the lights
+	 * that reach each cell and has to tell which of them contribute a shaft.
+	 */
+	ENTITY_FLAG_LIGHT_VOLUMETRICS = 1 << 3,
 	ENTITY_FLAG_DECAL_BASECOLOR_ONLY_ALPHA = 1 << 3,
 	ENTITY_FLAG_CAPSULE_SHADOW_COLLIDER = 1 << 4,
 };
@@ -962,6 +971,10 @@ struct alignas(16) ShaderEntity
 	inline bool IsStaticLight()
 	{
 		return GetFlags() & ENTITY_FLAG_LIGHT_STATIC;
+	}
+	inline bool IsVolumetricsEnabled()
+	{
+		return GetFlags() & ENTITY_FLAG_LIGHT_VOLUMETRICS;
 	}
 	inline half GetGravity()
 	{

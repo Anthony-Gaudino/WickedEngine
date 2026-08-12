@@ -490,6 +490,20 @@ namespace wi
 			volumetriccloudResources = {};
 		}
 
+		// Held to the same gate as the volumetric lights it carries, so a scene
+		// with none of them pays neither the memory nor the two dispatches.
+		if (getVolumetricFroxelsEnabled() &&
+			getVolumeLightsEnabled() &&
+			visibility_main.IsRequestedVolumetricLights())
+		{
+			volumetricFroxels.Create(VOLUMETRIC_FROXEL_DEFAULT_RANGE);
+			volumetricFroxels.AdvanceFrame();
+		}
+		else
+		{
+			volumetricFroxels.Reset();
+		}
+
 		if (!scene->waterRipples.empty() && rtParticleDistortion.IsValid())
 		{
 			if (!rtWaterRipple.IsValid())
@@ -1560,6 +1574,10 @@ namespace wi
 				cmd
 			);
 
+			// Built before anything shades, because everything that shades
+			// reads it - opaque geometry included.
+			volumetricFroxels.Build(*camera, cmd);
+
 			if (getRaytracedReflectionEnabled())
 			{
 				wi::renderer::Postprocess_RTReflection(
@@ -2145,7 +2163,12 @@ namespace wi
 	}
 	void RenderPath3D::RenderVolumetrics(CommandList cmd) const
 	{
-		if (getVolumeLightsEnabled() && visibility_main.IsRequestedVolumetricLights())
+		// Nothing reads this once the froxel volume supplies the light, so the
+		// march is skipped outright rather than left running into a target that
+		// is never composited.
+		if (getVolumeLightsEnabled() &&
+			!getVolumetricFroxelsEnabled() &&
+			visibility_main.IsRequestedVolumetricLights())
 		{
 			auto range = wi::profiler::BeginRangeGPU("Volumetric Lights", cmd);
 
@@ -2684,7 +2707,12 @@ namespace wi
 
 		wi::renderer::DrawSpritesAndFonts(*scene, *camera, false, cmd, nearSide);
 
-		if (getVolumeLightsEnabled() && visibility_main.IsRequestedVolumetricLights())
+		// Exactly one of the two paths contributes, or the same light is counted
+		// twice. The froxel volume is added after this render pass ends, since
+		// it is a compute dispatch and cannot run inside one.
+		if (getVolumeLightsEnabled() &&
+			!getVolumetricFroxelsEnabled() &&
+			visibility_main.IsRequestedVolumetricLights())
 		{
 			device->EventBegin("Contribute Volumetric Lights", cmd);
 			wi::renderer::Postprocess_Upsample_Bilateral(
@@ -2741,6 +2769,15 @@ namespace wi
 		}
 
 		device->RenderPassEnd(cmd);
+
+		// The froxel volume's stand-in composite, deliberately mirroring the
+		// one above so the two can be compared. It is a compute dispatch, so it
+		// waits for the render pass to close rather than sitting beside its
+		// counterpart.
+		if (getVolumetricFroxelsEnabled())
+		{
+			volumetricFroxels.ApplyScreenSpace(rtMain, cmd);
+		}
 
 		// Distortion particles:
 		{
@@ -2879,9 +2916,16 @@ namespace wi
 				// Only the window destroys anything now that the fog is applied
 				// per fragment, so with the window off there is nothing to
 				// restore and the texture need not be bound at all.
+				//
+				// The froxel volume supplies the light instead when it is on,
+				// and the march that fills this target is skipped entirely -
+				// leaving a texture whose contents are whatever the allocator
+				// last had there. Reading it then is not merely pointless, it
+				// paints that memory across the frame.
 				const int underwater_volumetrics_texture =
 					(underwater_snell > 0
 						&& getVolumeLightsEnabled()
+						&& !getVolumetricFroxelsEnabled()
 						&& visibility_main.IsRequestedVolumetricLights()
 						&& rtVolumetricLights.IsValid())
 					? device->GetDescriptorIndex(

@@ -1,5 +1,6 @@
 #include "wiInitializer.h"
 #include "WickedEngine.h"
+#include "wiRender/VolumetricFroxels/VolumetricFroxels.h"
 
 #include <thread>
 #include <atomic>
@@ -176,6 +177,7 @@ namespace wi::initializer
 		wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { wi::physics::Initialize(); systems[INITIALIZED_SYSTEM_PHYSICS].store(true); });
 		wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { wi::TrailRenderer::Initialize(); systems[INITIALIZED_SYSTEM_TRAILRENDERER].store(true); });
 		wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { wi::GaussianSplatModel::Initialize(); systems[INITIALIZED_SYSTEM_GAUSSIAN_SPLAT].store(true); });
+		wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { wi::render::VolumetricFroxels::Initialize(); systems[INITIALIZED_SYSTEM_VOLUMETRIC_FROXELS].store(true); });
 
 		// Initialize these immediately:
 		wi::lua::Initialize(); systems[INITIALIZED_SYSTEM_LUA].store(true);

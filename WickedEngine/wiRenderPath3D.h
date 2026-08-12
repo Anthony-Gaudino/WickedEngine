@@ -5,6 +5,7 @@
 #include "wiResourceManager.h"
 #include "wiScene.h"
 #include "wiUnorderedMap.h"
+#include "wiRender/VolumetricFroxels/VolumetricFroxels.h"
 
 namespace wi
 {
@@ -82,6 +83,16 @@ namespace wi
 		bool bloomEnabled = true;
 		bool colorGradingEnabled = true;
 		bool volumeLightsEnabled = true;
+
+		/**
+		 * Whether the froxel volume supplies the volumetric light.
+		 *
+		 * Both paths compute the same thing by different means, so exactly one
+		 * of them may contribute or the light is counted twice. Present so the
+		 * two can be switched between in one keystroke while the volume is
+		 * being brought up.
+		 */
+		bool volumetricFroxelsEnabled = false;
 		bool lightShaftsEnabled = false;
 		bool lensFlareEnabled = true;
 		bool motionBlurEnabled = false;
@@ -178,6 +189,14 @@ namespace wi
 		wi::renderer::FSR2Resources fsr2Resources;
 		wi::renderer::VXGIResources vxgiResources;
 		wi::renderer::MeshBlendResources meshblendResources;
+
+		/**
+		 * Light scattered by the medium in front of the camera, by distance.
+		 *
+		 * Owned per render path rather than per scene because it is built for
+		 * one camera's frustum - a reflection or probe view means nothing to it.
+		 */
+		wi::render::VolumetricFroxels volumetricFroxels;
 
 		wi::graphics::CommandList video_cmd;
 
@@ -304,6 +323,7 @@ namespace wi
 		constexpr bool getBloomEnabled() const { return bloomEnabled; }
 		constexpr bool getColorGradingEnabled() const { return colorGradingEnabled; }
 		constexpr bool getVolumeLightsEnabled() const { return volumeLightsEnabled; }
+		constexpr bool getVolumetricFroxelsEnabled() const { return volumetricFroxelsEnabled; }
 		constexpr bool getLightShaftsEnabled() const { return lightShaftsEnabled; }
 		constexpr bool getLensFlareEnabled() const { return lensFlareEnabled; }
 		constexpr bool getMotionBlurEnabled() const { return motionBlurEnabled; }
@@ -381,6 +401,7 @@ namespace wi
 		void setPlanarReflectionQuality(float resolutionScale, uint32_t msaaSampleCount);
 		void setBloomEnabled(bool value);
 		void setVolumeLightsEnabled(bool value);
+		constexpr void setVolumetricFroxelsEnabled(bool value) { volumetricFroxelsEnabled = value; }
 		void setLightShaftsEnabled(bool value);
 		void setOutlineEnabled(bool value);
 		constexpr void setShadowsEnabled(bool value) { shadowsEnabled = value; }

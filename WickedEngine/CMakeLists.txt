@@ -91,10 +91,12 @@ file(GLOB SOURCE_FILES CONFIGURE_DEPENDS *.cpp)
 # new .cpp under one of them is silently left out of the build.
 file(GLOB_RECURSE COMPONENT_HEADER_FILES CONFIGURE_DEPENDS
     wiMath/*.h
+    wiRender/*.h
     wiScene/*.h
 )
 file(GLOB_RECURSE COMPONENT_SOURCE_FILES CONFIGURE_DEPENDS
     wiMath/*.cpp
+    wiRender/*.cpp
     wiScene/*.cpp
 )
 list(APPEND HEADER_FILES ${COMPONENT_HEADER_FILES})
