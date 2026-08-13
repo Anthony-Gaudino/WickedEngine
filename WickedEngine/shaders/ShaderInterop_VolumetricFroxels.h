@@ -40,13 +40,15 @@ static const uint VOLUMETRIC_FROXEL_BLOCKSIZE_Z = 4;
 static const float VOLUMETRIC_FROXEL_DEFAULT_RANGE = 500.0F;
 
 /**
- * Steps spent carrying the last slice out to the far plane.
+ * Steps spent marching from the end of the volume out to the far plane.
  *
- * The volume ends at an authored range, but the view does not. Everything
- * beyond that range samples the last slice, so that slice has to hold the
- * integral over the *whole* remaining column or a mountain at three kilometres
- * would collect only the light in front of the range - and the sun shafts that
- * cross a landscape would simply stop.
+ * The volume ends at an authored range, but the view does not: without this a
+ * mountain at three kilometres would collect only the light in front of the
+ * range, and the sun shafts crossing a landscape would simply stop.
+ *
+ * Few, because the result is published as a single value per screen column
+ * rather than as slices. There is no depth detail to resolve out there - only a
+ * total and the rate it fades in at.
  */
 static const uint VOLUMETRIC_FROXEL_TAIL_STEPS = 8;
 

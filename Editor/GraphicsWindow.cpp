@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #include "GraphicsWindow.h"
 #include "shaders/ShaderInterop_DDGI.h"
+#include "shaders/ShaderInterop_VolumetricFroxels.h"
 
 using namespace wi::graphics;
 
@@ -1598,6 +1599,26 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 		});
 	AddWidget(&volumetricFroxelsCheckBox);
 
+	volumetricFroxelRangeSlider.Create(
+		20, 2000, VOLUMETRIC_FROXEL_DEFAULT_RANGE, 198,
+		"VolumetricFroxels.Range: ");
+	volumetricFroxelRangeSlider.SetText("Froxel Range: ");
+	volumetricFroxelRangeSlider.SetTooltip("How far the volumetric froxel volume reaches, in meters. The volume holds a fixed number of slices, so this trades detail against reach: a short range resolves a lit room finely, a long one follows shafts across a landscape but spreads the same slices over it. Everything past the range takes the whole remaining column at once and so has no depth variation left, which is why raising this is not free even where it looks like more.");
+	volumetricFroxelRangeSlider.SetSize(XMFLOAT2(mod_wid, hei));
+	volumetricFroxelRangeSlider.SetPos(XMFLOAT2(x + 100, y));
+
+	if (editor->main->config.GetSection("graphics").Has("volumetric_froxel_range"))
+	{
+		editor->renderPath->setVolumetricFroxelRange(editor->main->config.GetSection("graphics").GetFloat("volumetric_froxel_range"));
+	}
+
+	volumetricFroxelRangeSlider.OnSlide([=](wi::gui::EventArgs args) {
+		editor->renderPath->setVolumetricFroxelRange(args.fValue);
+		editor->main->config.GetSection("graphics").Set("volumetric_froxel_range", args.fValue);
+		editor->main->config.Commit();
+		});
+	AddWidget(&volumetricFroxelRangeSlider);
+
 	bloomCheckBox.Create("Bloom: ");
 	bloomCheckBox.SetTooltip("Enable bloom. The effect adds color bleeding to the brightest parts of the scene.");
 	bloomCheckBox.SetScriptTip("RenderPath3D::SetBloomEnabled(bool value)");
@@ -2103,6 +2124,7 @@ void GraphicsWindow::UpdateData()
 	underwaterSnellRTCheckBox.SetCheck(editor->renderPath->getUnderwaterSnellRTEnabled());
 	underwaterGodRaysProceduralCheckBox.SetCheck(editor->renderPath->getUnderwaterGodRaysProceduralEnabled());
 	volumetricFroxelsCheckBox.SetCheck(editor->renderPath->getVolumetricFroxelsEnabled());
+	volumetricFroxelRangeSlider.SetValue(editor->renderPath->getVolumetricFroxelRange());
 	underwaterParticlesCheckBox.SetCheck(editor->renderPath->getUnderwaterParticlesEnabled());
 	underwaterParticleDensitySlider.SetValue(editor->renderPath->getUnderwaterParticleDensity());
 	bloomCheckBox.SetCheck(editor->renderPath->getBloomEnabled());
@@ -2380,6 +2402,7 @@ void GraphicsWindow::ResizeLayout()
 	layout.add_right(underwaterSnellRTCheckBox);
 	layout.add_right(underwaterGodRaysProceduralCheckBox);
 	layout.add_right(volumetricFroxelsCheckBox);
+	layout.add_right(volumetricFroxelRangeSlider);
 	layout.add_right(underwaterParticleDensitySlider);
 	underwaterParticlesCheckBox.SetPos(XMFLOAT2(underwaterParticleDensitySlider.GetPos().x - underwaterParticlesCheckBox.GetSize().x - 80, underwaterParticleDensitySlider.GetPos().y));
 	layout.add_right(bloomStrengthSlider);

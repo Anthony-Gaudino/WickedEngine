@@ -46,8 +46,8 @@ inline float VolumetricFroxelSliceToDepth(in float slice, in float range)
  * The inverse of `VolumetricFroxelSliceToDepth`, in the 0-1 a sampler wants.
  * Saturated here rather than left to the sampler's clamp, so the far behaviour
  * is stated next to the mapping it belongs to: everything past the volume's
- * range reads the last slice, which is what lets that slice carry the whole
- * remaining column.
+ * range reads the last slice, and what lies beyond that is the tail's business
+ * rather than this mapping's.
  *
  * @param[in] depth - Radial distance from the eye (in metres).
  * @param[in] range - How far the volume reaches, in metres.
@@ -251,13 +251,64 @@ inline void ApplyVolumetricLight(
 
 	const float distanceToEye = length(fragmentPosition - GetCamera().position);
 
-	const float w = VolumetricFroxelDepthToW(
-		distanceToEye, GetFrame().volumetricfroxel_range);
+	float slice = VolumetricFroxelDepthToW(
+		distanceToEye, GetFrame().volumetricfroxel_range)
+		* VOLUMETRIC_FROXEL_SLICES;
+
+	// Nothing is stored nearer than the first texel's own depth, and the
+	// sampler's clamp would hand a fragment closer than that the whole of the
+	// first slice - light gathered over a stretch it does not stand behind. The
+	// first texel is held and faded in instead, which is exact at zero and at
+	// the texel, and the only thing it can be in between.
+	half weight = 1;
+	if (slice < 0.5)
+	{
+		weight = (half)saturate(slice * 2);
+		slice = 0.5;
+	}
 
 	const half3 inscatter = (half3)texture_volumetricfroxels.SampleLevel(
-		sampler_linear_clamp, float3(screenUV, w), 0).rgb;
+		sampler_linear_clamp,
+		float3(screenUV, slice / VOLUMETRIC_FROXEL_SLICES),
+		0).rgb;
 
-	color.rgb += inscatter * (1 - backgroundWeight);
+	half3 total = inscatter * weight;
+
+	// The column beyond the volume, faded in over the distance it occupies
+	// rather than delivered at the boundary. It is zero at the last texel's own
+	// depth, so the two meet without a step, and complete at the far plane.
+	[branch]
+	if (GetFrame().texture_volumetricfroxeltail_index >= 0)
+	{
+		const float lastTexelDepth = VolumetricFroxelSliceToDepth(
+			(float)VOLUMETRIC_FROXEL_SLICES - 0.5,
+			GetFrame().volumetricfroxel_range);
+
+		const float tailSpan = GetCamera().z_far - lastTexelDepth;
+		const float intoTail = distanceToEye - lastTexelDepth;
+
+		[branch]
+		if (intoTail > 0 && tailSpan > 0)
+		{
+			const half4 tail = texture_volumetricfroxeltail.SampleLevel(
+				sampler_linear_clamp, screenUV, 0);
+
+			// Shaped by the medium's own extinction over that stretch, so the
+			// far field arrives the way a medium delivers it - most of it
+			// early, tailing off - instead of climbing in a straight line.
+			// Falls back to that straight line where there is no medium to
+			// shape it.
+			const float extinction = (float)tail.a;
+			const float ramp = extinction > 0.000001
+				? (1 - exp(-extinction * intoTail))
+					/ max(1 - exp(-extinction * tailSpan), 0.000001)
+				: (intoTail / tailSpan);
+
+			total += tail.rgb * (half)saturate(ramp);
+		}
+	}
+
+	color.rgb += total * (1 - backgroundWeight);
 }
 
 /**

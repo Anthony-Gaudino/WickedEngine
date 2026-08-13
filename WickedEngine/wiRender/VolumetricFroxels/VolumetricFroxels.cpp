@@ -73,6 +73,11 @@ const Texture* VolumetricFroxels::GetVolume() const noexcept
 	return &integratedVolume;
 }
 
+const Texture* VolumetricFroxels::GetTail() const noexcept
+{
+	return &tailTexture;
+}
+
 float VolumetricFroxels::GetRange() const noexcept
 {
 	return range;
@@ -143,6 +148,19 @@ void VolumetricFroxels::Create(const float range)
 
 	device->CreateTexture(&desc, nullptr, &integratedVolume);
 	device->SetName(&integratedVolume, "VolumetricFroxels::integratedVolume");
+
+	// One column of the screen, not one cell of the volume, and sixteen bits
+	// because the alpha carries an extinction rather than a colour.
+	TextureDesc tailDesc;
+	tailDesc.width = VOLUMETRIC_FROXEL_WIDTH;
+	tailDesc.height = VOLUMETRIC_FROXEL_HEIGHT;
+	tailDesc.format = Format::R16G16B16A16_FLOAT;
+	tailDesc.bind_flags =
+		BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+	tailDesc.layout = ResourceState::SHADER_RESOURCE;
+
+	device->CreateTexture(&tailDesc, nullptr, &tailTexture);
+	device->SetName(&tailTexture, "VolumetricFroxels::tailTexture");
 }
 
 void VolumetricFroxels::Reset() noexcept
@@ -153,6 +171,7 @@ void VolumetricFroxels::Reset() noexcept
 	}
 
 	integratedVolume = {};
+	tailTexture = {};
 	range = 0.0F;
 	ResetFrame();
 }
@@ -260,17 +279,23 @@ void VolumetricFroxels::Build(
 	{
 		device->EventBegin("Integrate", cmd);
 
-		device->Barrier(
+		const GPUBarrier toWrite[] = {
 			GPUBarrier::Image(
 				&integratedVolume,
 				integratedVolume.desc.layout,
 				ResourceState::UNORDERED_ACCESS),
-			cmd);
+			GPUBarrier::Image(
+				&tailTexture,
+				tailTexture.desc.layout,
+				ResourceState::UNORDERED_ACCESS),
+		};
+		device->Barrier(toWrite, arraysize(toWrite), cmd);
 
 		device->BindComputeShader(&integrateCS, cmd);
 		device->PushConstants(&push, sizeof(push), cmd);
 		device->BindResource(&injectTarget, 0, cmd);
 		device->BindUAV(&integratedVolume, 0, cmd);
+		device->BindUAV(&tailTexture, 1, cmd);
 
 		// One thread per column, so the slice axis is not dispatched over.
 		device->Dispatch(
@@ -281,12 +306,17 @@ void VolumetricFroxels::Build(
 			1,
 			cmd);
 
-		device->Barrier(
+		const GPUBarrier toRead[] = {
 			GPUBarrier::Image(
 				&integratedVolume,
 				ResourceState::UNORDERED_ACCESS,
 				integratedVolume.desc.layout),
-			cmd);
+			GPUBarrier::Image(
+				&tailTexture,
+				ResourceState::UNORDERED_ACCESS,
+				tailTexture.desc.layout),
+		};
+		device->Barrier(toRead, arraysize(toRead), cmd);
 
 		device->EventEnd(cmd);
 	}

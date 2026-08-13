@@ -93,6 +93,7 @@ namespace wi
 		 * being brought up.
 		 */
 		bool volumetricFroxelsEnabled = false;
+		float volumetricFroxelRange = VOLUMETRIC_FROXEL_DEFAULT_RANGE;
 		bool lightShaftsEnabled = false;
 		bool lensFlareEnabled = true;
 		bool motionBlurEnabled = false;
@@ -324,6 +325,7 @@ namespace wi
 		constexpr bool getColorGradingEnabled() const { return colorGradingEnabled; }
 		constexpr bool getVolumeLightsEnabled() const { return volumeLightsEnabled; }
 		constexpr bool getVolumetricFroxelsEnabled() const { return volumetricFroxelsEnabled; }
+		constexpr float getVolumetricFroxelRange() const { return volumetricFroxelRange; }
 		constexpr bool getLightShaftsEnabled() const { return lightShaftsEnabled; }
 		constexpr bool getLensFlareEnabled() const { return lensFlareEnabled; }
 		constexpr bool getMotionBlurEnabled() const { return motionBlurEnabled; }
@@ -402,6 +404,7 @@ namespace wi
 		void setBloomEnabled(bool value);
 		void setVolumeLightsEnabled(bool value);
 		constexpr void setVolumetricFroxelsEnabled(bool value) { volumetricFroxelsEnabled = value; }
+		constexpr void setVolumetricFroxelRange(float value) { volumetricFroxelRange = value; }
 		void setLightShaftsEnabled(bool value);
 		void setOutlineEnabled(bool value);
 		constexpr void setShadowsEnabled(bool value) { shadowsEnabled = value; }

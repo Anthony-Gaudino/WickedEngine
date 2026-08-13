@@ -1285,6 +1285,15 @@ struct alignas(16) FrameCB
 	// would look up the wrong slice and read as a tuning problem.
 	float		volumetricfroxel_range;
 
+	// The light gathered from the end of that volume out to the far plane, one
+	// value per column, with the medium's extinction over that stretch in its
+	// alpha. Kept out of the volume itself because it describes a span the
+	// volume has no slices for.
+	int			texture_volumetricfroxeltail_index;
+	int			padding0;
+	int			padding1;
+	int			padding2;
+
 	float4		rain_blocker_mad;
 	float4x4	rain_blocker_matrix;
 	float4x4	rain_blocker_matrix_inverse;

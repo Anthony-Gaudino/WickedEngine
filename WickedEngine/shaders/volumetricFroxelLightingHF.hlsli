@@ -122,9 +122,22 @@ inline float3 VolumetricFroxelScatteredLight(
 			half3 lightColor = light.GetColor().rgb;
 			if (GetFrame().options & OPTION_BIT_REALISTIC_SKY)
 			{
+				// Taken at the eye, not at this point. How much atmosphere the
+				// sunlight crossed to arrive is a planetary-scale quantity - it
+				// varies over kilometres of altitude, not over the few hundred
+				// metres a cell sits from its neighbours - so evaluating it per
+				// cell buys no accuracy.
+				//
+				// What it does buy is a hard edge. `GetAtmosphereTransmittance`
+				// switches the light off outright where the ray to the sun
+				// clips the planet, because its LUT is too coarse to reach
+				// black smoothly, and near the horizon that boundary sweeps
+				// hundreds of metres for a hundredth of a degree of elevation.
+				// Sampled per cell it cuts a quantised arc straight through the
+				// scene; sampled once, it is the same decision everywhere.
 				lightColor *= GetAtmosphericLightTransmittance(
 					GetWeather().atmosphere,
-					position,
+					GetCamera().position,
 					L,
 					texture_transmittancelut);
 			}

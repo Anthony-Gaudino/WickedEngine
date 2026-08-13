@@ -149,6 +149,7 @@ uint32_t DDGI_RAYCOUNT = 256u;
 float DDGI_BLEND_SPEED = 0.1f;
 float GI_BOOST = 1.0f;
 float VOLUMETRIC_FROXEL_RANGE = 0.0f;
+int VOLUMETRIC_FROXEL_TAIL_INDEX = -1;
 bool MESH_SHADER_ALLOWED = false;
 bool MESHLET_OCCLUSION_CULLING = false;
 std::atomic<size_t> SHADER_ERRORS{ 0 };
@@ -4385,6 +4386,10 @@ void UpdatePerFrameData(
 	frameCB.texture_cameravolumelut_index = device->GetDescriptorIndex(&textures[TEXTYPE_3D_SKYATMOSPHERE_CAMERAVOLUMELUT], SubresourceType::SRV);
 	frameCB.texture_wind_index = device->GetDescriptorIndex(&textures[TEXTYPE_3D_WIND], SubresourceType::SRV);
 	frameCB.volumetricfroxel_range = GetVolumetricFroxelRange();
+	frameCB.texture_volumetricfroxeltail_index = GetVolumetricFroxelTailIndex();
+	frameCB.padding0 = 0;
+	frameCB.padding1 = 0;
+	frameCB.padding2 = 0;
 
 	// See if indirect debug buffer needs to be resized:
 	if (indirectDebugStatsReadback_available[device->GetBufferIndex()] && indirectDebugStatsReadback[device->GetBufferIndex()].mapped_data != nullptr)
@@ -20058,13 +20063,18 @@ float GetGIBoost()
 {
 	return GI_BOOST;
 }
-void SetVolumetricFroxelRange(float value)
+void SetVolumetricFroxelParameters(float range, int tailDescriptorIndex)
 {
-	VOLUMETRIC_FROXEL_RANGE = value;
+	VOLUMETRIC_FROXEL_RANGE = range;
+	VOLUMETRIC_FROXEL_TAIL_INDEX = tailDescriptorIndex;
 }
 float GetVolumetricFroxelRange()
 {
 	return VOLUMETRIC_FROXEL_RANGE;
+}
+int GetVolumetricFroxelTailIndex()
+{
+	return VOLUMETRIC_FROXEL_TAIL_INDEX;
 }
 void SetMeshShaderAllowed(bool value)
 {

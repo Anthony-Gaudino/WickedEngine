@@ -8,15 +8,21 @@
  *
  * The integration pass turns these into what a fragment reads.
  */
+
+// One comparison tap per cell rather than a filtered kernel. The volume is
+// already a spatial average over a cell far larger than a shadow texel, so a
+// soft lookup would blur something that is about to be blurred anyway, at nine
+// times the shadow sampling.
+//
+// Ahead of every include, because `lightingHF.hlsli` pulls in `shadowHF.hlsli`
+// and the choice is made there. Below them it compiles, reads as though it
+// applied, and does nothing.
+#define DISABLE_SOFT_SHADOWMAP
+
 #include "globals.hlsli"
 #include "lightingHF.hlsli"
 #include "fogHF.hlsli"
 #include "volumetricFroxelLightingHF.hlsli"
-
-// One comparison tap per cell rather than a filtered kernel. The volume is
-// already a spatial average over a cell far larger than a shadow texel, so a
-// soft lookup would blur something that is about to be blurred anyway.
-#define DISABLE_SOFT_SHADOWMAP
 
 PUSHCONSTANT(froxels, VolumetricFroxelPush);
 

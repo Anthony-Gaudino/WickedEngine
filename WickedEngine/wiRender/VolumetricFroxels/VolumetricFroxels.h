@@ -32,8 +32,8 @@ namespace wi::render { class VolumetricFroxels; } // namespace wi::render
  * @code
  * volumetricFroxels.Create(500.0F);
  * volumetricFroxels.AdvanceFrame();
- * volumetricFroxels.Build(camera, cmd);
- * // Publish GetVolume() to shaders and sample it per fragment.
+ * volumetricFroxels.Build(camera, cameraPrevious, cameraReflection, cmd);
+ * // Publish GetVolume() and GetTail() to shaders, and sample per fragment.
  * @endcode
  *
  * @note The volume belongs to one camera. A reflection, probe or impostor view
@@ -68,10 +68,23 @@ class wi::render::VolumetricFroxels final
 	 * Light gathered from the eye out to each cell.
 	 *
 	 * What the fragment shaders sample. Cumulative rather than per-slice so a
-	 * lookup is one texture fetch at the fragment's own distance, with the
-	 * sampler's clamp giving everything beyond the volume the whole column.
+	 * lookup is one texture fetch at the fragment's own distance. Everything
+	 * beyond the volume's range reads its last slice, and takes the rest of the
+	 * column from the tail below.
 	 */
 	wi::graphics::Texture integratedVolume;
+
+	/**
+	 * Light gathered from the end of the volume out to the far plane.
+	 *
+	 * One value per screen column rather than per cell, because the stretch it
+	 * describes has no slices: the volume's last texel spans a few metres and
+	 * this spans thousands. Its alpha carries the extinction over that stretch,
+	 * which is the shape a fragment out there fades it in along - written into
+	 * the last texel instead, the whole far field would arrive across those few
+	 * metres as a hard arc at exactly the range.
+	 */
+	wi::graphics::Texture tailTexture;
 
 	/**
 	 * Frames built since the last reset, or -1 before the first.
@@ -124,6 +137,13 @@ class wi::render::VolumetricFroxels final
 	 * @return The integrated volume, or an invalid texture when there is none.
 	 */
 	[[nodiscard]] const wi::graphics::Texture* GetVolume() const noexcept;
+
+	/**
+	 * Returns the column beyond the volume.
+	 *
+	 * @return The tail, or an invalid texture when there is none.
+	 */
+	[[nodiscard]] const wi::graphics::Texture* GetTail() const noexcept;
 
 	/**
 	 * Returns how far the volume reaches from the eye.

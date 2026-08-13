@@ -496,7 +496,11 @@ namespace wi
 			getVolumeLightsEnabled() &&
 			visibility_main.IsRequestedVolumetricLights())
 		{
-			volumetricFroxels.Create(VOLUMETRIC_FROXEL_DEFAULT_RANGE);
+			// Never past the far plane: the last slice already carries
+			// everything from the range outwards, so reach bought beyond what
+			// the camera can see costs resolution for nothing.
+			volumetricFroxels.Create(
+				std::min(getVolumetricFroxelRange(), camera->zFarP));
 			volumetricFroxels.AdvanceFrame();
 		}
 		else
@@ -511,7 +515,12 @@ namespace wi
 			? device->GetDescriptorIndex(
 				volumetricFroxels.GetVolume(), SubresourceType::SRV)
 			: -1;
-		wi::renderer::SetVolumetricFroxelRange(volumetricFroxels.GetRange());
+		wi::renderer::SetVolumetricFroxelParameters(
+			volumetricFroxels.GetRange(),
+			volumetricFroxels.IsValid()
+				? device->GetDescriptorIndex(
+					volumetricFroxels.GetTail(), SubresourceType::SRV)
+				: -1);
 
 		if (!scene->waterRipples.empty() && rtParticleDistortion.IsValid())
 		{
