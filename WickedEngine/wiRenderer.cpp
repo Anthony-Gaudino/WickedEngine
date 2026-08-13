@@ -637,7 +637,6 @@ PipelineState PSO_impostor_wire;
 PipelineState PSO_captureimpostor;
 
 PipelineState PSO_lightvisualizer[LightComponent::LIGHTTYPE_COUNT];
-PipelineState PSO_volumetriclight[LightComponent::LIGHTTYPE_COUNT];
 
 PipelineState PSO_renderlightmap;
 PipelineState PSO_paintdecal;
@@ -901,10 +900,6 @@ void LoadShaders()
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::VS, shaders[VSTYPE_OBJECT_PREPASS_TESSELLATION], "objectVS_prepass_tessellation.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::VS, shaders[VSTYPE_OBJECT_SIMPLE_TESSELLATION], "objectVS_simple_tessellation.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::VS, shaders[VSTYPE_IMPOSTOR], "impostorVS.cso"); });
-	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::VS, shaders[VSTYPE_VOLUMETRICLIGHT_DIRECTIONAL], "volumetriclight_directionalVS.cso"); });
-	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::VS, shaders[VSTYPE_VOLUMETRICLIGHT_POINT], "volumetriclight_pointVS.cso"); });
-	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::VS, shaders[VSTYPE_VOLUMETRICLIGHT_SPOT], "volumetriclight_spotVS.cso"); });
-	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::VS, shaders[VSTYPE_VOLUMETRICLIGHT_RECTANGLE], "volumetriclight_rectangleVS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::VS, shaders[VSTYPE_LIGHTVISUALIZER_SPOTLIGHT], "vSpotLightVS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::VS, shaders[VSTYPE_LIGHTVISUALIZER_POINTLIGHT], "vPointLightVS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::VS, shaders[VSTYPE_LIGHTVISUALIZER_RECTLIGHT], "vRectLightVS.cso"); });
@@ -943,10 +938,6 @@ void LoadShaders()
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::PS, shaders[PSTYPE_IMPOSTOR_SIMPLE], "impostorPS_simple.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::PS, shaders[PSTYPE_LIGHTVISUALIZER], "lightvisualizerPS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::PS, shaders[PSTYPE_LIGHTVISUALIZER_RECTLIGHT], "vRectLightPS.cso"); });
-	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::PS, shaders[PSTYPE_VOLUMETRICLIGHT_DIRECTIONAL], "volumetricLight_DirectionalPS.cso"); });
-	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::PS, shaders[PSTYPE_VOLUMETRICLIGHT_POINT], "volumetricLight_PointPS.cso"); });
-	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::PS, shaders[PSTYPE_VOLUMETRICLIGHT_SPOT], "volumetricLight_SpotPS.cso"); });
-	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::PS, shaders[PSTYPE_VOLUMETRICLIGHT_RECTANGLE], "volumetriclight_rectanglePS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::PS, shaders[PSTYPE_UNDERWATERPARTICLE], "underwaterParticlePS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::PS, shaders[PSTYPE_ENVMAP], "envMapPS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::PS, shaders[PSTYPE_ENVMAP_SKY_STATIC], "envMap_skyPS_static.cso"); });
@@ -1455,40 +1446,6 @@ void LoadShaders()
 			}
 
 			device->CreatePipelineState(&desc, &PSO_lightvisualizer[args.jobIndex]);
-		}
-
-
-		// volumetric lights:
-		if (args.jobIndex <= LightComponent::RECTANGLE)
-		{
-			desc.dss = &depthStencils[DSSTYPE_DEPTHDISABLED];
-			desc.bs = &blendStates[BSTYPE_ADDITIVE];
-			desc.rs = &rasterizers[RSTYPE_BACK];
-			desc.pt = PrimitiveTopology::TRIANGLELIST;
-
-			switch (args.jobIndex)
-			{
-			case LightComponent::DIRECTIONAL:
-				desc.vs = &shaders[VSTYPE_VOLUMETRICLIGHT_DIRECTIONAL];
-				desc.ps = &shaders[PSTYPE_VOLUMETRICLIGHT_DIRECTIONAL];
-				break;
-			case LightComponent::POINT:
-				desc.vs = &shaders[VSTYPE_VOLUMETRICLIGHT_POINT];
-				desc.ps = &shaders[PSTYPE_VOLUMETRICLIGHT_POINT];
-				break;
-			case LightComponent::SPOT:
-				desc.vs = &shaders[VSTYPE_VOLUMETRICLIGHT_SPOT];
-				desc.ps = &shaders[PSTYPE_VOLUMETRICLIGHT_SPOT];
-				break;
-			case LightComponent::RECTANGLE:
-				desc.vs = &shaders[VSTYPE_VOLUMETRICLIGHT_RECTANGLE];
-				desc.ps = &shaders[PSTYPE_VOLUMETRICLIGHT_RECTANGLE];
-				desc.rs = &rasterizers[RSTYPE_FRONT];
-				desc.pt = PrimitiveTopology::TRIANGLESTRIP;
-				break;
-			}
-
-			device->CreatePipelineState(&desc, &PSO_volumetriclight[args.jobIndex]);
 		}
 
 
@@ -6719,120 +6676,6 @@ void DrawLightVisualizers(
 		device->EventEnd(cmd);
 
 	}
-}
-void DrawVolumeLights(
-	const Visibility& vis,
-	CommandList cmd
-)
-{
-	if (vis.visibleLights.empty())
-		return;
-
-	device->EventBegin("Volumetric Light Render", cmd);
-
-	BindCommonResources(cmd);
-
-	XMMATRIX VP = vis.camera->GetViewProjection();
-	const XMVECTOR CamPos = vis.camera->GetEye();
-
-	for (int type = 0; type < LightComponent::LIGHTTYPE_COUNT; ++type)
-	{
-		const PipelineState& pso = PSO_volumetriclight[type];
-
-		if (!pso.IsValid())
-			continue;
-
-		device->BindPipelineState(&pso, cmd);
-
-		int type_idx = -1;
-		for (size_t i = 0; i < vis.visibleLights.size(); ++i)
-		{
-			const uint32_t lightIndex = vis.visibleLights[i];
-			const LightComponent& light = vis.scene->lights[lightIndex];
-			if (light.GetType() != type)
-				continue;
-			type_idx++;
-
-			if (!light.IsVolumetricsEnabled())
-				continue;
-
-			switch (type)
-			{
-			case LightComponent::DIRECTIONAL:
-			{
-				MiscCB miscCb;
-				miscCb.g_xColor.x = float(type_idx);
-				miscCb.g_xColor.y = light.volumetric_boost;
-				device->BindDynamicConstantBuffer(miscCb, CB_GETBINDSLOT(MiscCB), cmd);
-
-				device->Draw(3, 0, cmd); // full screen triangle
-			}
-			break;
-			case LightComponent::POINT:
-			{
-				MiscCB miscCb;
-				miscCb.g_xColor.x = float(type_idx);
-				miscCb.g_xColor.y = light.volumetric_boost;
-				float sca = light.GetRange() + 1;
-				XMStoreFloat4x4(&miscCb.g_xTransform, XMMatrixScaling(sca, sca, sca) * XMMatrixTranslationFromVector(XMLoadFloat3(&light.position)) * VP);
-				device->BindDynamicConstantBuffer(miscCb, CB_GETBINDSLOT(MiscCB), cmd);
-
-				device->Draw(240, 0, cmd); // icosphere
-			}
-			break;
-			case LightComponent::SPOT:
-			{
-				MiscCB miscCb;
-				miscCb.g_xColor.x = float(type_idx);
-				miscCb.g_xColor.y = light.volumetric_boost;
-
-				uint packed = wi::math::pack_half2(std::pow(std::sin(light.outerConeAngle), 2.0f), std::pow(std::cos(light.outerConeAngle), 2.0f));
-				std::memcpy(&miscCb.g_xColor.z, &packed, sizeof(packed));
-
-				const XMVECTOR LightPos = XMLoadFloat3(&light.position);
-				const XMVECTOR LightDirection = XMLoadFloat3(&light.direction);
-				const XMVECTOR L = XMVector3Normalize(LightPos - CamPos);
-				const float spot_factor = XMVectorGetX(XMVector3Dot(L, LightDirection));
-				const float spot_cutoff = std::cos(light.outerConeAngle);
-				miscCb.g_xColor.w = (spot_factor < spot_cutoff) ? 1.0f : 0.0f;
-
-				const float coneS = (const float)(light.outerConeAngle * 2 / XM_PIDIV4);
-				XMStoreFloat4x4(&miscCb.g_xTransform,
-					XMMatrixScaling(coneS * light.GetRange(), light.GetRange(), coneS * light.GetRange()) *
-					XMMatrixRotationQuaternion(XMLoadFloat4(&light.rotation)) *
-					XMMatrixTranslationFromVector(LightPos) *
-					VP
-				);
-				device->BindDynamicConstantBuffer(miscCb, CB_GETBINDSLOT(MiscCB), cmd);
-
-				device->Draw(192, 0, cmd); // cone
-			}
-			break;
-			case LightComponent::RECTANGLE:
-			{
-				MiscCB miscCb;
-				miscCb.g_xColor.x = float(type_idx);
-				miscCb.g_xColor.y = light.volumetric_boost;
-
-				const XMVECTOR LightPos = XMLoadFloat3(&light.position);
-
-				XMStoreFloat4x4(&miscCb.g_xTransform,
-					XMMatrixScaling(light.GetRange(), light.GetRange(), light.GetRange()) *
-					XMMatrixRotationQuaternion(XMLoadFloat4(&light.rotation)) *
-					XMMatrixTranslationFromVector(LightPos) *
-					VP
-				);
-				device->BindDynamicConstantBuffer(miscCb, CB_GETBINDSLOT(MiscCB), cmd);
-
-				device->Draw(14, 0, cmd); // cube
-			}
-			break;
-			}
-		}
-
-	}
-
-	device->EventEnd(cmd);
 }
 void DrawLensFlares(
 	const Visibility& vis,
@@ -18980,7 +18823,6 @@ void Postprocess_Underwater(
 	float snell,
 	float snell_fade,
 	bool snell_rt,
-	int volumetrics_texture,
 	float lens_distortion
 )
 {
@@ -19003,9 +18845,6 @@ void Postprocess_Underwater(
 	postprocess.params0.z = std::max(0.0f, snell); // underwater_snell
 	postprocess.params0.w = std::max(0.0f, snell_fade); // underwater_snell_fade
 	postprocess.params1.x = snell_rt ? 1.0f : 0.0f; // underwater_snell_rt
-	// underwater_volumetrics_texture: reinterpreted as an int by the shader, so
-	// copy the bits rather than converting through float
-	std::memcpy(&postprocess.params1.w, &volumetrics_texture, sizeof(volumetrics_texture));
 	device->PushConstants(&postprocess, sizeof(postprocess), cmd);
 
 	device->BindResource(&input, 0, cmd);

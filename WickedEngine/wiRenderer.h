@@ -418,11 +418,6 @@ namespace wi::renderer
 		wi::graphics::CommandList cmd,
 		uint32_t instance_replication = 1
 	);
-	// Draw volumetric light scattering effects
-	void DrawVolumeLights(
-		const Visibility& vis,
-		wi::graphics::CommandList cmd
-	);
 	// Draw Lens Flares for lights that have them enabled
 	void DrawLensFlares(
 		const Visibility& vis,
@@ -1163,7 +1158,6 @@ namespace wi::renderer
 		float snell = 0.0f,
 		float snell_fade = 1.0f,
 		bool snell_rt = false,
-		int volumetrics_texture = -1,
 		float lens_distortion = 1.0f
 	);
 	struct MeshBlendResources

@@ -92,7 +92,6 @@ namespace wi
 		 * two can be switched between in one keystroke while the volume is
 		 * being brought up.
 		 */
-		bool volumetricFroxelsEnabled = false;
 		float volumetricFroxelRange = VOLUMETRIC_FROXEL_DEFAULT_RANGE;
 		bool lightShaftsEnabled = false;
 		bool lensFlareEnabled = true;
@@ -142,7 +141,6 @@ namespace wi
 		wi::graphics::Texture rtWaterRipple; // water ripple sprite normal maps are rendered into this
 		wi::graphics::Texture rtParticleDistortion_render; // contains distortive particles (can be MSAA)
 		wi::graphics::Texture rtParticleDistortion; // contains distortive particles
-		wi::graphics::Texture rtVolumetricLights; // contains the volumetric light results
 		wi::graphics::Texture rtBloom; // contains the bright parts of the image + mipchain
 		wi::graphics::Texture rtBloom_tmp; // temporary for bloom downsampling
 		wi::graphics::Texture rtAO; // full res AO
@@ -217,7 +215,6 @@ namespace wi
 		virtual void RenderSSGI(wi::graphics::CommandList cmd) const;
 		virtual void RenderOutline(wi::graphics::CommandList cmd) const;
 		virtual void RenderLightShafts(wi::graphics::CommandList cmd) const;
-		virtual void RenderVolumetrics(wi::graphics::CommandList cmd) const;
 		virtual void RenderSceneMIPChain(wi::graphics::CommandList cmd) const;
 		virtual void RenderTransparents(wi::graphics::CommandList cmd) const;
 		virtual void RenderPostprocessChain(wi::graphics::CommandList cmd) const;
@@ -324,7 +321,6 @@ namespace wi
 		constexpr bool getBloomEnabled() const { return bloomEnabled; }
 		constexpr bool getColorGradingEnabled() const { return colorGradingEnabled; }
 		constexpr bool getVolumeLightsEnabled() const { return volumeLightsEnabled; }
-		constexpr bool getVolumetricFroxelsEnabled() const { return volumetricFroxelsEnabled; }
 		constexpr float getVolumetricFroxelRange() const { return volumetricFroxelRange; }
 		constexpr bool getLightShaftsEnabled() const { return lightShaftsEnabled; }
 		constexpr bool getLensFlareEnabled() const { return lensFlareEnabled; }
@@ -403,7 +399,6 @@ namespace wi
 		void setPlanarReflectionQuality(float resolutionScale, uint32_t msaaSampleCount);
 		void setBloomEnabled(bool value);
 		void setVolumeLightsEnabled(bool value);
-		constexpr void setVolumetricFroxelsEnabled(bool value) { volumetricFroxelsEnabled = value; }
 		constexpr void setVolumetricFroxelRange(float value) { volumetricFroxelRange = value; }
 		void setLightShaftsEnabled(bool value);
 		void setOutlineEnabled(bool value);

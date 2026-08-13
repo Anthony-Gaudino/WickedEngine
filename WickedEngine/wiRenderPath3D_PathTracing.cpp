@@ -190,6 +190,15 @@ namespace wi
 
 		RenderPath3D::Update(dt);
 
+		// The froxel volume belongs to the raster path and nothing here builds
+		// it. Released rather than left allocated, and the camera pointed away
+		// from it, so the sprites and fonts this path draws - which apply it
+		// like any other fragment - cannot sample a volume no pass has written.
+		volumetricFroxels.Reset();
+		camera->texture_volumetricfroxels_index = -1;
+		wi::renderer::SetVolumetricFroxelParameters(
+			volumetricFroxels.GetRange(), -1);
+
 #ifdef OPEN_IMAGE_DENOISE
 		if (sam == target)
 		{
@@ -483,8 +492,6 @@ namespace wi
 				);
 			}
 
-			RenderVolumetrics(cmd);
-
 			RenderLightShafts(cmd);
 
 			// Composite other effects on top:
@@ -538,20 +545,6 @@ namespace wi
 				wi::renderer::DrawTrails(*camera, cmd);
 				wi::renderer::DrawLightVisualizers(visibility_main, cmd);
 				wi::renderer::DrawSpritesAndFonts(*scene, *camera, false, cmd);
-
-				if (getVolumeLightsEnabled() && visibility_main.IsRequestedVolumetricLights())
-				{
-					device->EventBegin("Contribute Volumetric Lights", cmd);
-					wi::renderer::Postprocess_Upsample_Bilateral(
-						rtVolumetricLights,
-						depthBuffer_Copy,
-						rtMain,
-						cmd,
-						true,
-						1.5f
-					);
-					device->EventEnd(cmd);
-				}
 
 				XMVECTOR sunDirection = XMLoadFloat3(&scene->weather.sunDirection);
 				if (getLightShaftsEnabled() && XMVectorGetX(XMVector3Dot(sunDirection, camera->GetAt())) > 0)

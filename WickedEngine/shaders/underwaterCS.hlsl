@@ -4,6 +4,7 @@
 #include "lightingHF.hlsli"
 #include "fogHF.hlsli"
 #include "waterFogHF.hlsli"
+#include "volumetricFroxelHF.hlsli"
 #ifdef RTAPI
 	// Hardware ray-traced Snell's window: trace the refracted ray into the real
 	// scene so above-water objects (and their occlusion of the window) are
@@ -188,15 +189,6 @@ void main(uint3 DTid : SV_DispatchThreadID)
 
 		color = input.SampleLevel(sampler_linear_mirror, uv, 0);
 
-		// Fraction of what this pass received that it goes on to keep.
-		//
-		// Whatever this pass scales or replaces has to be multiplied in here,
-		// because the volumetric light already sitting in the input was
-		// composited back in RenderTransparents with the march's own
-		// transmittance applied - so anything taken off it has to be given back
-		// at the end. Only Snell's window is left to take any.
-		float3 volSurvival = 1;
-
 		// Snell's window: looking up from under water, refraction gathers the
 		// whole above-water hemisphere into an overhead circular window of
 		// fixed angular size - half-angle equal to the critical angle for water
@@ -340,39 +332,23 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			// carries the sun and the god-ray modulation and would draw a
 			// god-ray texture inside the window as it hazed out. What replaces
 			// it is the surrounding underwater view, through the blend below.
-			const float3 windowContent = aboveWater * pathTransmittance;
+			// The window shows what lies beyond the surface, so it carries the
+			// light scattered on THIS side of it - the water between the eye
+			// and the crossing, which the window does not replace and which is
+			// exactly where a submerged lamp near the surface puts its beams.
+			//
+			// Taken at the crossing itself, which this pass has already had to
+			// find. That is the whole column the window covers and no more,
+			// where a screen-space buffer could only offer the light gathered
+			// out to whatever opaque surface stood behind the window.
+			half4 windowContent = half4(aboveWater * pathTransmittance, 1);
+			ApplyVolumetricLight(uv, ocean_surface_pos, windowContent);
+
 			const float windowShape = ocean_surface_ahead
 				? saturate(cone * upward * openWater)
 				: 0;
 			const float windowBlend = saturate(windowShape * underwater_snell);
-			color.rgb = lerp(color.rgb, windowContent, windowBlend);
-
-			// The window replaces the scene, so it replaces the volumetric
-			// light in it too. Looking up at a submerged lamp near the surface
-			// is exactly where the window is, so without this the beams would
-			// be erased precisely where they matter most.
-			volSurvival *= 1 - windowBlend;
-		}
-
-		// Give back the share of the volumetric light the stages above took
-		// away, restoring it in full. Addition only: the composited value was
-		// multiplied by exactly volSurvival, so adding the rest cannot drive
-		// anything negative the way subtracting the beams out and re-adding
-		// them would - and the half resolution buffer disagreeing slightly with
-		// the temporally filtered copy in the input can only soften the result,
-		// never ring around it.
-		//
-		// Near the surface volSurvival tends to 1 and the fully filtered
-		// version is what survives; only at depth does this converge on the raw
-		// buffer, which is where the water has hidden the detail anyway.
-		[branch]
-		if (underwater_volumetrics_texture >= 0)
-		{
-			const float3 volumetrics =
-				bindless_textures[descriptor_index(underwater_volumetrics_texture)]
-					.SampleLevel(sampler_linear_clamp, uv, 0).rgb;
-
-			color.rgb += volumetrics * (1 - volSurvival);
+			color.rgb = lerp(color.rgb, (float3)windowContent.rgb, windowBlend);
 		}
 
 		//color = float4(1, 0, 0, 1);

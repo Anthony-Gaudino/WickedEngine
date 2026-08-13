@@ -159,14 +159,6 @@ static const uint DEPTHOFFIELD_TILESIZE = 32;
 // is traced into the real scene so above-water objects and their occlusion of
 // the window are exact. Otherwise the window shows the analytic sky.
 #define underwater_snell_rt ((uint)postprocess.params1.x)
-// Bindless descriptor index of the volumetric light target, or -1 when the
-// volumetric composite did not run (so it doubles as the enable flag).
-// Volumetric lights are composited into the scene long before this pass, so the
-// water fog below would attenuate them a second time - the volumetric march
-// already applied its own. The pass tracks how much of that contribution each
-// of its stages destroyed and adds the missing fraction back at the end, which
-// needs the original half resolution radiance to add back from.
-#define underwater_volumetrics_texture asint(postprocess.params1.w)
 
 enum TONEMAP_FLAGS
 {

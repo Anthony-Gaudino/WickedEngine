@@ -31,7 +31,6 @@ namespace wi
 		rtWaterRipple = {};
 		rtParticleDistortion_render = {};
 		rtParticleDistortion = {};
-		rtVolumetricLights = {};
 		rtBloom = {};
 		rtBloom_tmp = {};
 		rtAO = {};
@@ -492,8 +491,7 @@ namespace wi
 
 		// Held to the same gate as the volumetric lights it carries, so a scene
 		// with none of them pays neither the memory nor the two dispatches.
-		if (getVolumetricFroxelsEnabled() &&
-			getVolumeLightsEnabled() &&
+		if (getVolumeLightsEnabled() &&
 			visibility_main.IsRequestedVolumetricLights())
 		{
 			// Never past the far plane: the last slice already carries
@@ -1913,8 +1911,6 @@ namespace wi
 
 			RenderLightShafts(cmd);
 
-			RenderVolumetrics(cmd);
-
 			RenderTransparents(cmd);
 		});
 
@@ -2188,36 +2184,6 @@ namespace wi
 				}
 			}
 			device->EventEnd(cmd);
-		}
-	}
-	void RenderPath3D::RenderVolumetrics(CommandList cmd) const
-	{
-		// Nothing reads this once the froxel volume supplies the light, so the
-		// march is skipped outright rather than left running into a target that
-		// is never composited.
-		if (getVolumeLightsEnabled() &&
-			!getVolumetricFroxelsEnabled() &&
-			visibility_main.IsRequestedVolumetricLights())
-		{
-			auto range = wi::profiler::BeginRangeGPU("Volumetric Lights", cmd);
-
-			GraphicsDevice* device = wi::graphics::GetDevice();
-
-			RenderPassImage rp[] = {
-				RenderPassImage::RenderTarget(&rtVolumetricLights, RenderPassImage::LoadOp::CLEAR),
-			};
-			device->RenderPassBegin(rp, arraysize(rp), cmd);
-
-			Viewport vp;
-			vp.width = (float)rtVolumetricLights.GetDesc().width;
-			vp.height = (float)rtVolumetricLights.GetDesc().height;
-			device->BindViewports(1, &vp, cmd);
-
-			wi::renderer::DrawVolumeLights(visibility_main, cmd);
-
-			device->RenderPassEnd(cmd);
-
-			wi::profiler::EndRange(range);
 		}
 	}
 	void RenderPath3D::RenderSceneMIPChain(CommandList cmd) const
@@ -2736,25 +2702,6 @@ namespace wi
 
 		wi::renderer::DrawSpritesAndFonts(*scene, *camera, false, cmd, nearSide);
 
-		// Exactly one of the two paths contributes, or the same light is counted
-		// twice. The froxel volume is added after this render pass ends, since
-		// it is a compute dispatch and cannot run inside one.
-		if (getVolumeLightsEnabled() &&
-			!getVolumetricFroxelsEnabled() &&
-			visibility_main.IsRequestedVolumetricLights())
-		{
-			device->EventBegin("Contribute Volumetric Lights", cmd);
-			wi::renderer::Postprocess_Upsample_Bilateral(
-				rtVolumetricLights,
-				depthBuffer_Copy,
-				rtMain,
-				cmd,
-				true,
-				1.5f
-			);
-			device->EventEnd(cmd);
-		}
-
 		XMVECTOR sunDirection = XMLoadFloat3(&scene->weather.sunDirection);
 		if (getLightShaftsEnabled() && XMVectorGetX(XMVector3Dot(sunDirection, camera->GetAt())) > 0)
 		{
@@ -2926,31 +2873,6 @@ namespace wi
 					getUnderwaterSnellEnabled()
 					&& getUnderwaterSnellRTEnabled()
 					&& device->CheckCapability(wi::graphics::GraphicsDeviceCapability::RAYTRACING);
-				// Snell's window REPLACES what is behind it, including any
-				// volumetric light already composited there back in
-				// RenderTransparents. Hand the pass the original half
-				// resolution radiance so it can put those beams back inside the
-				// window. The condition has to match the composite's exactly,
-				// or the pass would add back something that was never put in.
-				//
-				// Only the window destroys anything now that the fog is applied
-				// per fragment, so with the window off there is nothing to
-				// restore and the texture need not be bound at all.
-				//
-				// The froxel volume supplies the light instead when it is on,
-				// and the march that fills this target is skipped entirely -
-				// leaving a texture whose contents are whatever the allocator
-				// last had there. Reading it then is not merely pointless, it
-				// paints that memory across the frame.
-				const int underwater_volumetrics_texture =
-					(underwater_snell > 0
-						&& getVolumeLightsEnabled()
-						&& !getVolumetricFroxelsEnabled()
-						&& visibility_main.IsRequestedVolumetricLights()
-						&& rtVolumetricLights.IsValid())
-					? device->GetDescriptorIndex(
-						&rtVolumetricLights, SubresourceType::SRV)
-					: -1;
 				wi::renderer::Postprocess_Underwater(
 					rt_first == nullptr ? *rt_read : *rt_first,
 					*rt_write,
@@ -2959,7 +2881,6 @@ namespace wi
 					underwater_snell,
 					getUnderwaterSnellFade(),
 					underwater_snell_rt,
-					underwater_volumetrics_texture,
 					getUnderwaterLensDistortionEnabled() ? 1.0f : 0.0f
 				);
 
@@ -3808,26 +3729,6 @@ namespace wi
 	void RenderPath3D::setVolumeLightsEnabled(bool value)
 	{
 		volumeLightsEnabled = value;
-
-		if (value)
-		{
-			const GraphicsDevice* device = wi::graphics::GetDevice();
-			const XMUINT2 internalResolution = GetInternalResolution();
-			if (internalResolution.x == 0 || internalResolution.y == 0)
-				return;
-
-			TextureDesc desc;
-			desc.format = Format::R16G16B16A16_FLOAT;
-			desc.bind_flags = BindFlag::RENDER_TARGET | BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
-			desc.width = internalResolution.x / 2;
-			desc.height = internalResolution.y / 2;
-			device->CreateTexture(&desc, nullptr, &rtVolumetricLights);
-			device->SetName(&rtVolumetricLights, "renderpath3D.rtVolumetricLights");
-		}
-		else
-		{
-			rtVolumetricLights = {};
-		}
 	}
 	void RenderPath3D::setLightShaftsEnabled(bool value)
 	{

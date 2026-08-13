@@ -99,7 +99,6 @@ public:
 	wi::gui::Slider underwaterSnellFadeSlider;
 	wi::gui::CheckBox underwaterSnellRTCheckBox;
 	wi::gui::CheckBox underwaterGodRaysProceduralCheckBox;
-	wi::gui::CheckBox volumetricFroxelsCheckBox;
 	wi::gui::Slider volumetricFroxelRangeSlider;
 	wi::gui::CheckBox underwaterParticlesCheckBox;
 	wi::gui::Slider underwaterParticleDensitySlider;

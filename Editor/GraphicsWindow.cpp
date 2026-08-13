@@ -1582,23 +1582,6 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 		});
 	AddWidget(&underwaterGodRaysProceduralCheckBox);
 
-	volumetricFroxelsCheckBox.Create("Volumetric Froxels: ");
-	volumetricFroxelsCheckBox.SetTooltip("Take the volumetric light from a froxel volume instead of the screen space pass. The volume is indexed by distance, so a fragment collects only the light in front of it - a pane of glass or a wave crest no longer picks up the whole column standing behind it. Exactly one of the two paths contributes; this replaces the old one rather than adding to it.");
-	volumetricFroxelsCheckBox.SetSize(XMFLOAT2(hei, hei));
-	volumetricFroxelsCheckBox.SetPos(XMFLOAT2(x, y += step));
-
-	if (editor->main->config.GetSection("graphics").Has("volumetric_froxels"))
-	{
-		editor->renderPath->setVolumetricFroxelsEnabled(editor->main->config.GetSection("graphics").GetBool("volumetric_froxels"));
-	}
-
-	volumetricFroxelsCheckBox.OnClick([=](wi::gui::EventArgs args) {
-		editor->renderPath->setVolumetricFroxelsEnabled(args.bValue);
-		editor->main->config.GetSection("graphics").Set("volumetric_froxels", args.bValue);
-		editor->main->config.Commit();
-		});
-	AddWidget(&volumetricFroxelsCheckBox);
-
 	volumetricFroxelRangeSlider.Create(
 		20, 2000, VOLUMETRIC_FROXEL_DEFAULT_RANGE, 198,
 		"VolumetricFroxels.Range: ");
@@ -2123,7 +2106,6 @@ void GraphicsWindow::UpdateData()
 	underwaterSnellFadeSlider.SetValue(editor->renderPath->getUnderwaterSnellFade());
 	underwaterSnellRTCheckBox.SetCheck(editor->renderPath->getUnderwaterSnellRTEnabled());
 	underwaterGodRaysProceduralCheckBox.SetCheck(editor->renderPath->getUnderwaterGodRaysProceduralEnabled());
-	volumetricFroxelsCheckBox.SetCheck(editor->renderPath->getVolumetricFroxelsEnabled());
 	volumetricFroxelRangeSlider.SetValue(editor->renderPath->getVolumetricFroxelRange());
 	underwaterParticlesCheckBox.SetCheck(editor->renderPath->getUnderwaterParticlesEnabled());
 	underwaterParticleDensitySlider.SetValue(editor->renderPath->getUnderwaterParticleDensity());
@@ -2401,7 +2383,6 @@ void GraphicsWindow::ResizeLayout()
 	layout.add_right(underwaterSnellFadeSlider);
 	layout.add_right(underwaterSnellRTCheckBox);
 	layout.add_right(underwaterGodRaysProceduralCheckBox);
-	layout.add_right(volumetricFroxelsCheckBox);
 	layout.add_right(volumetricFroxelRangeSlider);
 	layout.add_right(underwaterParticleDensitySlider);
 	underwaterParticlesCheckBox.SetPos(XMFLOAT2(underwaterParticleDensitySlider.GetPos().x - underwaterParticlesCheckBox.GetSize().x - 80, underwaterParticleDensitySlider.GetPos().y));
