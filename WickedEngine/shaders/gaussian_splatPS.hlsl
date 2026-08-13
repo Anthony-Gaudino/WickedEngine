@@ -1,6 +1,7 @@
 #include "globals.hlsli"
 #include "ShaderInterop_GaussianSplat.h"
 #include "waterFogHF.hlsli"
+#include "volumetricFroxelHF.hlsli"
 
 float4 main(float4 pos : SV_Position, half4 color : COLOR, half2 localPos : LOCALPOS) : SV_Target
 {
@@ -38,6 +39,7 @@ float4 main(float4 pos : SV_Position, half4 color : COLOR, half2 localPos : LOCA
 	// The water between this splat and the eye. Premultiplied, matching the
 	// blend.
 	ApplyWaterFogPremultiplied(screenUV, P, result);
+	ApplyVolumetricLightPremultiplied(screenUV, P, result);
 
 	return result;
 }

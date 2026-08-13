@@ -185,7 +185,6 @@ wi::vector<ShaderEntry> shaders = {
 	{"aerialPerspectiveCS", wi::graphics::ShaderStage::CS },
 	{"volumetricFroxel_injectCS", wi::graphics::ShaderStage::CS },
 	{"volumetricFroxel_integrateCS", wi::graphics::ShaderStage::CS },
-	{"volumetricFroxel_applyCS", wi::graphics::ShaderStage::CS },
 	{"skyAtmosphere_cameraVolumeLutCS", wi::graphics::ShaderStage::CS },
 	{"skyAtmosphere_transmittanceLutCS", wi::graphics::ShaderStage::CS },
 	{"skyAtmosphere_skyViewLutCS", wi::graphics::ShaderStage::CS },

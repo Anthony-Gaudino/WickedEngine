@@ -1,5 +1,6 @@
 #include "imageHF.hlsli"
 #include "waterFogHF.hlsli"
+#include "volumetricFroxelHF.hlsli"
 
 float4 main(VertextoPixel input) : SV_TARGET
 {
@@ -209,6 +210,10 @@ float4 main(VertextoPixel input) : SV_TARGET
 		else
 		{
 			ApplyWaterFog(screenUV, P, fogged);
+
+			// Only the non-additive branch: an additive sprite lands on a
+			// destination that already carries the light in front of it.
+			ApplyVolumetricLight(screenUV, P, fogged);
 		}
 
 		color = (float4)fogged;

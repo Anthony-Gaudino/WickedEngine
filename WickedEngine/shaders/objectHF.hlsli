@@ -47,6 +47,7 @@
 #include "ShaderInterop_DDGI.h"
 #include "shadingHF.hlsli"
 #include "waterFogHF.hlsli"
+#include "volumetricFroxelHF.hlsli"
 
 // DEFINITIONS
 //////////////////
@@ -1131,6 +1132,16 @@ float4 main(PixelInput input, in bool is_frontface : SV_IsFrontFace APPEND_COVER
 	ApplyFog(dist, surface.V, background, color);
 
 	ApplyWaterFog(ScreenCoord, surface.P, background, color);
+
+	// The refraction was drawn earlier and carries the light scattered over its
+	// own longer column already, so only this surface's own share is added -
+	// which is the same fraction the background was composited with.
+	ApplyVolumetricLight(
+		ScreenCoord,
+		surface.P,
+		(half3)((1 - surface.F) * surface.refraction.a),
+		color
+	);
 
 	color.rgb = mul(saturationMatrix(material.GetSaturation()), color.rgb);
 

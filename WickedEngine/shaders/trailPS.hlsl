@@ -1,5 +1,6 @@
 #include "globals.hlsli"
 #include "waterFogHF.hlsli"
+#include "volumetricFroxelHF.hlsli"
 
 float4 main(float4 pos : SV_Position, float4 screen : SCREEN, float4 uv : TEXCOORD, float4 color : COLOR) : SV_TARGET
 {
@@ -58,6 +59,18 @@ float4 main(float4 pos : SV_Position, float4 screen : SCREEN, float4 uv : TEXCOO
 		else
 		{
 			ApplyWaterFog(fogUV, P, fogged);
+		}
+
+		// An additive trail is left alone: the destination already carries the
+		// light scattered in front of it, and adding it once per additive draw
+		// stacks the haze as many times as they overlap.
+		if (g_xTrailWaterFogMode == TRAIL_WATERFOG_PREMULTIPLIED)
+		{
+			ApplyVolumetricLightPremultiplied(fogUV, P, fogged);
+		}
+		else if (g_xTrailWaterFogMode != TRAIL_WATERFOG_ADDITIVE)
+		{
+			ApplyVolumetricLight(fogUV, P, fogged);
 		}
 
 		color = (float4)fogged;

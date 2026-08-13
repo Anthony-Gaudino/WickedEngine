@@ -1,6 +1,7 @@
 #include "globals.hlsli"
 #include "ShaderInterop_Postprocess.h"
 #include "waterFogHF.hlsli"
+#include "volumetricFroxelHF.hlsli"
 
 PUSHCONSTANT(postprocess, PostProcess);
 
@@ -107,6 +108,13 @@ float4 main(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
 	// puts the cloud wherever the sea bed is, and flying over the ocean absorbed
 	// every cloud in front of the water away to nothing.
 	ApplyWaterFogPremultiplied(GetWaterFog(uv, depthWorldPosition, 0), result);
+
+	// Sampled on the far plane, not at the depth buffer's position. A cloud is
+	// kilometres away and the volume ends long before it, so the far plane and
+	// the cloud read the same texel - the whole column the volume holds - while
+	// the depth buffer's position would hand the cloud the light gathered as
+	// far as whatever opaque thing happens to stand in front of it.
+	ApplyVolumetricLightPremultiplied(uv, reconstruct_position(uv, 0), result);
 
 	return result;
 }

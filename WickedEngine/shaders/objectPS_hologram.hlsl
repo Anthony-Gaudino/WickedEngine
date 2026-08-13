@@ -72,6 +72,7 @@ float4 main(PixelInput input) : SV_TARGET
 	else
 	{
 		ApplyWaterFog(screenUV, input.GetPos3D(), fogged);
+		ApplyVolumetricLight(screenUV, input.GetPos3D(), fogged);
 	}
 
 	return saturateMediump((float4)fogged);

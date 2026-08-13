@@ -20,6 +20,7 @@
 #include "brdf.hlsli"
 #include "shadingHF.hlsli"
 #include "waterFogHF.hlsli"
+#include "volumetricFroxelHF.hlsli"
 
 // This shader computes per-pixel lighting based on primitiveID
 
@@ -127,6 +128,7 @@ void main(uint Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
 
 	ApplyFog(surface.hit_depth, surface.V, color);
 	ApplyWaterFog(surface.screenUV, surface.P, color);
+	ApplyVolumetricLight(surface.screenUV, surface.P, color);
 
 	color = saturateMediump(color);
 

@@ -28,6 +28,7 @@
 #include "shadingHF.hlsli"
 #include "waterFogHF.hlsli"
 #include "underwaterParticleHF.hlsli"
+#include "volumetricFroxelHF.hlsli"
 
 /**
  * Depth range over which a particle fades out against solid geometry, in
@@ -133,6 +134,7 @@ half4 main(UnderwaterParticleVertexToPixel input) : SV_TARGET
 	// plain one the opaque geometry uses.
 	color.rgb *= color.a;
 	ApplyWaterFogPremultiplied(screenUV, input.P, color);
+	ApplyVolumetricLightPremultiplied(screenUV, input.P, color);
 
 	return color;
 }

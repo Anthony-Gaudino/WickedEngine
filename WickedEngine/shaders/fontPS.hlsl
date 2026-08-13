@@ -1,6 +1,7 @@
 #include "globals.hlsli"
 #include "ShaderInterop_Font.h"
 #include "waterFogHF.hlsli"
+#include "volumetricFroxelHF.hlsli"
 
 struct VertextoPixel
 {
@@ -76,8 +77,9 @@ float4 main(VertextoPixel input) : SV_TARGET
 	if (flags & FONT_FLAG_UNDERWATER_FOG)
 	{
 		const float2 screenUV = input.pos.xy * GetCamera().internal_resolution_rcp;
-		ApplyWaterFogPremultiplied(
-			screenUV, reconstruct_position(screenUV, input.pos.z), color);
+		const float3 P = reconstruct_position(screenUV, input.pos.z);
+		ApplyWaterFogPremultiplied(screenUV, P, color);
+		ApplyVolumetricLightPremultiplied(screenUV, P, color);
 	}
 
 	[branch]

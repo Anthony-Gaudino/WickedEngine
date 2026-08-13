@@ -1406,6 +1406,10 @@ namespace wi::renderer
 	float GetDDGIBlendSpeed();
 	void SetGIBoost(float value);
 	float GetGIBoost();
+	// How far the volumetric froxel volume reaches, in metres. Set by whoever
+	// builds the volume; 0 means there is none this frame.
+	void SetVolumetricFroxelRange(float value);
+	float GetVolumetricFroxelRange();
 	void SetMeshShaderAllowed(bool value);
 	bool IsMeshShaderAllowed();
 	void SetMeshletOcclusionCullingEnabled(bool value);

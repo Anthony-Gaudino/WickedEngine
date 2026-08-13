@@ -182,6 +182,10 @@ float4 main(VertextoPixel input) : SV_TARGET
 	else
 	{
 		ApplyWaterFog(ScreenCoord, pos3D, color);
+
+		// Straight alpha here, so the blend applies the coverage itself and
+		// this must not apply it again.
+		ApplyVolumetricLight(ScreenCoord, pos3D, color);
 	}
 #endif // EMITTEDPARTICLE_DISTORTION
 

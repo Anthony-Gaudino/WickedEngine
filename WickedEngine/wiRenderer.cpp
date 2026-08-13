@@ -148,6 +148,7 @@ bool DDGI_DEBUG_ENABLED = false;
 uint32_t DDGI_RAYCOUNT = 256u;
 float DDGI_BLEND_SPEED = 0.1f;
 float GI_BOOST = 1.0f;
+float VOLUMETRIC_FROXEL_RANGE = 0.0f;
 bool MESH_SHADER_ALLOWED = false;
 bool MESHLET_OCCLUSION_CULLING = false;
 std::atomic<size_t> SHADER_ERRORS{ 0 };
@@ -4383,6 +4384,7 @@ void UpdatePerFrameData(
 	frameCB.texture_skyluminancelut_index = device->GetDescriptorIndex(&textures[TEXTYPE_2D_SKYATMOSPHERE_SKYLUMINANCELUT], SubresourceType::SRV);
 	frameCB.texture_cameravolumelut_index = device->GetDescriptorIndex(&textures[TEXTYPE_3D_SKYATMOSPHERE_CAMERAVOLUMELUT], SubresourceType::SRV);
 	frameCB.texture_wind_index = device->GetDescriptorIndex(&textures[TEXTYPE_3D_WIND], SubresourceType::SRV);
+	frameCB.volumetricfroxel_range = GetVolumetricFroxelRange();
 
 	// See if indirect debug buffer needs to be resized:
 	if (indirectDebugStatsReadback_available[device->GetBufferIndex()] && indirectDebugStatsReadback[device->GetBufferIndex()].mapped_data != nullptr)
@@ -11790,6 +11792,7 @@ void BindCameraCB(
 	shadercam.texture_vxgi_diffuse_index = camera.texture_vxgi_diffuse_index;
 	shadercam.texture_vxgi_specular_index = camera.texture_vxgi_specular_index;
 	shadercam.texture_reprojected_depth_index = camera.texture_reprojected_depth_index;
+	shadercam.texture_volumetricfroxels_index = camera.texture_volumetricfroxels_index;
 
 	device->BindDynamicConstantBuffer(cb, CBSLOT_RENDERER_CAMERA, cmd);
 }
@@ -20038,6 +20041,14 @@ void SetGIBoost(float value)
 float GetGIBoost()
 {
 	return GI_BOOST;
+}
+void SetVolumetricFroxelRange(float value)
+{
+	VOLUMETRIC_FROXEL_RANGE = value;
+}
+float GetVolumetricFroxelRange()
+{
+	return VOLUMETRIC_FROXEL_RANGE;
 }
 void SetMeshShaderAllowed(bool value)
 {

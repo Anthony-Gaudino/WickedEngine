@@ -172,4 +172,115 @@ inline float VolumetricFroxelAirExtinction(
 	return density;
 }
 
+/**
+ * Adds the light scattered between the eye and a fragment.
+ *
+ * This is what the volume exists for. The inscatter reaching a fragment depends
+ * only on where that fragment is, so every kind of fragment - opaque, glass,
+ * particle, sprite, splat, ocean surface - takes exactly its own share, and
+ * there is no compositing order left to choose because nothing is composited.
+ *
+ * **The weight is a coverage fraction, not a radiance.** `ApplyFog` and
+ * `ApplyWaterFog` take a `background` radiance and use `min(background, color)`
+ * to find the share to hold out of a *multiplicative* operation. That trick does
+ * not carry over to an additive term, which needs to know what *fraction* of the
+ * pixel came from behind. Wherever a shader composites a refraction it has that
+ * fraction to hand - `objectHF.hlsli` builds its background as
+ * `surface.refraction.rgb * (1 - surface.F) * surface.refraction.a`, so the
+ * weight is `(1 - surface.F) * surface.refraction.a`.
+ *
+ * **Alpha blended draws pass 0.** There the hardware multiplies by the source
+ * alpha and the destination carries its own share already, so weighting here as
+ * well would count the coverage twice.
+ *
+ * **Additive draws must not call this at all.** The destination already holds
+ * the inscatter for that pixel, and adding it once per additive draw multiplies
+ * the haze by however many of them land there - the same reasoning
+ * `ApplyWaterFogAdditive` is built on.
+ *
+ * A camera with no volume - a reflection, an environment probe, a shadow
+ * cascade - carries -1 and returns here, so no call site needs a condition of
+ * its own.
+ *
+ * Example usage:
+ * @code
+ * ApplyWaterFog(dist, color);
+ * ApplyVolumetricLight(ScreenCoord, dist, 0, color);
+ * @endcode
+ *
+ * Takes the world position rather than a distance, matching `ApplyWaterFog`
+ * beside it. The volume is indexed by **radial** distance from the eye, which
+ * differs from view depth by more and more towards the edges of the screen; a
+ * caller handed that job would eventually pass the wrong one, and a smooth
+ * error that grows towards the corners reads as a tuning problem rather than as
+ * a bug.
+ *
+ * @param[in] screenUV - Screen space position of the fragment (0-1).
+ * @param[in] fragmentPosition - World position of the fragment.
+ * @param[in] backgroundWeight - Fraction of this fragment's colour that came
+ *                               from behind it and already carries its own
+ *                               inscatter (0-1). Per channel, because a
+ *                               refraction's Fresnel term is, and zero unless
+ *                               the shader composited a refraction itself.
+ * @param[in,out] color - Fragment colour, lit in place. Alpha is untouched.
+ */
+inline void ApplyVolumetricLight(
+	in float2 screenUV,
+	in float3 fragmentPosition,
+	in half3 backgroundWeight,
+	inout half4 color
+)
+{
+	[branch]
+	if (GetCamera().texture_volumetricfroxels_index < 0)
+	{
+		return;
+	}
+
+	const float distanceToEye = length(fragmentPosition - GetCamera().position);
+
+	const float w = VolumetricFroxelDepthToW(
+		distanceToEye, GetFrame().volumetricfroxel_range);
+
+	const half3 inscatter = (half3)texture_volumetricfroxels.SampleLevel(
+		sampler_linear_clamp, float3(screenUV, w), 0).rgb;
+
+	color.rgb += inscatter * (1 - backgroundWeight);
+}
+
+/**
+ * Adds the light scattered between the eye and a fragment that has no
+ * already-lit background of its own.
+ *
+ * @param[in] screenUV - Screen space position of the fragment (0-1).
+ * @param[in] fragmentPosition - World position of the fragment.
+ * @param[in,out] color - Fragment colour, lit in place.
+ */
+inline void ApplyVolumetricLight(
+	in float2 screenUV, in float3 fragmentPosition, inout half4 color
+)
+{
+	ApplyVolumetricLight(screenUV, fragmentPosition, 0, color);
+}
+
+/**
+ * Adds the light scattered between the eye and a fragment drawn with
+ * premultiplied alpha.
+ *
+ * The blend adds the source unweighted, so the coverage has to be applied here
+ * instead - otherwise a mote covering a tenth of a pixel paints a shaft across
+ * the nine tenths it never touched. Same reasoning as
+ * `ApplyWaterFogPremultiplied`.
+ *
+ * @param[in] screenUV - Screen space position of the fragment (0-1).
+ * @param[in] fragmentPosition - World position of the fragment.
+ * @param[in,out] color - Premultiplied fragment colour, lit in place.
+ */
+inline void ApplyVolumetricLightPremultiplied(
+	in float2 screenUV, in float3 fragmentPosition, inout half4 color
+)
+{
+	ApplyVolumetricLight(screenUV, fragmentPosition, 1 - color.a, color);
+}
+
 #endif // WI_VOLUMETRIC_FROXEL_HF

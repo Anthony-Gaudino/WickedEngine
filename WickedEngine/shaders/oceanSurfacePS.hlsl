@@ -486,6 +486,13 @@ float4 main(PSIn input) : SV_TARGET
 	// displaced surface dips below the still plane.
 	ApplyWaterFogAtSurface(ScreenCoord, surface.P, background, color);
 
+	ApplyVolumetricLight(
+		ScreenCoord,
+		surface.P,
+		(half3)((1 - surface.F) * surface.refraction.a),
+		color
+	);
+
 	return saturateMediump(color);
 
 #endif // SHADOWMAPRENDERING

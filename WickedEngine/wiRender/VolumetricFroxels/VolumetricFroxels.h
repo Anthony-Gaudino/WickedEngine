@@ -194,25 +194,6 @@ class wi::render::VolumetricFroxels final
 		wi::graphics::CommandList cmd
 	) const;
 
-	/**
-	 * Adds the volume's light to a render target, against the opaque depth.
-	 *
-	 * **Scaffolding.** It reproduces the pass it replaces so the two can be
-	 * compared while the volume is being got right, and it inherits that pass's
-	 * defect: a transparent in front of the surface is painted with the light
-	 * from behind it. What the volume is for is being sampled per fragment
-	 * instead - this exists to separate "is the volume right?" from "is the
-	 * plumbing right?", which are not worth debugging at the same time.
-	 *
-	 * @param[in,out] target - Render target to add into. Must allow unordered
-	 *                         access.
-	 * @param[in] cmd - Command list to record into.
-	 */
-	void ApplyScreenSpace(
-		const wi::graphics::Texture& target,
-		wi::graphics::CommandList cmd
-	) const;
-
 	/*
 	############################################################################
 	Private

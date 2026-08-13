@@ -1,5 +1,6 @@
 #include "globals.hlsli"
 #include "waterFogHF.hlsli"
+#include "volumetricFroxelHF.hlsli"
 
 float4 main(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_TARGET
 {
@@ -26,6 +27,7 @@ float4 main(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_TARGET
 	// submerged light stays at full brightness however far away it is.
 	half4 fogged = (half4)color;
 	ApplyWaterFog(screenUV, P, fogged);
+	ApplyVolumetricLight(screenUV, P, fogged);
 
 	return (float4)fogged;
 }

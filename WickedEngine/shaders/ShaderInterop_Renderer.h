@@ -1279,7 +1279,11 @@ struct alignas(16) FrameCB
 	int			texture_skyluminancelut_index;
 	int			texture_cameravolumelut_index;
 	int			texture_wind_index;
-	int			padding0;
+	// How far the volumetric froxel volume reaches, in metres. Read by every
+	// fragment that samples it, so it cannot be a constant duplicated at the
+	// call sites: the moment the range is authored, a copy that did not follow
+	// would look up the wrong slice and read as a tuning problem.
+	float		volumetricfroxel_range;
 
 	float4		rain_blocker_mad;
 	float4x4	rain_blocker_matrix;
@@ -1422,7 +1426,10 @@ struct alignas(16) ShaderCamera
 	int texture_depth_index;
 	int texture_velocity_index;
 	int texture_normal_roughness_index;
-	int padding0;
+	// Per camera rather than per frame, so a camera that has no volume - a
+	// reflection, an environment probe, a shadow cascade - reads -1 and skips
+	// the lookup without a condition at any of the call sites.
+	int texture_volumetricfroxels_index;
 
 	int texture_reflection_index;
 	int texture_reflection_depth_index;
@@ -1512,6 +1519,7 @@ struct alignas(16) ShaderCamera
 		texture_vxgi_diffuse_index = -1;
 		texture_vxgi_specular_index = -1;
 		texture_reprojected_depth_index = -1;
+		texture_volumetricfroxels_index = -1;
 
 		options = 0;
 	}

@@ -68,6 +68,7 @@ float4 main(VSOut input) : SV_Target
 	
 	ApplyFog(dist, V, color);
 	ApplyWaterFog(ScreenCoord, surface.P, color);
-	
+	ApplyVolumetricLight(ScreenCoord, surface.P, color);
+
 	return color;
 }

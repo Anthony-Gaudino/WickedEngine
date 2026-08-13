@@ -8,7 +8,6 @@
 #include "wiProfiler.h"
 #include "wiRenderer.h"
 #include "wiScene_Components.h"
-#include "shaders/ShaderInterop_Postprocess.h"
 #include "shaders/ShaderInterop_VolumetricFroxels.h"
 
 #include <algorithm>
@@ -25,9 +24,6 @@ namespace
 	/** Gathers those along each view ray into what a fragment reads. */
 	Shader integrateCS;
 
-	/** Adds the result to a render target against the opaque depth. */
-	Shader applyCS;
-
 	/**
 	 * Loads the compute shaders.
 	 *
@@ -40,8 +36,6 @@ namespace
 			ShaderStage::CS, injectCS, "volumetricFroxel_injectCS.cso");
 		wi::renderer::LoadShader(
 			ShaderStage::CS, integrateCS, "volumetricFroxel_integrateCS.cso");
-		wi::renderer::LoadShader(
-			ShaderStage::CS, applyCS, "volumetricFroxel_applyCS.cso");
 	}
 
 	/**
@@ -121,16 +115,27 @@ void VolumetricFroxels::Create(const float range)
 	// against a 16-bit format.
 	desc.format = Format::R11G11B10_FLOAT;
 	desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+
+	// Nothing outside the integration pass ever reads these, and that is a
+	// compute pass.
 	desc.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
 
+	// Left with undefined contents deliberately. Both build passes write every
+	// cell they own before anything reads one, so zeroing them buys nothing and
+	// costs a copy of the whole volume through the staging allocator.
 	for (uint32_t i = 0; i < arraysize(injectVolume); ++i)
 	{
-		device->CreateTextureZeroed(&desc, &injectVolume[i]);
+		device->CreateTexture(&desc, nullptr, &injectVolume[i]);
 		device->SetName(
 			&injectVolume[i], "VolumetricFroxels::injectVolume");
 	}
 
-	device->CreateTextureZeroed(&desc, &integratedVolume);
+	// Read by the fragment shaders, so it must be visible to the pixel stage
+	// too - the compute-only state is exactly right for the pair above and
+	// silently wrong here.
+	desc.layout = ResourceState::SHADER_RESOURCE;
+
+	device->CreateTexture(&desc, nullptr, &integratedVolume);
 	device->SetName(&integratedVolume, "VolumetricFroxels::integratedVolume");
 }
 
@@ -257,51 +262,6 @@ void VolumetricFroxels::Build(
 	}
 
 	wi::profiler::EndRange(profilerRange);
-	device->EventEnd(cmd);
-}
-
-void VolumetricFroxels::ApplyScreenSpace(
-	const Texture& target, const CommandList cmd
-) const
-{
-	if (!IsValid())
-	{
-		return;
-	}
-
-	GraphicsDevice* device = wi::graphics::GetDevice();
-
-	device->EventBegin("Volumetric Froxels Apply", cmd);
-
-	wi::renderer::BindCommonResources(cmd);
-
-	VolumetricFroxelPush push;
-	push.range = range;
-	push.frame = (uint32_t)std::max(frame, 0);
-	push.padding0 = 0;
-	push.padding1 = 0;
-
-	device->Barrier(
-		GPUBarrier::Image(
-			&target, target.desc.layout, ResourceState::UNORDERED_ACCESS),
-		cmd);
-
-	device->BindComputeShader(&applyCS, cmd);
-	device->PushConstants(&push, sizeof(push), cmd);
-	device->BindResource(&integratedVolume, 0, cmd);
-	device->BindUAV(&target, 0, cmd);
-
-	device->Dispatch(
-		GroupCount(target.desc.width, POSTPROCESS_BLOCKSIZE),
-		GroupCount(target.desc.height, POSTPROCESS_BLOCKSIZE),
-		1,
-		cmd);
-
-	device->Barrier(
-		GPUBarrier::Image(
-			&target, ResourceState::UNORDERED_ACCESS, target.desc.layout),
-		cmd);
-
 	device->EventEnd(cmd);
 }
 

@@ -504,6 +504,15 @@ namespace wi
 			volumetricFroxels.Reset();
 		}
 
+		// Published to the shaders that sample it. The range travels with the
+		// volume because a lookup needs both: the index says where it is and the
+		// range says how to turn a distance into a coordinate in it.
+		camera->texture_volumetricfroxels_index = volumetricFroxels.IsValid()
+			? device->GetDescriptorIndex(
+				volumetricFroxels.GetVolume(), SubresourceType::SRV)
+			: -1;
+		wi::renderer::SetVolumetricFroxelRange(volumetricFroxels.GetRange());
+
 		if (!scene->waterRipples.empty() && rtParticleDistortion.IsValid())
 		{
 			if (!rtWaterRipple.IsValid())
@@ -862,6 +871,9 @@ namespace wi
 		camera_reflection.texture_vxgi_diffuse_index = -1;
 		camera_reflection.texture_vxgi_specular_index = -1;
 		camera_reflection.texture_reprojected_depth_index = -1;
+		// The volume is built along the main camera's rays and means nothing
+		// along the reflection's.
+		camera_reflection.texture_volumetricfroxels_index = -1;
 
 		video_cmd = {};
 		if (getSceneUpdateEnabled() && scene->videos.GetCount() > 0)
@@ -2769,15 +2781,6 @@ namespace wi
 		}
 
 		device->RenderPassEnd(cmd);
-
-		// The froxel volume's stand-in composite, deliberately mirroring the
-		// one above so the two can be compared. It is a compute dispatch, so it
-		// waits for the render pass to close rather than sitting beside its
-		// counterpart.
-		if (getVolumetricFroxelsEnabled())
-		{
-			volumetricFroxels.ApplyScreenSpace(rtMain, cmd);
-		}
 
 		// Distortion particles:
 		{
