@@ -67,10 +67,43 @@ static const uint VOLUMETRIC_FROXEL_TAIL_STEPS = 8;
 static const float VOLUMETRIC_FROXEL_MAX_RADIANCE = 60000.0F;
 
 /**
+ * Share of a cell taken from this frame's sample rather than from the history.
+ *
+ * One sample per cell per frame is far too few to describe what a bright local
+ * light does across a cell, where the falloff goes as \f$1/d^2\f$; the sample
+ * point is moved around inside the cell every frame so that the average over
+ * several frames is what a great many samples in one frame would have given.
+ * This is the length of that average.
+ *
+ * Small, because the quantity being averaged is a **local** property of a point
+ * in the world: the same point seen from a moved camera holds the same value,
+ * so an old estimate of it is not stale, only noisy. What does go stale is an
+ * occluder moving through the light, and that is the cost this trades against.
+ */
+static const float VOLUMETRIC_FROXEL_HISTORY_BLEND = 0.05F;
+
+/**
+ * How far a reused estimate may stray from what its neighbours say now.
+ *
+ * A long average is only sound while the thing being averaged holds still. Move
+ * an occluder through a shaft and the history describes light that is no longer
+ * there, which arrives as a smear trailing the occluder for as many frames as
+ * the average is long.
+ *
+ * The guard is that the cells around a given one are a fair sample of what it
+ * should be: the medium is smooth, so the history is kept only where it is
+ * consistent with the spread its neighbours show this frame, and pulled to the
+ * edge of that spread where it is not. Measured in standard deviations rather
+ * than clamped to the neighbours' outright range, which throws away most of the
+ * averaging exactly where the noise is worst.
+ */
+static const float VOLUMETRIC_FROXEL_HISTORY_CLIP_SIGMA = 2.0F;
+
+/**
  * Constants both build passes need.
  *
  * Carried as push constants rather than folded into the generic postprocess
- * struct, so the two fields are named for what they are at every use.
+ * struct, so every field is named for what it is at each use.
  */
 struct VolumetricFroxelPush
 {
@@ -87,6 +120,19 @@ struct VolumetricFroxelPush
 
 	float padding0;
 	float padding1;
+
+	/**
+	 * Where the eye stood last frame, in world space.
+	 *
+	 * The volume is indexed by distance from the eye, so finding a point in
+	 * last frame's volume needs last frame's eye - and a screen position alone
+	 * cannot supply it. Passed in rather than recovered from the previous view
+	 * matrix in the shader, where it would be three lines of transpose that
+	 * quietly depend on which way round the engine stores its matrices.
+	 */
+	float3 previousEye;
+
+	float padding2;
 };
 
 /**

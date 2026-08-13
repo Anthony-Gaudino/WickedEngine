@@ -1588,7 +1588,8 @@ namespace wi
 
 			// Built before anything shades, because everything that shades
 			// reads it - opaque geometry included.
-			volumetricFroxels.Build(*camera, cmd);
+			volumetricFroxels.Build(
+				*camera, camera_previous, camera_reflection, cmd);
 
 			if (getRaytracedReflectionEnabled())
 			{

@@ -97,28 +97,40 @@ inline float3 VolumetricFroxelPosition(in float2 uv, in float depth)
  * cells trades that shell for a fine pattern which the volume's own bilinear
  * upsampling then averages away.
  *
- * An ordered Bayer pattern rather than noise, and one that does not move
- * between frames, so what is left after the averaging is stationary. Random
- * offsets would need several frames of accumulation to be worth more than this,
- * and would crawl until they got it.
+ * An ordered Bayer pattern spatially, so that within any one frame the offsets
+ * are spread evenly over each 8x8 block of cells rather than clumping the way
+ * random ones would. The slice index is folded into the lookup on both axes with
+ * different strides, so neighbouring slices draw different offsets instead of
+ * stacking the same tile through the depth of the volume.
  *
- * The slice index is folded into the lookup on both axes with different
- * strides, so neighbouring slices draw different offsets instead of stacking
- * the same 8x8 tile through the depth of the volume.
+ * **Advanced every frame by an irrational step**, which is what makes the
+ * temporal accumulation worth having: a pattern that stood still would sample
+ * the same 64 points forever and average to a fixed, biased answer. Stepping by
+ * the golden ratio and wrapping spreads each cell's successive offsets evenly
+ * over its own extent for any number of frames, with no period to line up
+ * against - the Cranley-Patterson rotation.
  *
  * @param[in] cell - Integer cell coordinate within the volume.
+ * @param[in] frame - Frames built since the last reset.
  *
  * @return Offset within the cell, in 0-1 on each axis.
  */
-inline float3 VolumetricFroxelCellJitter(in uint3 cell)
+inline float3 VolumetricFroxelCellJitter(in uint3 cell, in uint frame)
 {
 	const uint2 xyOffset = uint2(cell.z * 5, cell.z * 3);
 	const uint2 zOffset = uint2(cell.z * 3 + 2, cell.z * 7 + 5);
 
-	return float3(
+	const float3 spatial = float3(
 		(float)dither((min16uint2)(cell.xy + xyOffset)),
 		(float)dither((min16uint2)(cell.yx + xyOffset)),
 		(float)dither((min16uint2)(cell.xy + zOffset)));
+
+	// Three different irrationals, so the axes advance independently instead of
+	// the sample point walking one straight line through the cell.
+	const float3 rotation = frac(
+		(float)frame * float3(0.6180340, 0.7548777, 0.8191725));
+
+	return frac(spatial + rotation);
 }
 
 /**

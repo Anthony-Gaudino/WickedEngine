@@ -181,9 +181,21 @@ class wi::render::VolumetricFroxels final
 	 * Two dispatches: one filling every cell with what the medium there
 	 * scatters towards the eye, and one accumulating those along each view ray.
 	 *
+	 * Rebinds the camera constant buffer with the temporal anti-aliasing jitter
+	 * removed, and restores it before returning. That jitter moves the whole
+	 * frustum by a fraction of a pixel each frame, and a volume rebuilt on a
+	 * frustum that will not sit still cannot be told from one whose contents
+	 * are moving - the sample point inside each cell has to be the only thing
+	 * that changes between frames, or the accumulation is averaging two things
+	 * at once.
+	 *
 	 * @param[in] camera - The camera the volume is built for. Its frustum
 	 *                     defines the grid, so a volume built for one camera
 	 *                     means nothing to another.
+	 * @param[in] cameraPrevious - Where that camera stood last frame, for
+	 *                             reprojecting into the history.
+	 * @param[in] cameraReflection - Reflection camera, carried through the
+	 *                               rebind untouched.
 	 * @param[in] cmd - Command list to record into.
 	 *
 	 * @note Records nothing when the volume is invalid, so a caller need not
@@ -191,6 +203,8 @@ class wi::render::VolumetricFroxels final
 	 */
 	void Build(
 		const wi::scene::CameraComponent& camera,
+		const wi::scene::CameraComponent& cameraPrevious,
+		const wi::scene::CameraComponent& cameraReflection,
 		wi::graphics::CommandList cmd
 	) const;
 

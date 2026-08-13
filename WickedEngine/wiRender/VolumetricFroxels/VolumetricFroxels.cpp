@@ -110,11 +110,17 @@ void VolumetricFroxels::Create(const float range)
 	desc.width = VOLUMETRIC_FROXEL_WIDTH;
 	desc.height = VOLUMETRIC_FROXEL_HEIGHT;
 	desc.depth = VOLUMETRIC_FROXEL_SLICES;
+	desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
+
 	// Radiance is never negative and never needs an alpha here, so eleven bits
 	// of mantissa per channel is ample and halves what a volume this size costs
 	// against a 16-bit format.
+	//
+	// The injection pair is read back into itself, and a sixteen bit format was
+	// measured there on the theory that a twentieth-of-the-way blend step falls
+	// below what eleven bits can resolve. It changed nothing on screen, so the
+	// precision floor is not what limits this.
 	desc.format = Format::R11G11B10_FLOAT;
-	desc.bind_flags = BindFlag::SHADER_RESOURCE | BindFlag::UNORDERED_ACCESS;
 
 	// Nothing outside the integration pass ever reads these, and that is a
 	// compute pass.
@@ -162,7 +168,10 @@ void VolumetricFroxels::AdvanceFrame() const noexcept
 }
 
 void VolumetricFroxels::Build(
-	const wi::scene::CameraComponent& camera, const CommandList cmd
+	const wi::scene::CameraComponent& camera,
+	const wi::scene::CameraComponent& cameraPrevious,
+	const wi::scene::CameraComponent& cameraReflection,
+	const CommandList cmd
 ) const
 {
 	if (!IsValid())
@@ -176,6 +185,23 @@ void VolumetricFroxels::Build(
 	auto profilerRange =
 		wi::profiler::BeginRangeGPU("Volumetric Froxels", cmd);
 
+	// The grid must stand still between frames while the sample point inside
+	// each cell moves, so the sub-pixel jitter that temporal anti-aliasing puts
+	// on the frustum is taken off both cameras for the build. Left in, it would
+	// shift the whole volume by a fraction of a cell every frame, and the
+	// accumulation would be averaging the grid's own movement along with the
+	// light.
+	wi::scene::CameraComponent cameraStill = camera;
+	cameraStill.jitter = XMFLOAT2(0, 0);
+	cameraStill.UpdateCamera();
+
+	wi::scene::CameraComponent cameraPreviousStill = cameraPrevious;
+	cameraPreviousStill.jitter = XMFLOAT2(0, 0);
+	cameraPreviousStill.UpdateCamera();
+
+	wi::renderer::BindCameraCB(
+		cameraStill, cameraPreviousStill, cameraReflection, cmd);
+
 	// Bound here rather than assumed of the caller. The injection reads the
 	// light entities and the shadow atlas, and without these it finds neither -
 	// which looks exactly like a scene with no volumetric lights in it rather
@@ -187,8 +213,11 @@ void VolumetricFroxels::Build(
 	push.frame = (uint32_t)std::max(frame, 0);
 	push.padding0 = 0;
 	push.padding1 = 0;
+	push.previousEye = cameraPrevious.Eye;
+	push.padding2 = 0;
 
 	const Texture& injectTarget = injectVolume[GetInjectOutputIndex()];
+	const Texture& injectHistory = injectVolume[GetInjectHistoryIndex()];
 
 	// Injection
 	//==========================================================================
@@ -204,6 +233,7 @@ void VolumetricFroxels::Build(
 
 		device->BindComputeShader(&injectCS, cmd);
 		device->PushConstants(&push, sizeof(push), cmd);
+		device->BindResource(&injectHistory, 0, cmd);
 		device->BindUAV(&injectTarget, 0, cmd);
 
 		device->Dispatch(
@@ -260,6 +290,10 @@ void VolumetricFroxels::Build(
 
 		device->EventEnd(cmd);
 	}
+
+	// Restored, because the rest of this command list was recorded against the
+	// jittered camera and everything after this point expects it back.
+	wi::renderer::BindCameraCB(camera, cameraPrevious, cameraReflection, cmd);
 
 	wi::profiler::EndRange(profilerRange);
 	device->EventEnd(cmd);
