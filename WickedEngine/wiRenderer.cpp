@@ -3637,6 +3637,10 @@ void UpdateVisibility(Visibility& vis)
 					if (light.IsVolumetricsEnabled())
 					{
 						vis.volumetriclight_request.store(true);
+						if (light.GetType() == LightComponent::DIRECTIONAL)
+						{
+							vis.volumetricsun_request.store(true);
+						}
 					}
 
 					if (vis.flags & Visibility::ALLOW_OCCLUSION_CULLING)
@@ -4305,6 +4309,10 @@ void UpdatePerFrameData(
 	if (vis.scene->weather.IsVolumetricCloudsCastShadow() && vis.scene->weather.IsVolumetricClouds())
 	{
 		frameCB.options |= OPTION_BIT_VOLUMETRICCLOUDS_CAST_SHADOW;
+	}
+	if (vis.IsRequestedVolumetricSun())
+	{
+		frameCB.options |= OPTION_BIT_VOLUMETRIC_SUN;
 	}
 	if (vis.scene->weather.skyMap.IsValid() && !has_flag(vis.scene->weather.skyMap.GetTexture().desc.misc_flags, ResourceMiscFlag::TEXTURECUBE))
 	{

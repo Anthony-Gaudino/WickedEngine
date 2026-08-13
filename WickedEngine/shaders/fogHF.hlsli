@@ -2,6 +2,7 @@
 #define WI_FOG_HF
 #include "globals.hlsli"
 #include "skyAtmosphere.hlsli"
+#include "volumetricFroxelHF.hlsli"
 
 // [-0.999; 0.999] Describes how the lighting is destributed across sky
 #define FOG_INSCATTERING_PHASE_G 0.6
@@ -70,6 +71,13 @@ inline half4 GetFog(float distance, float3 O, float3 V)
 	}
 
 	// Sample inscattering color:
+	//
+	// Left to the froxel volume where it carries the sun, because that version
+	// is SHADOWED and this one is not - the two together brighten the fog twice
+	// over and put the second helping inside every shaft, where there is no
+	// sunlight to scatter at all.
+	[branch]
+	if (!VolumetricFroxelCarriesTheSun())
 	{
 		const half3 L = GetSunDirection();
 		

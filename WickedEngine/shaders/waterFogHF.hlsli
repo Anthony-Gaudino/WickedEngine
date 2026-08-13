@@ -28,6 +28,7 @@
  */
 
 #include "waterVolumetricsHF.hlsli"
+#include "volumetricFroxelHF.hlsli"
 
 /**
  * Screen-space radial stripes, swept around a point.
@@ -325,11 +326,20 @@ WaterFog MakeWaterFog(
 	// excess falls away as the reduced asymmetry approaches isotropic, which
 	// is the behaviour the water should have: a turbid sea has no sun glow to
 	// show, only an even haze.
+	//
+	// Left to the froxel volume where it carries the sun through this water
+	// already, since that version is shadowed and this one is not. What this
+	// draws unshadowed is precisely a shaft, so keeping both would lay an even
+	// glow over the shafts the volume cuts - brightest exactly where the water
+	// is in shadow. The isotropic terms above stay either way: the volume
+	// carries single scattering, and those are what many bounces left behind.
 	const half cosTheta = dot(toEye, -refractedLightDir);
-	const half phaseExcess = max(
-		(half)0,
-		HgPhase(medium.ReducedPhaseG(inscatterAmount), cosTheta)
-			- UniformPhase());
+	const half phaseExcess = VolumetricFroxelCarriesTheSun()
+		? (half)0
+		: max(
+			(half)0,
+			HgPhase(medium.ReducedPhaseG(inscatterAmount), cosTheta)
+				- UniformPhase());
 
 	const half3 directional = sunLight * phaseExcess * UniformPhase();
 

@@ -109,7 +109,10 @@ namespace wi
 		bool underwaterMagnificationEnabled = true;
 		bool underwaterSnellEnabled = true;
 		bool underwaterSnellRTEnabled = true;
-		bool underwaterGodRaysProceduralEnabled = true;
+		// Off by default: the froxel volume draws real shafts under water, and
+		// these stripes are swept around the sun's screen position with nothing
+		// blocking them, so the two land on the same pixels and disagree.
+		bool underwaterGodRaysProceduralEnabled = false;
 		bool underwaterParticlesEnabled = true;
 		bool ditherEnabled = true;
 		bool occlusionCullingEnabled = true;

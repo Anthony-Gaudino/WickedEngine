@@ -1239,6 +1239,11 @@ enum FRAME_OPTIONS
 	OPTION_BIT_CAPSULE_SHADOW_ENABLED = 1 << 20,
 	OPTION_BIT_DISABLE_SHADOWMAPS = 1 << 21,
 	OPTION_BIT_FORCE_UNLIT = 1 << 22,
+	// A directional light has its volumetrics enabled, so the froxel volume
+	// carries the sun's in-scattering with its shadows on it. The fog's own
+	// analytic sun term stands in for that wherever the volume does not reach,
+	// and stands down where it does - see `GetFog`.
+	OPTION_BIT_VOLUMETRIC_SUN = 1 << 23,
 };
 
 // ---------- Common Constant buffers: -----------------

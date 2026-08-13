@@ -166,6 +166,7 @@ namespace wi::renderer
 		float closestRefPlane = std::numeric_limits<float>::max();
 		XMFLOAT4 reflectionPlane = XMFLOAT4(0, 1, 0, 0);
 		std::atomic_bool volumetriclight_request{ false };
+		std::atomic_bool volumetricsun_request{ false };
 		std::atomic_bool transparents_visible{ false };
 		std::atomic_bool mesh_blend_visible{ false };
 
@@ -185,6 +186,7 @@ namespace wi::renderer
 			closestRefPlane = std::numeric_limits<float>::max();
 			planar_reflection_visible = false;
 			volumetriclight_request.store(false);
+			volumetricsun_request.store(false);
 			transparents_visible.store(false);
 			mesh_blend_visible.store(false);
 		}
@@ -196,6 +198,13 @@ namespace wi::renderer
 		bool IsRequestedVolumetricLights() const
 		{
 			return volumetriclight_request.load();
+		}
+		// Whether a DIRECTIONAL light asked for volumetrics, which is a
+		// different question: the fog carries an analytic sun term of its own,
+		// and only a sun in the froxel volume supersedes it.
+		bool IsRequestedVolumetricSun() const
+		{
+			return volumetricsun_request.load();
 		}
 		bool IsTransparentsVisible() const
 		{

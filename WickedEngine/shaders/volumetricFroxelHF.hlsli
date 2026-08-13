@@ -145,6 +145,29 @@ inline float3 VolumetricFroxelCellJitter(in uint3 cell, in uint frame)
 }
 
 /**
+ * Whether the volume carries the sun's in-scattering for this camera.
+ *
+ * The fog holds an analytic sun term of its own, and the volume supplies the
+ * same light with the shadows on it, so exactly one of them may contribute.
+ * Asked here rather than tested at each site, because the answer is a policy
+ * about which pass owns the sun and two copies of it would drift apart.
+ *
+ * **Both halves are needed.** The camera settles whether a volume was built at
+ * all - a reflection, an environment probe or a shadow cascade has none, and
+ * keeps its analytic term. The frame flag settles whether the SUN is in that
+ * volume, which is a different question: the volume is built for any light with
+ * volumetrics, so a scene lit by a single lamp would otherwise lose its fog
+ * brightening entirely.
+ *
+ * @return true when the fog should leave the sun to the volume.
+ */
+inline bool VolumetricFroxelCarriesTheSun()
+{
+	return GetCamera().texture_volumetricfroxels_index >= 0
+		&& (GetFrame().options & OPTION_BIT_VOLUMETRIC_SUN) != 0;
+}
+
+/**
  * Adds the light scattered between the eye and a fragment.
  *
  * This is what the volume exists for. The inscatter reaching a fragment depends
