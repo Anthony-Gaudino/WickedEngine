@@ -86,22 +86,32 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 GTid : SV_GroupThreadID)
 	const float depth =
 		VolumetricFroxelSliceToDepth((float)DTid.z + jitter.z, froxels.range);
 	const float3 P = VolumetricFroxelPosition(uv, depth);
-	const float3 toEye = normalize(GetCamera().position - P);
 
-	const float sigmaT = VolumetricFroxelAirExtinction(P, depth);
+	// The cell's own middle, which is where anything smooth is evaluated and
+	// where its predecessor is looked for in the history.
+	const float2 centreUV = (DTid.xy + 0.5) / float2(
+		VOLUMETRIC_FROXEL_WIDTH, VOLUMETRIC_FROXEL_HEIGHT);
+	const float centreDepth =
+		VolumetricFroxelSliceToDepth((float)DTid.z + 0.5, froxels.range);
+	const float3 centreP = VolumetricFroxelPosition(centreUV, centreDepth);
 
-	// Non-absorbing air: everything the medium takes out of a beam it scatters
-	// somewhere, which is what the height fog already assumes by having no
-	// absorption term of its own to separate out.
-	const float sigmaS = sigmaT;
+	// From the middle, so the phase function is asked about the cell rather
+	// than about wherever inside it this frame's sample landed. Under water it
+	// peaks at roughly two hundred times isotropic and turns over within a few
+	// degrees, so a jittered direction swings the answer far more than the
+	// occlusion the jitter exists to decorrelate.
+	const float3 toEye = normalize(GetCamera().position - centreP);
+
+	const VolumetricFroxelMedium medium =
+		VolumetricFroxelMediumAt(centreUV, centreDepth);
 
 	float3 scattered = 0;
 
 	[branch]
-	if (sigmaS > 0)
+	if (medium.Scatters())
 	{
 		scattered = VolumetricFroxelScatteredLight(
-			P, toEye, uv, (min16uint2)DTid.xy) * sigmaS;
+			medium, P, centreP, toEye, uv, (min16uint2)DTid.xy);
 	}
 
 	blockScattered[VolumetricFroxelBlockIndex(GTid)] = scattered;
@@ -177,13 +187,6 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 GTid : SV_GroupThreadID)
 		// sub-cell offset every frame, blending neighbouring cells together by
 		// weights that change as fast as the jitter does: the average blurs
 		// sideways a little more each frame, and the whole volume crawls.
-		const float2 centreUV = (DTid.xy + 0.5) / float2(
-			VOLUMETRIC_FROXEL_WIDTH, VOLUMETRIC_FROXEL_HEIGHT);
-		const float centreDepth = VolumetricFroxelSliceToDepth(
-			(float)DTid.z + 0.5, froxels.range);
-		const float3 centreP =
-			VolumetricFroxelPosition(centreUV, centreDepth);
-
 		const float4 previousClip = mul(
 			GetCamera().previous_view_projection, float4(centreP, 1));
 
@@ -214,6 +217,10 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 GTid : SV_GroupThreadID)
 					float3(previousUV, previousW),
 					0);
 
+				// One length everywhere, water included. The average is what
+				// turns the jitter into coverage, and the jitter is an ordered
+				// pattern - shorten it and what is left is not noise but that
+				// pattern, printed on screen at its own fixed spacing.
 				result = lerp(
 					clamp(previous, historyMinimum, historyMaximum),
 					scattered,

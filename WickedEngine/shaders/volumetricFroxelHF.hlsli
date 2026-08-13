@@ -60,12 +60,31 @@ inline float VolumetricFroxelDepthToW(in float depth, in float range)
 }
 
 /**
- * World position of a point inside the volume.
+ * Direction of the view ray a column of the volume is built along.
  *
- * Built by unprojecting the cell's screen position onto the far plane and
- * walking the resulting ray, so it inherits the camera's own projection rather
- * than reconstructing one - which is what keeps the volume aligned with the
+ * Interpolated between the camera's own frustum corners, which is how the rest
+ * of the engine reconstructs a view ray, so the volume lines up with the
  * fragments that will sample it.
+ *
+ * **Not unprojected through `inverse_view_projection`.** Depth is reversed, so
+ * the far plane sits at clip \f$z = 0\f$, and recovering a point there divides
+ * by a \f$w\f$ that has gone to nearly nothing - the direction comes back
+ * quantised. The corners are unprojected once on the CPU and interpolated,
+ * which carries no such division.
+ *
+ * @param[in] uv - Screen space position of the cell (0-1).
+ *
+ * @return Normalized direction from the eye through that point.
+ */
+inline float3 VolumetricFroxelRayDirection(in float2 uv)
+{
+	return normalize(
+		GetCamera().frustum_corners.screen_to_farplane(uv)
+			- GetCamera().position);
+}
+
+/**
+ * World position of a point inside the volume.
  *
  * @param[in] uv - Screen space position of the cell centre (0-1).
  * @param[in] depth - Radial distance from the eye (in metres).
@@ -74,15 +93,7 @@ inline float VolumetricFroxelDepthToW(in float depth, in float range)
  */
 inline float3 VolumetricFroxelPosition(in float2 uv, in float depth)
 {
-	float4 unprojected = mul(
-		GetCamera().inverse_view_projection,
-		float4(uv_to_clipspace(uv), 0, 1));
-	unprojected.xyz /= unprojected.w;
-
-	const float3 rayOrigin = GetCamera().position;
-	const float3 rayDirection = normalize(unprojected.xyz - rayOrigin);
-
-	return rayOrigin + rayDirection * depth;
+	return GetCamera().position + VolumetricFroxelRayDirection(uv) * depth;
 }
 
 /**
@@ -131,57 +142,6 @@ inline float3 VolumetricFroxelCellJitter(in uint3 cell, in uint frame)
 		(float)frame * float3(0.6180340, 0.7548777, 0.8191725));
 
 	return frac(spatial + rotation);
-}
-
-/**
- * Extinction of the air at a point, in 1/m.
- *
- * The height fog's own density, read as the **local** quantity it is built from
- * rather than as the integral along a ray that `GetFogAmount` returns. A cell
- * needs the density at a place; the integral over the path is what the
- * integration pass is for, and asking `GetFogAmount` here would count the same
- * air once per slice.
- *
- * Shared by both build passes deliberately. They must agree about where the air
- * is thick, or the light one pass injects is attenuated by a medium the other
- * does not think is there.
- *
- * References:
- * https://www.iquilezles.org/www/articles/fog/fog.htm
- *
- * @param[in] position - World position to evaluate at.
- * @param[in] distanceToEye - Radial distance from the eye (in metres), for the
- *                            authored near fade.
- *
- * @return Extinction coefficient there (1/m).
- */
-inline float VolumetricFroxelAirExtinction(
-	in float3 position, in float distanceToEye)
-{
-	const ShaderFog fog = GetWeather().fog;
-
-	// Artistic, not physical: fog is held off until `start` and ramped in over
-	// the same distance again. Evaluated at the point's own distance, which is
-	// a question a cell can answer exactly - unlike a march, which has to pick
-	// one representative point for a whole segment.
-	const float startFalloff = saturate((distanceToEye - fog.start) / fog.start);
-
-	float density = fog.density * startFalloff;
-
-	[branch]
-	if (GetFrame().options & OPTION_BIT_HEIGHT_FOG)
-	{
-		const float falloffScale =
-			rcp(max(0.01, fog.height_end - fog.height_start));
-
-		// Solve e^(-h * x) = 0.001 for x, matching `GetFogAmount` so the two
-		// descriptions of the same fog cannot disagree about where it thins.
-		const float falloff = 6.907755 * falloffScale;
-
-		density *= exp(-max(position.y - fog.height_start, 0) * falloff);
-	}
-
-	return density;
 }
 
 /**

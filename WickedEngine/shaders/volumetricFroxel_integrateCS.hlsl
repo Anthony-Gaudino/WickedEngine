@@ -8,11 +8,12 @@
  * share sideways.
  *
  * **Near to far, and it has to stay that way.** The medium's own extinction is
- * carried forward as a running product once there is one, and that is the only
- * form that is right for a column whose medium changes along it - a ray leaving
- * water into air, for instance. Marching the other way forces the transmittance
- * to be re-derived from the eye at every step, which can only be done in closed
- * form by assuming one medium the whole way.
+ * carried forward as a running product, which is the only form that is right
+ * for a column the medium varies along - height fog thins with altitude, so a
+ * ray climbing away from the ground crosses less of it the further it goes.
+ * Marching the other way forces the transmittance to be re-derived from the eye
+ * at every step, which can only be done in closed form by assuming the medium
+ * is uniform the whole way.
  *
  * The world beyond the volume is not left unlit: a second, much shorter march
  * carries the column from the last slice out to the far plane, and is published
@@ -51,11 +52,15 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		VOLUMETRIC_FROXEL_WIDTH, VOLUMETRIC_FROXEL_HEIGHT);
 
 	float3 accumulated = 0;
-	float transmittance = 1;
+
+	// Per channel, because water is not grey: it takes red out of a beam
+	// roughly an order of magnitude faster than blue, which is what leaves a
+	// submerged lamp warm within arm's reach and blue a few metres out.
+	float3 transmittance = 1;
 
 	// The state at the last texel's own depth, which is where the tail has to
 	// start if the two are to meet without a step.
-	float lastTexelTransmittance = 1;
+	float3 lastTexelTransmittance = 1;
 	float lastTexelDepth = 0;
 
 	for (uint slice = 0; slice < VOLUMETRIC_FROXEL_SLICES; ++slice)
@@ -80,10 +85,16 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		const float frontThickness = centreDepth - nearDepth;
 		const float backThickness = farDepth - centreDepth;
 
-		// Evaluated at the middle, which is both where the texel sits and where
-		// the injection's jitter averages out to.
-		const float3 P = VolumetricFroxelPosition(uv, centreDepth);
-		const float sigmaT = VolumetricFroxelAirExtinction(P, centreDepth);
+		// Taken at the middle, which is both where the texel sits and where the
+		// injection's jitter averages out to.
+		//
+		// **Recomputed rather than stored beside the injected light.** The
+		// medium is a smooth analytic field with no noise in it to filter, so
+		// it gains nothing from the temporal average the injection volume
+		// carries - and it would lose by it, smearing the waterline across the
+		// frames a camera takes to cross the surface.
+		const float3 sigmaT =
+			VolumetricFroxelMediumAt(uv, centreDepth).sigmaT;
 
 		const float3 injected = input[uint3(DTid.xy, slice)];
 
@@ -94,11 +105,13 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		// however much the beam decayed while crossing it.
 		//
 		// Reduces to the length as the medium thins, which is why the
-		// vanishing-extinction case needs no branch of its own.
-		const float frontTransmittance = exp(-frontThickness * sigmaT);
-		const float frontWeight = sigmaT > 0.00001
-			? (1 - frontTransmittance) / sigmaT
-			: frontThickness;
+		// vanishing-extinction case needs no branch of its own: the floor is
+		// small enough that the ratio is the length to within a rounding error
+		// over any slice, and a medium that thin scatters nothing to weigh.
+		const float3 safeSigmaT = max(sigmaT, 0.00001);
+
+		const float3 frontTransmittance = exp(-frontThickness * safeSigmaT);
+		const float3 frontWeight = (1 - frontTransmittance) / safeSigmaT;
 
 		accumulated += transmittance * injected * frontWeight;
 		transmittance *= frontTransmittance;
@@ -115,10 +128,8 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			lastTexelDepth = centreDepth;
 		}
 
-		const float backTransmittance = exp(-backThickness * sigmaT);
-		const float backWeight = sigmaT > 0.00001
-			? (1 - backTransmittance) / sigmaT
-			: backThickness;
+		const float3 backTransmittance = exp(-backThickness * safeSigmaT);
+		const float3 backWeight = (1 - backTransmittance) / safeSigmaT;
 
 		accumulated += transmittance * injected * backWeight;
 		transmittance *= backTransmittance;
@@ -157,32 +168,37 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		const float tailStep = tailSpan / (float)VOLUMETRIC_FROXEL_TAIL_STEPS;
 
 		float3 accumulatedTail = 0;
-		float tailTransmittance = 1;
+		float3 tailTransmittance = 1;
 
 		for (uint step = 0; step < VOLUMETRIC_FROXEL_TAIL_STEPS; ++step)
 		{
 			const float stepDepth = tailStart + ((float)step + 0.5) * tailStep;
 
 			const float3 P = VolumetricFroxelPosition(uv, stepDepth);
-			const float sigmaT = VolumetricFroxelAirExtinction(P, stepDepth);
-			const float sigmaS = sigmaT;
+			const VolumetricFroxelMedium medium =
+				VolumetricFroxelMediumAt(uv, stepDepth);
 
 			float3 scattered = 0;
 
 			[branch]
-			if (sigmaS > 0)
+			if (medium.Scatters())
 			{
+				// One position for both, the step's own middle: the tail is
+				// marched rather than jittered, so there is no separate point
+				// to read the occlusion at.
 				scattered = VolumetricFroxelScatteredLight(
+					medium,
+					P,
 					P,
 					normalize(GetCamera().position - P),
 					uv,
-					(min16uint2)DTid.xy) * sigmaS;
+					(min16uint2)DTid.xy);
 			}
 
-			const float stepTransmittance = exp(-tailStep * sigmaT);
-			const float weight = sigmaT > 0.00001
-				? (1 - stepTransmittance) / sigmaT
-				: tailStep;
+			const float3 safeSigmaT = max(medium.sigmaT, 0.00001);
+
+			const float3 stepTransmittance = exp(-tailStep * safeSigmaT);
+			const float3 weight = (1 - stepTransmittance) / safeSigmaT;
 
 			accumulatedTail += tailTransmittance * scattered * weight;
 			tailTransmittance *= stepTransmittance;
@@ -196,7 +212,18 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		// did to the beam. It is the shape the fade follows, so that light
 		// arriving from the far field comes in the way a medium delivers it -
 		// most of it early, tailing off - rather than in a straight line.
-		tailExtinction = -log(max(tailTransmittance, 0.0001)) / tailSpan;
+		//
+		// Scalar where the medium is not, taken on the channel that carries
+		// furthest: what is still being delivered at the far end of the tail is
+		// whatever has not been extinguished yet, so that channel is the one
+		// with a shape left to describe. Nothing is lost in air, where all
+		// three are the same number, and nothing is lost under water either -
+		// several hundred metres of it stand in front of the tail, and no
+		// channel arrives through that.
+		const float3 perChannel =
+			-log(max(tailTransmittance, 0.0001)) / tailSpan;
+
+		tailExtinction = min3(perChannel.r, perChannel.g, perChannel.b);
 	}
 
 	tail[DTid.xy] = float4(

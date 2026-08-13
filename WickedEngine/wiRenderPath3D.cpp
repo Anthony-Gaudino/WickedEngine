@@ -1583,6 +1583,13 @@ namespace wi
 		// Main camera opaque color pass:
 		cmd = device->BeginCommandList();
 		device->WaitCommandList(cmd, cmd_maincamera_compute_effects);
+		if (cmd_ocean.IsValid())
+		{
+			// The wave displacement settles which side of the water each column
+			// of the froxel volume is on, and the opaque shaders read it again
+			// through ApplyWaterFog.
+			device->WaitCommandList(cmd, cmd_ocean);
+		}
 		wi::jobsystem::Execute(ctx, [this, cmd](wi::jobsystem::JobArgs args) {
 
 			GraphicsDevice* device = wi::graphics::GetDevice();

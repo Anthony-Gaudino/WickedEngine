@@ -10,7 +10,7 @@
  *
  * Include after `globals.hlsli`, `lightingHF.hlsli` and `fogHF.hlsli`.
  */
-#include "volumetricFroxelHF.hlsli"
+#include "volumetricFroxelMediumHF.hlsli"
 
 /**
  * Reads one bucket of the transparent entity tile list.
@@ -41,11 +41,11 @@ inline uint VolumetricFroxelEntityTile(in ShaderCamera camera, in uint tileIndex
 /**
  * Light scattered towards the eye at a point, summed over every light.
  *
- * **Per metre of path, and not yet multiplied by the medium's scattering
- * coefficient.** What comes back is the radiance a scattering event at this
- * point would send towards the eye; how much scattering happens there is the
- * medium's business and is applied by the caller. That split is what lets one
- * light evaluation serve air and water alike.
+ * **Per metre of path.** How much of what reaches the point is turned towards
+ * the eye, and how much of it survived getting there, are both the medium's
+ * business - so the medium is handed in and asked, rather than each light type
+ * carrying its own idea of what it is shining through. That is what lets one
+ * loop serve air and water alike.
  *
  * The tile list is two-dimensional, so every light in a screen column is listed
  * for every cell of that column however far apart they are. Each light is
@@ -57,7 +57,23 @@ inline uint VolumetricFroxelEntityTile(in ShaderCamera camera, in uint tileIndex
  * https://advances.realtimerendering.com/s2014/index.html
  * (Wronski, *Volumetric Fog*, SIGGRAPH 2014)
  *
- * @param[in] position - World position of the point.
+ * **Two positions, because the cell's single sample has two jobs.** Occlusion
+ *is a step: whether a shadow map says lit or unlit changes over a distance far
+ * finer than a cell, so it has to be tested somewhere different in each cell
+ * and each frame, or the sampling grid prints itself along the edge of every
+ * shaft. What the medium does to a light is the opposite - smooth, and steep.
+ * The water attenuates a beam as \f$e^{-\sigma s}\f$, which over one cell can
+ * change several fold, so moving the point it is evaluated at swings the cell's
+ * value by that much. The jitter is an **ordered** pattern, so the swing is not
+ * noise that averages away: it is a fixed grid, and it prints as one.
+ *
+ * So the shadows are read at the jittered point and the medium at the cell's
+ * middle, where it stands for the cell as a whole.
+ *
+ * @param[in] medium - What fills the cell, and what it does to a light.
+ * @param[in] position - Jittered sample point, for the occlusion tests.
+ * @param[in] mediumPosition - Centre of the cell, for the medium's own
+ *                             attenuation.
  * @param[in] toEye - Normalized direction from the point towards the eye.
  * @param[in] screenUV - Screen position of the cell (0-1), for the tile lookup.
  * @param[in] pixel - Cell coordinate the shadow lookups dither against.
@@ -65,7 +81,9 @@ inline uint VolumetricFroxelEntityTile(in ShaderCamera camera, in uint tileIndex
  * @return Radiance scattered towards the eye, per metre of path.
  */
 inline float3 VolumetricFroxelScatteredLight(
+	in VolumetricFroxelMedium medium,
 	in float3 position,
+	in float3 mediumPosition,
 	in float3 toEye,
 	in float2 screenUV,
 	in min16uint2 pixel
@@ -94,6 +112,16 @@ inline float3 VolumetricFroxelScatteredLight(
 
 			const half3 L = light.GetDirection();
 
+			// Bent at the surface where the cell is under it, so a submerged
+			// shaft leans the way the light that made it actually travelled.
+			const float3 Lmedium = medium.Bend((float3)L);
+
+			// Read where the light crosses into the water rather than at the
+			// cell, which is also where the ocean writes its caustics into the
+			// transparent shadow layer.
+			const float3 shadowSample =
+				medium.ShadowSamplePosition(position, Lmedium, FLT_MAX);
+
 			half3 shadow = 1;
 			for (uint cascade = 0;
 				cascade < light.GetShadowCascadeCount();
@@ -102,7 +130,7 @@ inline float3 VolumetricFroxelScatteredLight(
 				// Ortho matrix, so no divide by w.
 				const float3 shadowPosition = mul(
 					load_entitymatrix(light.GetMatrixIndex() + cascade),
-					float4(position, 1)).xyz;
+					float4(shadowSample, 1)).xyz;
 				const float3 shadowUV = clipspace_to_uv(shadowPosition);
 
 				[branch]
@@ -116,8 +144,9 @@ inline float3 VolumetricFroxelScatteredLight(
 
 			if (GetFrame().options & OPTION_BIT_VOLUMETRICCLOUDS_CAST_SHADOW)
 			{
-				shadow *= shadow_2D_volumetricclouds(position);
+				shadow *= shadow_2D_volumetricclouds(shadowSample);
 			}
+
 
 			half3 lightColor = light.GetColor().rgb;
 			if (GetFrame().options & OPTION_BIT_REALISTIC_SKY)
@@ -142,8 +171,12 @@ inline float3 VolumetricFroxelScatteredLight(
 					texture_transmittancelut);
 			}
 
+			// `L` rather than `Lmedium` for the Fresnel term: what reflects off
+			// the surface is settled by the angle the light struck it at, above
+			// the water, before anything bent.
 			scattered += (float3)(lightColor * shadow)
-				* ComputeScattering(saturate(dot(L, -toEye)))
+				* medium.Scatter(
+					mediumPosition, (float3)L, Lmedium, toEye, FLT_MAX, L.y)
 				* (1 + GetFrame().GetVolumetricBoost(index));
 		}
 	}
@@ -249,7 +282,8 @@ inline float3 VolumetricFroxelScatteredLight(
 				}
 
 				scattered += (float3)light.GetColor().rgb * attenuation
-					* ComputeScattering(saturate(dot(L, -toEye)))
+					* medium.Scatter(
+						mediumPosition, L, L, toEye, distance, L.y)
 					* (1 + GetFrame().GetVolumetricBoost(index));
 			}
 		}
@@ -314,7 +348,8 @@ inline float3 VolumetricFroxelScatteredLight(
 				}
 
 				scattered += (float3)light.GetColor().rgb * attenuation
-					* ComputeScattering(saturate(dot(L, -toEye)))
+					* medium.Scatter(
+						mediumPosition, L, L, toEye, distance, L.y)
 					* (1 + GetFrame().GetVolumetricBoost(index));
 			}
 		}
@@ -427,7 +462,8 @@ inline float3 VolumetricFroxelScatteredLight(
 				}
 
 				scattered += (float3)light.GetColor().rgb * attenuation
-					* ComputeScattering(saturate(dot(L, -toEye)))
+					* medium.Scatter(
+						mediumPosition, L, L, toEye, distance, L.y)
 					* (1 + GetFrame().GetVolumetricBoost(index));
 			}
 		}
