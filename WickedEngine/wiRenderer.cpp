@@ -4503,6 +4503,14 @@ void UpdatePerFrameData(
 		ShaderEntity* entityArray = frameCB.entityArray;
 		float4x4* matrixArray = frameCB.matrixArray;
 		ShaderSphere* entityCullingArray = frameCB.entityCullingArray;
+		// Packed four to a register, so it is addressed as a flat float array
+		// here and unpacked by FrameCB::GetVolumetricBoost in the shaders.
+		float* volumetricBoostArray = &frameCB.volumetric_boost_packed[0].x;
+		// Cleared rather than written per entity: decals, probes and force
+		// fields share the array's indices and have no boost of their own, and
+		// the buffer outlives the frame.
+		std::memset(
+			volumetricBoostArray, 0, sizeof(frameCB.volumetric_boost_packed));
 
 		uint32_t entityCounter = 0;
 
@@ -4722,6 +4730,8 @@ void UpdatePerFrameData(
 				shaderentity.SetFlags(ENTITY_FLAG_LIGHT_VOLUMETRICS);
 			}
 
+			volumetricBoostArray[entityCounter] = light.volumetric_boost;
+
 			ShaderSphere cullsphere = {};
 			if (!light.IsStatic())
 			{
@@ -4822,6 +4832,8 @@ void UpdatePerFrameData(
 				shaderentity.SetFlags(ENTITY_FLAG_LIGHT_VOLUMETRICS);
 			}
 
+			volumetricBoostArray[entityCounter] = light.volumetric_boost;
+
 			// Construct a tight fitting sphere around the spotlight cone:
 			const float radius = light.GetRange() * 0.5f / (outerConeAngleCos * outerConeAngleCos);
 			const XMVECTOR positionWS = XMLoadFloat3(&shaderentity.position) - XMVector3Normalize(XMLoadFloat3(&light.direction)) * radius;
@@ -4916,6 +4928,8 @@ void UpdatePerFrameData(
 				shaderentity.SetFlags(ENTITY_FLAG_LIGHT_VOLUMETRICS);
 			}
 
+			volumetricBoostArray[entityCounter] = light.volumetric_boost;
+
 			ShaderSphere cullsphere = {};
 			if (!light.IsStatic())
 			{
@@ -5002,6 +5016,8 @@ void UpdatePerFrameData(
 			{
 				shaderentity.SetFlags(ENTITY_FLAG_LIGHT_VOLUMETRICS);
 			}
+
+			volumetricBoostArray[entityCounter] = light.volumetric_boost;
 
 			ShaderSphere cullsphere = {};
 			if (!light.IsStatic())

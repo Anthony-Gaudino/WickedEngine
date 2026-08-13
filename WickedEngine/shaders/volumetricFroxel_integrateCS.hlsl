@@ -64,6 +64,10 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		accumulated += transmittance * input[uint3(DTid.xy, slice)] * weight;
 		transmittance *= sliceTransmittance;
 
-		output[uint3(DTid.xy, slice)] = accumulated;
+		// Clamped on the way out as well as on the way in. This is a running
+		// sum over 128 slices, so it can reach the format's ceiling even where
+		// no single cell came close to it.
+		output[uint3(DTid.xy, slice)] =
+			min(accumulated, VOLUMETRIC_FROXEL_MAX_RADIANCE);
 	}
 }

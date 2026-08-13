@@ -1310,6 +1310,29 @@ struct alignas(16) FrameCB
 	ShaderEntity entityArray[SHADER_ENTITY_COUNT];
 	float4x4 matrixArray[SHADER_ENTITY_COUNT];
 	ShaderSphere entityCullingArray[SHADER_ENTITY_COUNT];
+
+	// Per light gain on what that light scatters into the medium, 0 being the
+	// physical answer. Beside the entities rather than inside them because
+	// ShaderEntity is packed to its last bit - even a light's colour alpha is
+	// spent carrying the reciprocal of its squared range.
+	//
+	// Four to a register rather than one, which a bare float array would give:
+	// a constant buffer puts every array element in its own float4.
+	float4 volumetric_boost_packed[SHADER_ENTITY_COUNT / 4];
+
+#ifndef __cplusplus
+	/**
+	 * Returns the volumetric gain of an entity.
+	 *
+	 * @param[in] entityIndex - Index into `entityArray`.
+	 *
+	 * @return Gain over the physical result, 0 meaning physical.
+	 */
+	inline float GetVolumetricBoost(uint entityIndex)
+	{
+		return volumetric_boost_packed[entityIndex / 4][entityIndex % 4];
+	}
+#endif // __cplusplus
 };
 #ifdef __cplusplus
 static_assert(sizeof(FrameCB) <= 64 * 1024); // constant buffer can be max 64k sized

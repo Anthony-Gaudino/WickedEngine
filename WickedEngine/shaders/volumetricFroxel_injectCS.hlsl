@@ -11,7 +11,7 @@
 #include "globals.hlsli"
 #include "lightingHF.hlsli"
 #include "fogHF.hlsli"
-#include "volumetricFroxelHF.hlsli"
+#include "volumetricFroxelLightingHF.hlsli"
 
 // One comparison tap per cell rather than a filtered kernel. The volume is
 // already a spatial average over a cell far larger than a shadow texel, so a
@@ -54,62 +54,9 @@ void main(uint3 DTid : SV_DispatchThreadID)
 	[branch]
 	if (sigmaS > 0)
 	{
-		ShaderEntityIterator iterator = directional_lights();
-		for (uint index = iterator.first_item();
-			index <= iterator.last_item() && !iterator.empty();
-			++index)
-		{
-			ShaderEntity light = load_entity(index);
-
-			if (!light.IsVolumetricsEnabled())
-			{
-				continue;
-			}
-
-			const half3 L = light.GetDirection();
-
-			half3 shadow = 1;
-			for (uint cascade = 0;
-				cascade < light.GetShadowCascadeCount();
-				++cascade)
-			{
-				// Ortho matrix, so no divide by w.
-				const float3 shadowPosition = mul(
-					load_entitymatrix(light.GetMatrixIndex() + cascade),
-					float4(P, 1)).xyz;
-				const float3 shadowUV = clipspace_to_uv(shadowPosition);
-
-				[branch]
-				if (is_saturated(shadowUV))
-				{
-					shadow *= shadow_2D(
-						light,
-						shadowPosition.z,
-						shadowUV.xy,
-						cascade,
-						(min16uint2)DTid.xy);
-					break;
-				}
-			}
-
-			if (GetFrame().options & OPTION_BIT_VOLUMETRICCLOUDS_CAST_SHADOW)
-			{
-				shadow *= shadow_2D_volumetricclouds(P);
-			}
-
-			half3 lightColor = light.GetColor().rgb;
-			if (GetFrame().options & OPTION_BIT_REALISTIC_SKY)
-			{
-				lightColor *= GetAtmosphericLightTransmittance(
-					GetWeather().atmosphere, P, L, texture_transmittancelut);
-			}
-
-			scattered += (float3)(lightColor * shadow)
-				* ComputeScattering(saturate(dot(L, -toEye)));
-		}
-
-		scattered *= sigmaS;
+		scattered = VolumetricFroxelScatteredLight(
+			P, toEye, uv, (min16uint2)DTid.xy) * sigmaS;
 	}
 
-	output[DTid] = scattered;
+	output[DTid] = min(scattered, VOLUMETRIC_FROXEL_MAX_RADIANCE);
 }

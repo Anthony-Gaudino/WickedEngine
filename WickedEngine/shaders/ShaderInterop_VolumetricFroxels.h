@@ -51,6 +51,22 @@ static const float VOLUMETRIC_FROXEL_DEFAULT_RANGE = 500.0F;
 static const uint VOLUMETRIC_FROXEL_TAIL_STEPS = 8;
 
 /**
+ * Largest radiance a cell may hold.
+ *
+ * `R11G11B10_FLOAT` carries a five bit exponent and stops just above 65024;
+ * anything larger is stored as infinity. That is not a rounding error that
+ * fades out - the integration pass carries a running sum along each column, so
+ * one infinite cell makes every cell behind it infinite too, and a tone mapper
+ * dividing by it turns the lot into black.
+ *
+ * Reachable in ordinary content rather than in abuse: a point light's falloff
+ * is bounded only by `1 / max(0.0001, distanceSquared)`, so any cell landing
+ * within a few centimetres of a bright lamp arrives here in the tens of
+ * thousands.
+ */
+static const float VOLUMETRIC_FROXEL_MAX_RADIANCE = 60000.0F;
+
+/**
  * Constants both build passes need.
  *
  * Carried as push constants rather than folded into the generic postprocess
