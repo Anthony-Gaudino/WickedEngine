@@ -197,6 +197,62 @@ static const float3 WATER_RAMAN_SCATTERING = float3(1.6e-4, 3.7e-4, 0.0);
 static const float WATER_FLUORESCENCE_BAND_RESPONSE = 0.079;
 
 /**
+ * Tiles of caustic pattern the ocean stamps across one FFT patch.
+ *
+ * The surface writes `caustics(uv * WATER_CAUSTIC_TILES_PER_PATCH)` into the
+ * transparent shadow layer, where `uv` is `P.xz * patch_size_rcp` - so this and
+ * the patch size are between them the pattern's world scale, which is what
+ * `WaterCausticTileSize` reads it back out as. Shared with
+ * `oceanSurfacePS.hlsl` so the writer and every reader cannot drift apart.
+ */
+static const float WATER_CAUSTIC_TILES_PER_PATCH = 10.0;
+
+/**
+ * Width of one caustic filament, as a share of a tile.
+ *
+ * `caustic_pattern` raises a distance field to the seventh power, which leaves
+ * a field that is near zero almost everywhere with sparse bright filaments
+ * through it. This is how wide those filaments are, and so how far the
+ * refracted rays have to spread before one is averaged into its neighbours.
+ * Fitted to the pattern rather than derived from it.
+ */
+static const float WATER_CAUSTIC_FILAMENT_TILE_FRACTION = 0.1;
+
+/**
+ * Divergence of the refracted ray field under a rough surface, in radians.
+ *
+ * Cox-Munk puts the RMS slope of a wind-roughened sea near 0.2 rad, and Snell
+ * turns a slope error into a ray error of roughly \f$(1 - 1/n)\f$ of it. **This
+ * is the spread that FORMS the caustics** - it is what a ray-traced or
+ * simulated implementation would push the sun through to find where the light
+ * lands - and so it is the wrong number to blur an already formed pattern
+ * with, which is what `WATER_CAUSTIC_SPREAD_ANGLE` below is for.
+ *
+ * References:
+ * Cox and Munk 1954, *Measurement of the roughness of the sea surface from
+ * photographs of the sun's glitter*.
+ */
+static const float WATER_CAUSTIC_FORMING_DIVERGENCE = 0.05;
+
+/**
+ * Angle an already formed caustic pattern spreads over, in radians.
+ *
+ * The pattern reaching a given depth is the one at the surface convolved with
+ * a kernel this wide per metre travelled, so it softens and then averages
+ * away - **however clear the water is.**
+ *
+ * The sun's own disc, 0.0093 rad across and narrowed by refraction to this.
+ * The wave slope is twenty times larger and does **not** belong here as well:
+ * the pattern the surface stamps out is already the image of a ray field
+ * carrying `WATER_CAUSTIC_FORMING_DIVERGENCE`, so spending it a second time
+ * empties even the clearest water of filaments within a few metres.
+ *
+ * A constant, where the ocean has a gradient map that knows the slope it
+ * actually has, so a calm sea and a gale wash out at the same rate.
+ */
+static const float WATER_CAUSTIC_SPREAD_ANGLE = 0.007;
+
+/**
  * Fraction of the light arriving from above that crosses into the water.
  *
  * Some of what reaches the surface reflects off it instead of refracting down,
@@ -284,6 +340,24 @@ float3 RefractIntoWater(float3 toLight)
 	// the ray is flipped to head downwards and flipped back on the way out.
 	// This enters the denser medium, so there is no internal reflection case.
 	return -refract(-toLight, float3(0, 1, 0), 1.0 / WATER_REFRACTIVE_INDEX);
+}
+
+/**
+ * World size of one tile of the ocean's caustic pattern.
+ *
+ * Read back out of the two numbers that generate the pattern rather than
+ * authored beside them, so nothing here can go stale when the patch is resized.
+ * It sets the scale everything about the caustics is measured against: how far
+ * the refracted rays have to spread before a filament is gone, and how wide a
+ * kernel is worth sampling.
+ *
+ * @return Side of one caustic tile (in metres).
+ */
+float WaterCausticTileSize()
+{
+	return 1.0 / max(
+		WATER_CAUSTIC_TILES_PER_PATCH * GetWeather().ocean.patch_size_rcp,
+		0.00001);
 }
 
 /**
@@ -853,6 +927,73 @@ struct WaterVolumetrics
 	}
 
 	/**
+	 * What is left of the caustics by the time the light carrying them arrives.
+	 *
+	 * The surface stamps its caustic pattern on the light as it crosses in, and
+	 * the water then takes it apart over the path down. Two mechanisms, with
+	 * very different rates, and neither covers the other's case.
+	 *
+	 * **Scattering** redirects light into a smooth background that carries no
+	 * structure, while absorption dims everything equally and leaves the
+	 * contrast alone - so the pattern decays over the scattering path, not the
+	 * extinction one:
+	 * \[
+	 * C_{s} = e^{-\sigma_s' d}, \qquad \sigma_s' = \sigma_s (1 - g)
+	 * \]
+	 * Reduced by the asymmetry, because marine particulates scatter
+	 * overwhelmingly forwards and a photon deflected by a fraction of a degree
+	 * still lands where it was going. This is what empties silty water of
+	 * filaments within a couple of metres, and it does almost nothing in the
+	 * clearest three Jerlov types, which carry no mineral load at all.
+	 *
+	 * **Divergence** of the refracted rays widens the pattern by
+	 * `WATER_CAUSTIC_SPREAD_ANGLE` per metre until a filament is averaged into
+	 * its neighbours. Independent of how clear the water is, which is exactly
+	 * the case scattering leaves untouched.
+	 *
+	 * Scalar rather than per channel: the contrast is a property of the pattern
+	 * rather than of the light in it, and the three scattering coefficients are
+	 * within about a tenth of each other wherever they are large enough to
+	 * matter.
+	 *
+	 * Example usage:
+	 * @code
+	 * const float2 decay = water.CausticDecay(P, Lwater, FLT_MAX);
+	 * shadow = shadow_2D(light, z, uv, cascade, pixel, (half)decay.x);
+	 * @endcode
+	 *
+	 * @param[in] samplePos - The lit point, in world space.
+	 * @param[in] toLight - Normalized direction from the lit point to the
+	 *                      light, refracted if the light is above the surface.
+	 * @param[in] distanceToLight - Distance to the light, or `FLT_MAX` for a
+	 *                              directional light.
+	 *
+	 * @return `x` is the surviving contrast, in [0, 1]. `y` is the radius the
+	 *         pattern has spread over (in metres), capped at one tile - past
+	 *         which the contrast is already zero and a wider kernel buys only
+	 *         sampling noise.
+	 */
+	float2 CausticDecay(
+		float3 samplePos,
+		float3 toLight,
+		float distanceToLight
+	)
+	{
+		const float path =
+			SubmergedLightPath(samplePos, toLight, distanceToLight);
+
+		const float tile = WaterCausticTileSize();
+		const float spread = min(WATER_CAUSTIC_SPREAD_ANGLE * path, tile);
+		const float filament = tile * WATER_CAUSTIC_FILAMENT_TILE_FRACTION;
+
+		const float contrast =
+			exp(-sigmaS.g * (1 - phaseG0) * path)
+			* exp(-sqr(spread / filament));
+
+		return float2(contrast, spread);
+	}
+
+	/**
 	 * Light turned towards the eye at a sample, per metre of ray.
 	 *
 	 * @param[in] samplePos - Sample position, in world space.
@@ -1105,6 +1246,50 @@ half3 WaterLightTransmittance(
 
 	return (half3)water.LightTransmittance(
 		samplePos, toLight, distanceToLight, cosThetaAbove);
+}
+
+/**
+ * How much of the ocean's caustic pattern survives the water down to a point.
+ *
+ * The surface-shading counterpart to `WaterVolumetrics::CausticDecay`, which
+ * carries the reasoning. Mirrors `WaterLightTransmittance` exactly: same slant
+ * path, same handling of a light on either side of the surface, and the same
+ * inactive case - so the fade and the tint a light picks up crossing the water
+ * always agree about how much of it there was.
+ *
+ * Example usage:
+ * @code
+ * const float2 decay = WaterCausticDecay(
+ *     surface.P, surface.waterSurfaceHeight, RefractIntoWater(L), FLT_MAX);
+ * @endcode
+ *
+ * @param[in] samplePos - The lit point, in world space.
+ * @param[in] waterHeight - World height of the water surface over that point.
+ * @param[in] toLight - Normalized direction from the lit point to the light,
+ *                      refracted if the light is above the surface.
+ * @param[in] distanceToLight - Distance to the light, or `FLT_MAX` for a
+ *                              directional light.
+ *
+ * @return `x` is the surviving contrast, `y` the spread radius in metres.
+ *         `(1, 0)` at or above the surface, so callers need no test of their
+ *         own.
+ */
+float2 WaterCausticDecay(
+	float3 samplePos,
+	float waterHeight,
+	float3 toLight,
+	float distanceToLight
+)
+{
+	const WaterVolumetrics water = GetWaterVolumetrics(samplePos, waterHeight);
+
+	[branch]
+	if (!water.IsActive())
+	{
+		return float2(1, 0);
+	}
+
+	return water.CausticDecay(samplePos, toLight, distanceToLight);
 }
 
 /**

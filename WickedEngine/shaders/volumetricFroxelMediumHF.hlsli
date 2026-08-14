@@ -164,6 +164,34 @@ struct VolumetricFroxelMedium
 	}
 
 	/**
+	 * What is left of the caustics by the time the light reaches this cell.
+	 *
+	 * The transparent shadow layer read at `ShadowSamplePosition` carries the
+	 * ocean's caustics, so a submerged cell picks them up without asking - and
+	 * has to lose them over depth exactly as the sea bed below it does, or a
+	 * shaft stays filamented through water the bed it lands on reads as
+	 * featureless. See `WaterVolumetrics::CausticDecay`.
+	 *
+	 * @param[in] samplePos - World position of the cell.
+	 * @param[in] toLight - Normalized direction to the light, already bent.
+	 * @param[in] distanceToLight - Distance to the light, or `FLT_MAX` for a
+	 *                              directional light.
+	 *
+	 * @return Surviving contrast, in [0, 1]. 1 for a cell out of the water.
+	 */
+	half CausticContrast(
+		float3 samplePos,
+		float3 toLight,
+		float distanceToLight
+	)
+	{
+		return water.IsActive()
+			? (half)water.CausticDecay(
+				samplePos, toLight, distanceToLight).x
+			: (half)1;
+	}
+
+	/**
 	 * Light turned towards the eye here, per metre of view ray.
 	 *
 	 * **Each medium is given the direction the light reaches it from**, which

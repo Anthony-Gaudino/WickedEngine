@@ -137,7 +137,8 @@ inline float3 VolumetricFroxelScatteredLight(
 				if (is_saturated(shadowUV))
 				{
 					shadow *= shadow_2D(
-						light, shadowPosition.z, shadowUV.xy, cascade, pixel);
+						light, shadowPosition.z, shadowUV.xy, cascade, pixel,
+						medium.CausticContrast(position, Lmedium, FLT_MAX));
 					break;
 				}
 			}

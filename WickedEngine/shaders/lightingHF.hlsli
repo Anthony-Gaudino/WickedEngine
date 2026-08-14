@@ -92,6 +92,30 @@ inline half3 attenuation_water_ambient(in Surface surface)
 #endif // WATER
 }
 
+// What is left of the ocean's caustics by the time this light arrives - see
+// WaterVolumetrics::CausticDecay. The pattern is written into the transparent
+// shadow layer at the surface, so it reaches a lit point through exactly the
+// water attenuation_water() measures, and washes out over the same path.
+//
+// Exempt for a WATER surface for the same reason as attenuation_water(): the
+// interface itself stands under no column of water, and it does not carry a
+// waterSurfaceHeight to measure one against.
+//
+// x is the surviving contrast, y the spread radius in metres.
+inline float2 caustic_decay_water(
+	in Surface surface,
+	in half3 L,
+	in float dist_to_light
+)
+{
+#ifdef WATER
+	return float2(1, 0);
+#else
+	return WaterCausticDecay(
+		surface.P, surface.waterSurfaceHeight, L, dist_to_light);
+#endif // WATER
+}
+
 inline void ApplyLighting(in Surface surface, in Lighting lighting, inout half4 color)
 {
 	if (GetFrame().options & OPTION_BIT_FORCE_UNLIT)
@@ -202,6 +226,11 @@ inline void light_directional(in ShaderEntity light, in Surface surface, inout L
 		if ((GetFrame().options & OPTION_BIT_RAYTRACED_SHADOWS) == 0 || GetCamera().texture_rtshadow_index < 0 || (GetCamera().options & SHADERCAMERA_OPTION_USE_SHADOW_MASK) == 0)
 #endif // SHADOW_MASK_ENABLED
 		{
+			// The refracted direction, because that is the one the light
+			// travelled down - the same leg attenuation_water() dims it over.
+			const half caustic_contrast = (half)caustic_decay_water(
+				surface, (half3)RefractIntoWater(L), FLT_MAX).x;
+
 			const min16uint cascade_count = light.GetShadowCascadeCount();
 			min16uint best_cascade = cascade_count;
 			float3 shadow_uv = 0;
@@ -224,7 +253,7 @@ inline void light_directional(in ShaderEntity light, in Surface surface, inout L
 
 			if (best_cascade < cascade_count)
 			{
-				half3 shadow = shadow_2D(light, shadow_pos.z, shadow_uv.xy, best_cascade, surface.pixel);
+				half3 shadow = shadow_2D(light, shadow_pos.z, shadow_uv.xy, best_cascade, surface.pixel, caustic_contrast);
 
 				if (best_cascade < cascade_count - 1)
 				{
@@ -236,7 +265,7 @@ inline void light_directional(in ShaderEntity light, in Surface surface, inout L
 						const min16uint fallback_cascade = best_cascade + 1;
 						shadow_pos = mul((float3x4)load_entitymatrix(light.GetMatrixIndex() + fallback_cascade), float4(surface.P, 1)).xyz; // float3x4 because perspective is not used
 						shadow_uv = clipspace_to_uv(shadow_pos);
-						const half3 shadow_fallback = shadow_2D(light, shadow_pos.z, shadow_uv.xy, fallback_cascade, surface.pixel);
+						const half3 shadow_fallback = shadow_2D(light, shadow_pos.z, shadow_uv.xy, fallback_cascade, surface.pixel, caustic_contrast);
 						shadow = lerp(shadow, shadow_fallback, cascade_blend);
 					}
 				}
@@ -340,7 +369,8 @@ inline void light_point(in ShaderEntity light, in Surface surface, inout Lightin
 		if ((GetFrame().options & OPTION_BIT_RAYTRACED_SHADOWS) == 0 || GetCamera().texture_rtshadow_index < 0 || (GetCamera().options & SHADERCAMERA_OPTION_USE_SHADOW_MASK) == 0)
 #endif // SHADOW_MASK_ENABLED
 		{
-			light_color *= shadow_cube(light, LunnormalizedShadow, surface.pixel);
+			light_color *= shadow_cube(light, LunnormalizedShadow, surface.pixel,
+				(half)caustic_decay_water(surface, L, dist2 * dist_rcp).x);
 		}
 		
 		if (!any(light_color))
@@ -468,7 +498,8 @@ inline void light_spot(in ShaderEntity light, in Surface surface, inout Lighting
 			[branch]
 			if (is_saturated(shadow_uv))
 			{
-				light_color *= shadow_2D(light, shadow_pos.z, shadow_uv.xy, 0, surface.pixel);
+				light_color *= shadow_2D(light, shadow_pos.z, shadow_uv.xy, 0, surface.pixel,
+					(half)caustic_decay_water(surface, L, dist2 * dist_rcp).x);
 			}
 		}
 		
@@ -615,7 +646,8 @@ inline void light_rect(in ShaderEntity light, in Surface surface, inout Lighting
 			[branch]
 			if (is_saturated(shadow_uv))
 			{
-				light_color *= shadow_2D(light, shadow_pos.z, shadow_uv.xy, 0, surface.pixel);
+				light_color *= shadow_2D(light, shadow_pos.z, shadow_uv.xy, 0, surface.pixel,
+					(half)caustic_decay_water(surface, L, dist2 * dist_rcp).x);
 			}
 		}
 		
