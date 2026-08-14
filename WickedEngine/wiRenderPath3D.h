@@ -113,6 +113,10 @@ namespace wi
 		// these stripes are swept around the sun's screen position with nothing
 		// blocking them, so the two land on the same pixels and disagree.
 		bool underwaterGodRaysProceduralEnabled = false;
+		// The sun's glow in the water, cut into shafts by whatever stands above
+		// the surface, for an eye that is not in it. The froxel volume covers
+		// the case where the eye IS in it and this leaves that alone.
+		bool waterSunShaftsEnabled = true;
 		bool underwaterParticlesEnabled = true;
 		bool ditherEnabled = true;
 		bool occlusionCullingEnabled = true;
@@ -341,6 +345,7 @@ namespace wi
 		[[nodiscard]] constexpr bool getUnderwaterSnellEnabled() const { return underwaterSnellEnabled; }
 		[[nodiscard]] constexpr bool getUnderwaterSnellRTEnabled() const { return underwaterSnellRTEnabled; }
 		[[nodiscard]] constexpr bool getUnderwaterGodRaysProceduralEnabled() const { return underwaterGodRaysProceduralEnabled; }
+		[[nodiscard]] constexpr bool getWaterSunShaftsEnabled() const { return waterSunShaftsEnabled; }
 		[[nodiscard]] constexpr bool getUnderwaterParticlesEnabled() const { return underwaterParticlesEnabled; }
 		constexpr bool getDitherEnabled() const { return ditherEnabled; }
 		constexpr bool getOcclusionCullingEnabled() const { return occlusionCullingEnabled; }
@@ -419,6 +424,7 @@ namespace wi
 		constexpr void setUnderwaterSnellEnabled(bool value) { underwaterSnellEnabled = value; }
 		constexpr void setUnderwaterSnellRTEnabled(bool value) { underwaterSnellRTEnabled = value; }
 		constexpr void setUnderwaterGodRaysProceduralEnabled(bool value) { underwaterGodRaysProceduralEnabled = value; }
+		constexpr void setWaterSunShaftsEnabled(bool value) { waterSunShaftsEnabled = value; }
 		constexpr void setUnderwaterParticlesEnabled(bool value) { underwaterParticlesEnabled = value; }
 		constexpr void setDitherEnabled(bool value) { ditherEnabled = value; }
 		constexpr void setOcclusionCullingEnabled(bool value) { occlusionCullingEnabled = value; }

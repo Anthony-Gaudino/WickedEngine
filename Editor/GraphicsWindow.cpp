@@ -1582,6 +1582,23 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 		});
 	AddWidget(&underwaterGodRaysProceduralCheckBox);
 
+	waterSunShaftsCheckBox.Create("Sun Shafts (Water): ");
+	waterSunShaftsCheckBox.SetTooltip("Cut the sun's glow in the water into shafts, for a camera ABOVE the surface looking at something below it. Marched by the fragment over the refracted leg of water it already measured for its own fog, so it carries the ocean's caustics and costs nothing where there is no water in front of a fragment. The froxel volume covers the camera being under the surface and is unaffected either way.");
+	waterSunShaftsCheckBox.SetSize(XMFLOAT2(hei, hei));
+	waterSunShaftsCheckBox.SetPos(XMFLOAT2(x, y += step));
+
+	if (editor->main->config.GetSection("graphics").Has("water_sun_shafts"))
+	{
+		editor->renderPath->setWaterSunShaftsEnabled(editor->main->config.GetSection("graphics").GetBool("water_sun_shafts"));
+	}
+
+	waterSunShaftsCheckBox.OnClick([=](wi::gui::EventArgs args) {
+		editor->renderPath->setWaterSunShaftsEnabled(args.bValue);
+		editor->main->config.GetSection("graphics").Set("water_sun_shafts", args.bValue);
+		editor->main->config.Commit();
+		});
+	AddWidget(&waterSunShaftsCheckBox);
+
 	volumetricFroxelRangeSlider.Create(
 		20, 2000, VOLUMETRIC_FROXEL_DEFAULT_RANGE, 198,
 		"VolumetricFroxels.Range: ");
@@ -2106,6 +2123,7 @@ void GraphicsWindow::UpdateData()
 	underwaterSnellFadeSlider.SetValue(editor->renderPath->getUnderwaterSnellFade());
 	underwaterSnellRTCheckBox.SetCheck(editor->renderPath->getUnderwaterSnellRTEnabled());
 	underwaterGodRaysProceduralCheckBox.SetCheck(editor->renderPath->getUnderwaterGodRaysProceduralEnabled());
+	waterSunShaftsCheckBox.SetCheck(editor->renderPath->getWaterSunShaftsEnabled());
 	volumetricFroxelRangeSlider.SetValue(editor->renderPath->getVolumetricFroxelRange());
 	underwaterParticlesCheckBox.SetCheck(editor->renderPath->getUnderwaterParticlesEnabled());
 	underwaterParticleDensitySlider.SetValue(editor->renderPath->getUnderwaterParticleDensity());
@@ -2383,6 +2401,7 @@ void GraphicsWindow::ResizeLayout()
 	layout.add_right(underwaterSnellFadeSlider);
 	layout.add_right(underwaterSnellRTCheckBox);
 	layout.add_right(underwaterGodRaysProceduralCheckBox);
+	layout.add_right(waterSunShaftsCheckBox);
 	layout.add_right(volumetricFroxelRangeSlider);
 	layout.add_right(underwaterParticleDensitySlider);
 	underwaterParticlesCheckBox.SetPos(XMFLOAT2(underwaterParticleDensitySlider.GetPos().x - underwaterParticlesCheckBox.GetSize().x - 80, underwaterParticleDensitySlider.GetPos().y));

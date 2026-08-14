@@ -784,6 +784,10 @@ namespace wi
 			{
 				camera->shadercamera_options |= SHADERCAMERA_OPTION_UNDERWATER_GODRAYS;
 			}
+			if (getWaterSunShaftsEnabled())
+			{
+				camera->shadercamera_options |= SHADERCAMERA_OPTION_WATER_SUN_SHAFTS;
+			}
 		}
 
 		camera->texture_primitiveID_index = device->GetDescriptorIndex(&rtPrimitiveID, SubresourceType::SRV);

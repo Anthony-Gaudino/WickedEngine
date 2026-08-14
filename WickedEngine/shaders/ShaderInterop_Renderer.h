@@ -1386,6 +1386,14 @@ enum SHADERCAMERA_OPTIONS
 	// must NOT be clipped, so the option is cleared before they are drawn.
 	SHADERCAMERA_OPTION_WATERSIDE_SUBMERGED = 1 << 5,
 	SHADERCAMERA_OPTION_WATERSIDE_ABOVE = 1 << 6,
+	// Cut the water's sun glow into shafts for a fragment under the surface
+	// while the eye is above it.
+	//
+	// The froxel volume cannot carry that case - it is built along straight
+	// view rays, and the leg below the surface of a ray that left the water for
+	// an eye in the air is refracted - so the shafts are marched by the
+	// fragment that wants them, over the leg it already sized for its own fog.
+	SHADERCAMERA_OPTION_WATER_SUN_SHAFTS = 1 << 7,
 };
 
 struct alignas(16) ShaderCamera
@@ -1590,6 +1598,7 @@ struct alignas(16) ShaderCamera
 	inline bool IsUnderwaterGodRays() { return options & SHADERCAMERA_OPTION_UNDERWATER_GODRAYS; }
 	inline bool IsWaterSideSubmerged() { return options & SHADERCAMERA_OPTION_WATERSIDE_SUBMERGED; }
 	inline bool IsWaterSideAbove() { return options & SHADERCAMERA_OPTION_WATERSIDE_ABOVE; }
+	inline bool IsWaterSunShafts() { return options & SHADERCAMERA_OPTION_WATER_SUN_SHAFTS; }
 
 	inline float3 screen_to_nearplane(float4 svposition)
 	{
