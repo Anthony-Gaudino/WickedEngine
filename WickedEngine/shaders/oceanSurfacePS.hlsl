@@ -333,7 +333,12 @@ float4 main(PSIn input) : SV_TARGET
 				0,
 				ScreenCoord,
 				uv_to_clipspace(ScreenCoord),
-				false
+				false,
+				// The crest stands above the still plane and this branch is
+				// only taken with the camera above it too, so no froxel column
+				// holds water here: this is the only description of the sun in
+				// the slab, and it keeps all of it.
+				1
 			);
 
 			surface.refraction.rgb = (half3)(

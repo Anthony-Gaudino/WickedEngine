@@ -146,6 +146,11 @@ struct WaterFog
  * @param[in] screenUV - Screen space UV coordinates (0-1), for the god rays.
  * @param[in] ndc - Normalized device position of the pixel, for the god rays.
  * @param[in] godRays - Whether to modulate the inscatter with god rays.
+ * @param[in] sunModulation - How much of the sun's DIRECTIONAL scattering this
+ *                            segment still owns, per channel in [0, 1]. 1 hands
+ *                            it over whole; 0 leaves it entirely to whatever
+ *                            else is carrying it. Only the directional term is
+ *                            scaled - see where it is used.
  *
  * @return The fog for this segment.
  */
@@ -156,7 +161,8 @@ WaterFog MakeWaterFog(
 	float eyeDepth,
 	float2 screenUV,
 	float2 ndc,
-	bool godRays
+	bool godRays,
+	float3 sunModulation
 )
 {
 	const ShaderOcean ocean = GetWeather().ocean;
@@ -327,21 +333,19 @@ WaterFog MakeWaterFog(
 	// is the behaviour the water should have: a turbid sea has no sun glow to
 	// show, only an even haze.
 	//
-	// Left to the froxel volume where it carries the sun through this water
-	// already, since that version is shadowed and this one is not. What this
-	// draws unshadowed is precisely a shaft, so keeping both would lay an even
-	// glow over the shafts the volume cuts - brightest exactly where the water
-	// is in shadow. The isotropic terms above stay either way: the volume
-	// carries single scattering, and those are what many bounces left behind.
+	// The one term `sunModulation` scales, and the only one it could. This is
+	// the light that still remembers which way it came, so it is what a shadow
+	// has anything to say about and what draws a shaft; the isotropic terms
+	// above are what many bounces left behind, carry no direction, and are what
+	// keeps a shaft's gap glowing rather than going black.
 	const half cosTheta = dot(toEye, -refractedLightDir);
-	const half phaseExcess = VolumetricFroxelCarriesTheSun()
-		? (half)0
-		: max(
-			(half)0,
-			HgPhase(medium.ReducedPhaseG(inscatterAmount), cosTheta)
-				- UniformPhase());
+	const half phaseExcess = max(
+		(half)0,
+		HgPhase(medium.ReducedPhaseG(inscatterAmount), cosTheta)
+			- UniformPhase());
 
-	const half3 directional = sunLight * phaseExcess * UniformPhase();
+	const half3 directional =
+		sunLight * phaseExcess * UniformPhase() * (half3)sunModulation;
 
 	fog.inscatter =
 		downwelling * (half3)inscatterColorAmount
@@ -486,6 +490,26 @@ WaterFog GetWaterFog(
 	// waterline down the screen.
 	const float path = lerp(refractedPath, straightPath, eyeSubmersion);
 
+	// Which of the two descriptions of the sun this segment is entitled to.
+	//
+	// The froxel volume carries the sun through the water SHADOWED, so where it
+	// does, this must not draw it again unshadowed - an even glow laid over the
+	// shafts the volume cuts, brightest exactly where the water is dark. But
+	// the volume only carries water for a column whose EYE is under the
+	// surface: it is built along straight view rays, and the leg below the
+	// surface of a ray that left the water for an eye in the air is refracted,
+	// so those cells are not on the path at all. Above the surface there is
+	// nothing to defer to, and this term is the only description of that light
+	// there is.
+	//
+	// So the handoff is the eye's own graded submersion, which is what sweeps
+	// the waterline down the screen everywhere else. The two trade across that
+	// sweep instead of switching, and neither is counted twice at any point on
+	// it.
+	const float3 sunModulation = VolumetricFroxelCarriesTheSun()
+		? (float3)(1 - eyeSubmersion)
+		: (float3)1;
+
 	return MakeWaterFog(
 		medium,
 		path,
@@ -497,7 +521,8 @@ WaterFog GetWaterFog(
 		// as shafts seen from inside the water and as stripes painted over the
 		// sea seen from a boat, so they need the eye to be under, not merely
 		// the water to be present.
-		GetCamera().IsUnderwaterGodRays() && eyeSubmersion > 0
+		GetCamera().IsUnderwaterGodRays() && eyeSubmersion > 0,
+		sunModulation
 	);
 }
 
