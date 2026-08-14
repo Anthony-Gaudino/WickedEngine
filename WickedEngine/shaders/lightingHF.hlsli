@@ -116,6 +116,19 @@ inline float2 caustic_decay_water(
 #endif // WATER
 }
 
+// Shadow map uv that one metre of world covers in an ortho cascade, for turning
+// a world-space radius into a disk the atlas can be gathered over.
+//
+// The cascade matrix takes world straight to clip with no perspective divide,
+// so the length of the linear part of its first row is clip units per metre,
+// and clipspace_to_uv halves it. **Only a projection with no divide has a
+// single scale to find this way** - a spot or a rect light does not, which is
+// why they carry the caustics' fade but not their spread.
+inline half cascade_uv_per_metre(in float3x4 cascade_matrix)
+{
+	return (half)(0.5 * length(cascade_matrix[0].xyz));
+}
+
 inline void ApplyLighting(in Surface surface, in Lighting lighting, inout half4 color)
 {
 	if (GetFrame().options & OPTION_BIT_FORCE_UNLIT)
@@ -228,32 +241,36 @@ inline void light_directional(in ShaderEntity light, in Surface surface, inout L
 		{
 			// The refracted direction, because that is the one the light
 			// travelled down - the same leg attenuation_water() dims it over.
-			const half caustic_contrast = (half)caustic_decay_water(
-				surface, (half3)RefractIntoWater(L), FLT_MAX).x;
+			const float2 caustic_decay = caustic_decay_water(
+				surface, (half3)RefractIntoWater(L), FLT_MAX);
+			const half caustic_contrast = (half)caustic_decay.x;
 
 			const min16uint cascade_count = light.GetShadowCascadeCount();
 			min16uint best_cascade = cascade_count;
 			float3 shadow_uv = 0;
 			float3 shadow_pos = 0;
+			half caustic_spread = 0;
 
 			// Loop through cascades from closest (smallest) to furthest (largest)
 			for (min16uint cascade = 0; cascade < cascade_count; ++cascade)
 			{
 				// Project into shadow map space (no need to divide by .w because ortho projection!):
-				shadow_pos = mul((float3x4)load_entitymatrix(light.GetMatrixIndex() + cascade), float4(surface.P, 1)).xyz; // float3x4 because perspective is not used
+				const float3x4 cascade_matrix = (float3x4)load_entitymatrix(light.GetMatrixIndex() + cascade); // float3x4 because perspective is not used
+				shadow_pos = mul(cascade_matrix, float4(surface.P, 1)).xyz;
 				shadow_uv = clipspace_to_uv(shadow_pos);
 
 				// Determine if pixel is inside current cascade bounds and compute shadow if it is:
 				if (is_saturated(shadow_uv))
 				{
 					best_cascade = cascade;
+					caustic_spread = cascade_uv_per_metre(cascade_matrix) * (half)caustic_decay.y;
 					break;
 				}
 			}
 
 			if (best_cascade < cascade_count)
 			{
-				half3 shadow = shadow_2D(light, shadow_pos.z, shadow_uv.xy, best_cascade, surface.pixel, caustic_contrast);
+				half3 shadow = shadow_2D(light, shadow_pos.z, shadow_uv.xy, best_cascade, surface.pixel, caustic_contrast, caustic_spread);
 
 				if (best_cascade < cascade_count - 1)
 				{
@@ -263,9 +280,11 @@ inline void light_directional(in ShaderEntity light, in Surface surface, inout L
 					if (cascade_blend > 0)
 					{
 						const min16uint fallback_cascade = best_cascade + 1;
-						shadow_pos = mul((float3x4)load_entitymatrix(light.GetMatrixIndex() + fallback_cascade), float4(surface.P, 1)).xyz; // float3x4 because perspective is not used
+						const float3x4 fallback_matrix = (float3x4)load_entitymatrix(light.GetMatrixIndex() + fallback_cascade); // float3x4 because perspective is not used
+						shadow_pos = mul(fallback_matrix, float4(surface.P, 1)).xyz;
 						shadow_uv = clipspace_to_uv(shadow_pos);
-						const half3 shadow_fallback = shadow_2D(light, shadow_pos.z, shadow_uv.xy, fallback_cascade, surface.pixel, caustic_contrast);
+						const half3 shadow_fallback = shadow_2D(light, shadow_pos.z, shadow_uv.xy, fallback_cascade, surface.pixel, caustic_contrast,
+							cascade_uv_per_metre(fallback_matrix) * (half)caustic_decay.y);
 						shadow = lerp(shadow, shadow_fallback, cascade_blend);
 					}
 				}

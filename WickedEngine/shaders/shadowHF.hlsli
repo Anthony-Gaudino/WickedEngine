@@ -157,7 +157,12 @@ static const half soft_shadow_sample_count_rcp = rcp(soft_shadow_sample_count);
 // WaterVolumetrics::CausticDecay, which is what supplies this for the ocean.
 // 1 leaves the layer exactly as written, which is every caller that has no
 // medium to report.
-inline half3 sample_shadow(float2 uv, float cmp, float4 uv_clamping, half2 radius, min16uint2 pixel, half transparent_contrast = 1)
+//
+// transparent_spread widens the disk the layer is gathered over, in atlas uv,
+// for the same reason: structure that has spread on the way down is blurred as
+// well as faded. It reuses the points the occlusion is already sampling at, so
+// it costs no extra taps, and 0 reproduces the occlusion tap exactly.
+inline half3 sample_shadow(float2 uv, float cmp, float4 uv_clamping, half2 radius, min16uint2 pixel, half transparent_contrast = 1, float2 transparent_spread = 0)
 {
 	Texture2D<half4> texture_shadowatlas = bindless_textures_half4[descriptor_index(GetFrame().texture_shadowatlas_index)];
 	Texture2D<half4> texture_shadowatlas_transparent = bindless_textures_half4[descriptor_index(GetFrame().texture_shadowatlas_transparent_index)];
@@ -204,10 +209,11 @@ inline half3 sample_shadow(float2 uv, float cmp, float4 uv_clamping, half2 radiu
 	for (min16uint i = 0; i < soft_shadow_sample_count; ++i)
 	{
 #ifdef SHADOW_SAMPLING_DITHERING
-		float2 sample_uv = mad(mul(vogel_points[i], rot), spread, uv);
+		const half2 vogel_point = mul(vogel_points[i], rot);
 #else
-		float2 sample_uv = mad(vogel_points[i], spread, uv);
+		const half2 vogel_point = vogel_points[i];
 #endif // SHADOW_SAMPLING_DITHERING
+		float2 sample_uv = mad(vogel_point, spread, uv);
 #else
 		float2 sample_uv = uv;
 #endif // DISABLE_SOFT_SHADOWMAP
@@ -217,7 +223,13 @@ inline half3 sample_shadow(float2 uv, float cmp, float4 uv_clamping, half2 radiu
 		
 #ifndef DISABLE_TRANSPARENT_SHADOWMAP
 		// !Reminder: there is no dependency between sampling shadowatlas and shadowatlas_transparent, this has best performance!
-		half4 transparent_shadow = texture_shadowatlas_transparent.SampleLevel(sampler_linear_clamp, sample_uv, 0);
+		float2 transparent_uv = sample_uv;
+#ifndef DISABLE_SOFT_SHADOWMAP
+		// The clamp keeps the wider kernel inside this cascade's own footprint,
+		// so it cannot reach into a neighbouring one in the atlas.
+		transparent_uv = clamp(mad(vogel_point, spread + transparent_spread, uv), uv_clamping.xy, uv_clamping.zw);
+#endif // DISABLE_SOFT_SHADOWMAP
+		half4 transparent_shadow = texture_shadowatlas_transparent.SampleLevel(sampler_linear_clamp, transparent_uv, 0);
 		const half mask = step(cmpf16, transparent_shadow.a); // IMPORTANT: keep this before lerp as single channel for best perf!
 		pcf *= lerp(1.0, transparent_shadow.rgb, mask * transparent_contrast); // forced no-branch is a decent win on AMD here
 #endif // DISABLE_TRANSPARENT_SHADOWMAP
@@ -241,11 +253,14 @@ inline float4 shadow_border_clamp(in ShaderEntity light, in float slice)
 	return float4(topleft, bottomright);
 }
 
-inline half3 shadow_2D(in ShaderEntity light, in float z, in float2 shadow_uv, in uint cascade, min16uint2 pixel = 0, half transparent_contrast = 1)
+// transparent_spread arrives in this cascade's own uv, which is what a caller
+// holding the light's projection can measure it in, and is placed into the
+// atlas here alongside the position it belongs to.
+inline half3 shadow_2D(in ShaderEntity light, in float z, in float2 shadow_uv, in uint cascade, min16uint2 pixel = 0, half transparent_contrast = 1, half transparent_spread = 0)
 {
 	shadow_uv.x += cascade;
 	shadow_uv = mad(shadow_uv, light.shadowAtlasMulAdd.xy, light.shadowAtlasMulAdd.zw);
-	return sample_shadow(shadow_uv, z, shadow_border_clamp(light, cascade), light.GetType() == ENTITY_TYPE_RECTLIGHT ? (half2(light.GetRadius(), light.GetLength()) * 0.025) : light.GetRadius(), pixel, transparent_contrast);
+	return sample_shadow(shadow_uv, z, shadow_border_clamp(light, cascade), light.GetType() == ENTITY_TYPE_RECTLIGHT ? (half2(light.GetRadius(), light.GetLength()) * 0.025) : light.GetRadius(), pixel, transparent_contrast, transparent_spread * light.shadowAtlasMulAdd.xy);
 }
 
 inline half3 shadow_cube(in ShaderEntity light, in float3 Lunnormalized, min16uint2 pixel = 0, half transparent_contrast = 1)
@@ -303,7 +318,9 @@ inline void shadow_border_shrink(in ShaderEntity light, inout float2 shadow_uv)
 	shadow_uv = clamp(shadow_uv * shadow_resolution, border_size, shadow_resolution - border_size) / shadow_resolution;
 }
 
-inline half3 shadow_2D(in ShaderEntity light, in float z, in float2 shadow_uv, in uint cascade, in min16uint2 pixel = 0, half transparent_contrast = 1)
+// transparent_spread is accepted to match the disk-sampling overload and has
+// nowhere to go: this path takes a single tap, and one tap cannot be spread.
+inline half3 shadow_2D(in ShaderEntity light, in float z, in float2 shadow_uv, in uint cascade, in min16uint2 pixel = 0, half transparent_contrast = 1, half transparent_spread = 0)
 {
 	shadow_border_shrink(light, shadow_uv);
 	shadow_uv.x += cascade;
