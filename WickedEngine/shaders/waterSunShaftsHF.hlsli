@@ -4,21 +4,21 @@
  * The sun's shafts in the water, seen from an eye that is not in it.
  *
  * The froxel volume draws these wherever the eye is under the surface, and
- * cannot draw them at all where it is not. The volume is built along **straight**
- * view rays, and the leg below the surface of a ray that left the water for an
- * eye in the air is refracted - confined by Snell's window to at most 1.512
- * times the depth, where the straight segment grows without limit at a grazing
- * angle. Cells below the crossing are therefore not on the light's path, by a
- * factor that goes to infinity at the horizon, and no amount of depth resolution
- * moves them onto it.
+ * cannot draw them at all where it is not. The volume is built along
+ * **straight** view rays, and the leg below the surface of a ray that left the
+ * water for an eye in the air is refracted - confined by Snell's window to at
+ * most 1.512 times the depth, where the straight segment grows without limit at
+ * a grazing angle. Cells below the crossing are therefore not on the light's
+ * path, by a factor that goes to infinity at the horizon, and no amount of
+ * depth resolution moves them onto it.
  *
- * So the shafts are marched here, by the fragment that wants them, over the very
- * leg of water it already measured for its own fog. What comes back is a
- * fraction, not a radiance: `MakeWaterFog` already knows how bright the sun's
- * glow in that water is, and all this says is how much of it survived the
- * journey. That is also what makes this safe where a stored field is not - there
- * is nothing to interpolate between, so there is no discontinuity at the surface
- * for a reconstruction to straddle.
+ * So the shafts are marched here, by the fragment that wants them, over the
+ * very leg of water it already measured for its own fog. What comes back is an
+ * occlusion fraction rather than a radiance: how much of the sun was blocked,
+ * and nothing about what the water then did to it - `MakeWaterFog` owns that
+ * and would otherwise account for it twice. That is also what makes this safe
+ * where a stored field is not: there is nothing to interpolate between, so no
+ * discontinuity at the surface for a reconstruction to straddle.
  *
  * References:
  * https://en.wikipedia.org/wiki/Snell%27s_law
@@ -44,13 +44,13 @@ static const uint WATER_SUN_SHAFT_STEPS = 6;
  * How deep into the water the march looks, in optical depths.
  *
  * What the eye receives from a stretch of water falls off as
- * \f$e^{-\sigma_t d}\f$ from the end nearest it, so past a few of these there is
- * nothing left to weigh: at 4 the far end contributes under two percent.
+ * \f$e^{-\sigma_t d}\f$ from the end nearest it, so past a few of these there
+ * is nothing left to weigh: at 4 the far end contributes under two percent.
  *
  * Bounding the march rather than the step count is what keeps the answer a
- * property of the water alone. Every fragment deeper than this bound marches the
- * same stretch of it and returns the same veil, so nothing beyond the depth the
- * water can be seen through leaves a trace of itself in the light.
+ * property of the water alone. Every fragment deeper than this bound marches
+ * the same stretch of it and returns the same veil, so nothing beyond the depth
+ * the water can be seen through leaves a trace of itself in the light.
  */
 static const float WATER_SUN_SHAFT_OPTICAL_DEPTH = 4.0;
 
@@ -59,17 +59,18 @@ static const float WATER_SUN_SHAFT_OPTICAL_DEPTH = 4.0;
  *
  * One comparison tap, never `shadow_2D`. A soft lookup would blur the very edge
  * the shaft is made of, and at sixteen taps a step it is not affordable in a
- * shader that runs over every submerged fragment on screen. The atlas addressing
- * is written out rather than borrowed for the same reason `sample_shadow` cannot
- * be called directly: its filtering is chosen by macros the including shader
- * sets for its own surface shading, and this wants its own answer either way.
+ * shader that runs over every submerged fragment on screen. The atlas
+ * addressing is written out rather than borrowed for the same reason
+ * `sample_shadow` cannot be called directly: its filtering is chosen by macros
+ * the including shader sets for its own surface shading, and this wants its own
+ * answer either way.
  *
- * **The opaque atlas only.** The transparent layer beside it carries the ocean's
- * caustics, which describe how the surface focuses light onto what it lands on -
- * a property of a lit surface, and already applied to submerged ones by the
- * shading path. Putting them in the water's own veil instead spreads that
- * pattern through the volume at a strength that never falls with depth, so it
- * survives water far too murky to see any distance into.
+ * **The opaque atlas only.** The transparent layer beside it carries the
+ * ocean's caustics, which describe how the surface focuses light onto what it
+ * lands on - a property of a lit surface, and already applied to submerged ones
+ * by the shading path. Putting them in the water's own veil instead spreads
+ * that pattern through the volume at a strength that never falls with depth, so
+ * it survives water far too murky to see any distance into.
  *
  * @param[in] light - The directional light to test. Must be casting a shadow;
  *                    there is no atlas entry to read otherwise.
@@ -166,7 +167,7 @@ inline half3 WaterSunShaftShadow(in ShaderEntity light, in float3 position)
  * Example usage:
  * @code
  * const float3 modulation = WaterSunShaftModulation(
- *     medium, surfaceCrossing, toEye, path);
+ *     medium, surfaceCrossing, toEye, path, pixel);
  * @endcode
  *
  * @param[in] medium - The water the leg lies in.
@@ -179,23 +180,25 @@ inline half3 WaterSunShaftShadow(in ShaderEntity light, in float3 position)
  *                    taken above the surface.
  * @param[in] path - Length of the leg lying in water (in metres), from
  *                   `SubmergedViewPath`. An upper bound on what is walked: past
- *                   a few optical depths there is nothing left to weigh, and the
- *                   march stops there instead.
+ *                   a few optical depths there is nothing left to weigh, and
+ *                   the march stops there instead.
+ * @param[in] pixel - Pixel coordinate, for spreading the sample depths.
  *
- * @return Per-channel unoccluded fraction of the sun over this water, in [0, 1].
- *         Returns 1 - nothing in the way - wherever there is no leg to march or
+ * @return Per-channel unoccluded fraction of the sun over this water, in
+ *         [0, 1]. Returns 1 - nothing in the way - wherever there is no leg or
  *         no sun to march it against, so a caller needs no test of its own.
  *
  * @note For an eye **in the air**. The leg is taken along the refracted
- *       direction, which is the path light took to leave the water; an eye under
- *       the surface sees along a straight one, and the froxel volume carries
- *       that case with a shadow at every cell rather than only along one leg.
+ *       direction, which is the path light took to leave the water; an eye
+ *       under the surface sees along a straight one, and the froxel volume
+ *       carries that case with a shadow at every cell rather than one leg.
  */
 inline float3 WaterSunShaftModulation(
 	in WaterVolumetrics medium,
 	in float3 surfaceCrossing,
 	in float3 toEye,
-	in float path
+	in float path,
+	in uint2 pixel
 )
 {
 	// Nothing to shape. Anything shorter than this is a fragment sitting
@@ -253,6 +256,19 @@ inline float3 WaterSunShaftModulation(
 
 		const float stepSize = marched / (float)WATER_SUN_SHAFT_STEPS;
 
+		// Where inside its step each sample sits. Occlusion is a step function
+		// - the shadow map says lit or unlit and nothing between - so six
+		// samples of it can only ever return seven values, and a shadow's edge
+		// crossing the water arrives as that many terraces. Moving the sample
+		// depths per pixel trades the terraces for a fine noise that the
+		// temporal pass averages back out.
+		//
+		// One offset for the whole march, so the samples stay evenly spread
+		// rather than clumping. Blue noise rather than an ordered pattern: this
+		// carries its own per-frame phase, and an ordered one would hold still
+		// and print itself on the screen as a grid instead of averaging away.
+		const float jitter = blue_noise(pixel).x;
+
 		float3 weightSum = 0;
 		float3 litSum = 0;
 
@@ -260,7 +276,7 @@ inline float3 WaterSunShaftModulation(
 		{
 			// Measured DOWN from the surface, so a step stands at the same depth
 			// whatever is drawn behind it.
-			const float depthAlongLeg = ((float)step + 0.5) * stepSize;
+			const float depthAlongLeg = ((float)step + jitter) * stepSize;
 
 			const float3 samplePosition =
 				surfaceCrossing - legDirection * depthAlongLeg;

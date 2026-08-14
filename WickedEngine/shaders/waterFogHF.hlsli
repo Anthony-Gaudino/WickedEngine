@@ -147,11 +147,11 @@ struct WaterFog
  * @param[in] screenUV - Screen space UV coordinates (0-1), for the god rays.
  * @param[in] ndc - Normalized device position of the pixel, for the god rays.
  * @param[in] godRays - Whether to modulate the inscatter with god rays.
- * @param[in] sunModulation - How much of the sun reached this water, per channel
- *                            in [0, 1]. Scales every term the SUN feeds and no
- *                            term the sky feeds, so a segment in shadow keeps
- *                            its daylight and loses its sunlight. 1 is fully
- *                            lit.
+ * @param[in] sunModulation - How much of the sun reached this water, per
+ *                            channel in [0, 1]. Scales every term the SUN feeds
+ *                            and no term the sky feeds, so a segment in shadow
+ *                            keeps its daylight and loses its sunlight. 1 is
+ *                            fully lit.
  *
  * @return The fog for this segment.
  */
@@ -550,7 +550,11 @@ WaterFog GetWaterFog(
 				saturate(eyeHeight / max(eyeHeight - fragmentHeight, 0.00001)));
 
 			sunModulation *= WaterSunShaftModulation(
-				medium, surfaceCrossing, toEye, refractedPath);
+				medium,
+				surfaceCrossing,
+				toEye,
+				refractedPath,
+				(uint2)(screenUV * GetCamera().internal_resolution));
 		}
 	}
 
