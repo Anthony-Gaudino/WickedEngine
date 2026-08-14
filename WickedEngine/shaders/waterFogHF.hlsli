@@ -28,6 +28,7 @@
  */
 
 #include "waterVolumetricsHF.hlsli"
+#include "waterSunShaftsHF.hlsli"
 #include "volumetricFroxelHF.hlsli"
 
 /**
@@ -146,11 +147,11 @@ struct WaterFog
  * @param[in] screenUV - Screen space UV coordinates (0-1), for the god rays.
  * @param[in] ndc - Normalized device position of the pixel, for the god rays.
  * @param[in] godRays - Whether to modulate the inscatter with god rays.
- * @param[in] sunModulation - How much of the sun's DIRECTIONAL scattering this
- *                            segment still owns, per channel in [0, 1]. 1 hands
- *                            it over whole; 0 leaves it entirely to whatever
- *                            else is carrying it. Only the directional term is
- *                            scaled - see where it is used.
+ * @param[in] sunModulation - How much of the sun reached this water, per channel
+ *                            in [0, 1]. Scales every term the SUN feeds and no
+ *                            term the sky feeds, so a segment in shadow keeps
+ *                            its daylight and loses its sunlight. 1 is fully
+ *                            lit.
  *
  * @return The fog for this segment.
  */
@@ -309,7 +310,16 @@ WaterFog MakeWaterFog(
 	// direction it arrived from, so the phase function has nothing to weight -
 	// the sun enters this the same way the sky does, as downwelling
 	// irradiance. This term carries the water's colour.
-	const half3 downwelling = ambientColor + sunLight * (half)saturate(L.y);
+	//
+	// **The sun's share is modulated and the sky's is not.** Whatever stands
+	// between the sun and this water takes the sun away from it and leaves the
+	// rest of the sky arriving, which is the whole difference between water in
+	// shadow and water at night. Light that has scattered many times is what
+	// this term describes, so a shadow does not empty it - it dims towards the
+	// sky alone, and that floor is what keeps a shaft's gap reading as water
+	// rather than as a hole.
+	const half3 downwelling =
+		ambientColor + sunLight * (half)saturate(L.y) * (half3)sunModulation;
 
 	// A share of that daylight comes back out redder than it went in, rather
 	// than being reflected at the colour it arrived: converted by the water
@@ -333,11 +343,14 @@ WaterFog MakeWaterFog(
 	// is the behaviour the water should have: a turbid sea has no sun glow to
 	// show, only an even haze.
 	//
-	// The one term `sunModulation` scales, and the only one it could. This is
-	// the light that still remembers which way it came, so it is what a shadow
-	// has anything to say about and what draws a shaft; the isotropic terms
-	// above are what many bounces left behind, carry no direction, and are what
-	// keeps a shaft's gap glowing rather than going black.
+	// The light that still remembers which way it came, so it sharpens towards
+	// the sun and is what draws a beam rather than a shadow. Modulated like the
+	// downwelling above and for the same reason, but there is far less of it:
+	// only the share of one bounce that is DIRECTIONAL belongs here, the even
+	// share being already accounted for above, and that excess falls away as the
+	// reduced asymmetry approaches isotropic - which a long path through turbid
+	// water drives it to. A turbid sea has no sun glow to show, only an even
+	// haze.
 	const half cosTheta = dot(toEye, -refractedLightDir);
 	const half phaseExcess = max(
 		(half)0,
@@ -506,9 +519,40 @@ WaterFog GetWaterFog(
 	// the waterline down the screen everywhere else. The two trade across that
 	// sweep instead of switching, and neither is counted twice at any point on
 	// it.
-	const float3 sunModulation = VolumetricFroxelCarriesTheSun()
-		? (float3)(1 - eyeSubmersion)
-		: (float3)1;
+	float3 sunModulation = 1;
+
+	[branch]
+	if (VolumetricFroxelCarriesTheSun())
+	{
+		sunModulation = (float3)(1 - eyeSubmersion);
+
+		// Cut into shafts by whatever stands above the surface. Only worth
+		// asking for the share the volume is not carrying, which is why it
+		// multiplies the handoff rather than replacing it - fully submerged
+		// there is nothing left of this term to shape, and the march is skipped
+		// with it.
+		//
+		// The refracted leg, not the blended `path`. The march walks the
+		// refracted direction, and a length measured along the straight segment
+		// would carry it clean out of the water at any grazing angle. The two
+		// are the same quantity wherever this term has any weight left.
+		[branch]
+		if (GetCamera().IsWaterSunShafts() && any(sunModulation > 0))
+		{
+			// Where this view ray meets the water, clipped between the same two
+			// heights the fog itself is - so the march begins on the wave
+			// surface the rest of this function measures against, and every
+			// fragment along the ray begins in the same place whatever its own
+			// depth.
+			const float3 surfaceCrossing = lerp(
+				eye,
+				fragmentPosition,
+				saturate(eyeHeight / max(eyeHeight - fragmentHeight, 0.00001)));
+
+			sunModulation *= WaterSunShaftModulation(
+				medium, surfaceCrossing, toEye, refractedPath);
+		}
+	}
 
 	return MakeWaterFog(
 		medium,
