@@ -7,10 +7,9 @@
 #include "volumetricFroxelHF.hlsli"
 #ifdef RTAPI
 	// Hardware ray-traced Snell's window: trace the refracted ray into the real
-	// scene so above-water objects (and their occlusion of the window) are
-	// exact, with no single-point probe to sit inside geometry. Compiled only
-	// in the underwaterCS_rtapi permutation; the base permutation falls back to
-	// the scene probe / analytic sky.
+	// scene so above-water objects, and their occlusion of the window, are
+	// exact. Compiled only in the underwaterCS_rtapi permutation; the base
+	// permutation shows the analytic sky in the refracted direction instead.
 	#include "rtsceneHF.hlsli"
 #endif // RTAPI
 
@@ -268,9 +267,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			// direction. Refraction squeezes the whole 180 deg hemisphere into
 			// the ~97 deg cone, with the sun and objects landing at their true
 			// refracted places; refract() returns 0 past the critical angle,
-			// matching the cone edge. When a realtime scene probe is available
-			// it carries the real above-water geometry; otherwise use analytic
-			// sky:
+			// matching the cone edge:
 			const float3 refractedDir = refract(rayDir, -surfaceNormal, 1.333);
 
 			// Only rays that actually form the window need above-water content:
