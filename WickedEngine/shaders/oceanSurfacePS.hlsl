@@ -301,49 +301,56 @@ float4 main(PSIn input) : SV_TARGET
 		surface.refraction.a = 1;
 		color.a = 1;
 
-		// The one stretch of water that no fragment fogs for itself: the crest
-		// this one stands on.
+		// The stretch of water between this fragment and what it refracted that
+		// nothing in the frame has accounted for.
 		//
-		// Every fragment carries the absorption of its own path, which covers
-		// the refraction target whenever the target is IN the water - and since
-		// the fog clips against the wave surface rather than the still plane,
-		// that already includes the crest standing over the target. What it
-		// cannot cover is a target that was never in the water at all. The sky
-		// and anything above the surface have no water path to fog, so a crest
-		// seen against them handed their radiance on undimmed and read as a
-		// glass blob instead of as a body of water.
+		// Every fragment carries the absorption of its own path, so a submerged
+		// target arrives already fogged - but over the column standing over
+		// ITSELF, from the surface above it down to where it is. **This ray
+		// entered the water here**, at this fragment, which is somewhere else
+		// entirely and, on a crest, several metres higher. The drop between the
+		// two is water the ray crossed and no one measured.
 		//
-		// So the test is whether the target is under water at all, and the term
-		// is what is missing when it is not: the slab standing above the still
-		// plane here, crossed at the angle the ray was refracted to. Adding it
-		// only in that case is what keeps it from double counting against the
-		// column the target already fogged.
-		const float crest_height =
-			max(0, surface.P.y - GetWeather().ocean.water_height);
-		const float refraction_height = refraction_position.y
-			- ocean_drawn_surface_height(refraction_position);
+		// Added to what the target already charged, this comes to the whole
+		// descending leg and no more: the surface height over the target
+		// appears in both with opposite signs and cancels, leaving this
+		// fragment's height above the target at the refracted angle. That
+		// cancellation is also why the target's own side needs no test here. A
+		// target ABOVE the water charged nothing, and measuring from the
+		// surface over it gives the column standing above the still plane,
+		// which is what a crest seen against the sky is owed.
+		//
+		// Zero on a flat sea, where both are the still plane, and zero looking
+		// straight down a crest, where the target's own surface is that same
+		// crest - which is why a crest only leaks where it has a far side to
+		// see past.
+		//
+		// Floored at zero rather than allowed to go negative: a target lying
+		// under a crest of its own counted more water than this ray crossed,
+		// and a sample that has already been fogged cannot be un-fogged.
+		const float uncounted_depth = max(0, surface.P.y
+			- ocean_drawn_surface_height(refraction_position));
 
 		[branch]
-		if (!camera_below_water && crest_height > 0 && refraction_height >= 0)
+		if (!camera_below_water && uncounted_depth > 0)
 		{
-			const WaterFog crestFog = MakeWaterFog(
+			const WaterFog waterBehind = MakeWaterFog(
 				MakeWaterVolumetrics(1),
-				SubmergedViewPath(crest_height, V),
+				SubmergedViewPath(uncounted_depth, V),
 				V,
 				0,
 				ScreenCoord,
 				uv_to_clipspace(ScreenCoord),
 				false,
-				// The crest stands above the still plane and this branch is
-				// only taken with the camera above it too, so no froxel column
-				// holds water here: this is the only description of the sun in
-				// the slab, and it keeps all of it.
+				// This branch is only taken with the camera above the surface,
+				// so no froxel column holds water here: this is the only
+				// description of the sun in that column, and it keeps all of it.
 				1
 			);
 
 			surface.refraction.rgb = (half3)(
-				surface.refraction.rgb * crestFog.transmittance
-				+ crestFog.inscatter);
+				surface.refraction.rgb * waterBehind.transmittance
+				+ waterBehind.inscatter);
 		}
 	}
 	
@@ -397,9 +404,26 @@ float4 main(PSIn input) : SV_TARGET
 		// Signed on purpose. Where the surface over the ground sits BELOW it
 		// the ground is dry, and dry ground has no shoreline foam however much
 		// water stands somewhere else along the view ray.
-		const float shore_depth =
+		const float shore_water_column =
 			ocean_drawn_surface_height(shore_position) - shore_position.y;
-		const bool shore_is_submerged = shore_has_geometry && shore_depth > 0;
+		const bool shore_is_submerged =
+			shore_has_geometry && shore_water_column > 0;
+
+		// How high THIS piece of surface stands over that ground, which is the
+		// other way the water here can fail to be shallow. The column above
+		// establishes that the ground is under water and how deeply, but it
+		// describes the surface sitting over the GROUND - and a crest is not
+		// there. Standing eight metres up the face of a wave in front of a
+		// shoal, this fragment is deep water by any measure that asks about
+		// this fragment, while the column over the shoal goes on reporting
+		// ankle depth and paints the shoal's own outline onto the wave.
+		//
+		// Taken as the larger of the two rather than replacing it: the column
+		// is what knows the difference between shallow water and dry land, and
+		// on its own this one would grow foam over a beach whenever a wave rose
+		// higher than the sand.
+		const float shore_depth = max(
+			shore_water_column, surface.P.y - shore_position.y);
 
 		float foam_shore =
 			shore_is_submerged ? saturate(exp(-shore_depth * 2)) : 0;
