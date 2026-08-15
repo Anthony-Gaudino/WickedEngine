@@ -17,7 +17,7 @@ float4 main(PSIn input) : SV_TARGET
 {
 #ifdef SHADOWMAPRENDERING
 	float4 color = 1;
-	color.rgb += caustics(input.uv * WATER_CAUSTIC_TILES_PER_PATCH);
+	color.rgb = caustics_modulation(input.uv * WATER_CAUSTIC_TILES_PER_PATCH);
 	color.a = input.pos.z; // secondary depth
 	return color;
 #else

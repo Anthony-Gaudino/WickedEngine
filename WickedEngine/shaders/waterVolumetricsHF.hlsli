@@ -199,11 +199,12 @@ static const float WATER_FLUORESCENCE_BAND_RESPONSE = 0.079;
 /**
  * Tiles of caustic pattern the ocean stamps across one FFT patch.
  *
- * The surface writes `caustics(uv * WATER_CAUSTIC_TILES_PER_PATCH)` into the
- * transparent shadow layer, where `uv` is `P.xz * patch_size_rcp` - so this and
- * the patch size are between them the pattern's world scale, which is what
- * `WaterCausticTileSize` reads it back out as. Shared with
- * `oceanSurfacePS.hlsl` so the writer and every reader cannot drift apart.
+ * The surface writes `caustics_modulation` at
+ * `uv * WATER_CAUSTIC_TILES_PER_PATCH` into the transparent shadow layer, where
+ * `uv` is `P.xz * patch_size_rcp` - so this and the patch size are between them
+ * the pattern's world scale, which is what `WaterCausticTileSize` reads it back
+ * out as. Shared with `oceanSurfacePS.hlsl` so the writer and every reader
+ * cannot drift apart.
  */
 static const float WATER_CAUSTIC_TILES_PER_PATCH = 10.0;
 

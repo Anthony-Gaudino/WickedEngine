@@ -56,8 +56,9 @@ float4 main(PixelInput input) : SV_TARGET
 
 	if (material.GetShaderType() == SHADERTYPE_WATER)
 	{
-		color.rgb = 1; // disable water shadow because it has already fog
-		color.rgb += caustics(uvsets.xy * 10);
+		// Water shadow disabled because it already has fog, so what is left is
+		// the surface redistributing the light rather than blocking any.
+		color.rgb = caustics_modulation(uvsets.xy * 10);
 	}
 
 	return color;
