@@ -11,6 +11,7 @@
  * Include after `globals.hlsli`.
  */
 #include "ShaderInterop_VolumetricFroxels.h"
+#include "underwaterHF.hlsli"
 
 /**
  * Radial distance from the eye to a slice boundary, in metres.
@@ -168,6 +169,78 @@ inline bool VolumetricFroxelCarriesTheSun()
 }
 
 /**
+ * How far along a view ray the volume still describes what is there.
+ *
+ * The volume holds **one medium per column, chosen at the eye**
+ * (`VolumetricFroxelMediumAt`), so its running total stops being a description
+ * of this ray at the surface the ray crosses: past that point it has gone on
+ * gathering air through water, or water through air. Reading it at the
+ * fragment's own distance hands a fragment the whole of that, and because the
+ * volume is added rather than composited, the water's own fog cannot take any
+ * of it back out.
+ *
+ * Visible wherever a dry eye looks at something under the sea: the sea bed
+ * arrives fogged as though the air reached it, and where nothing was drawn at
+ * all the sky - which the water correctly extinguishes to nothing - comes back
+ * carrying an entire atmosphere's haze.
+ *
+ * Faded on the same graded submersion the volume is filled with rather than on
+ * the sign of the eye's height, because that is what decides which medium the
+ * column holds: a column already full of water is being read all the way down
+ * exactly as it should be, and the two must change over together or a camera
+ * crossing the waterline drops the near stretch of its own shafts.
+ *
+ * @param[in] screenUV - Screen space position of the fragment (0-1).
+ * @param[in] fragmentPosition - World position of the fragment.
+ * @param[in] distanceToEye - Radial distance from the eye to the fragment, in
+ *                            metres.
+ *
+ * @return Distance the volume may be read out to, in metres. The whole of
+ *         `distanceToEye` wherever the ray stays in one medium.
+ *
+ * @note Costs two surface height samples in a scene that has an ocean, and a
+ *       third only once a segment actually crosses the surface.
+ */
+inline float VolumetricFroxelColumnLength(
+	in float2 screenUV, in float3 fragmentPosition, in float distanceToEye
+)
+{
+	[branch]
+	if (!GetCamera().IsWaterFog())
+	{
+		return distanceToEye;
+	}
+
+	const float3 eye = GetCamera().position;
+	const float eyeHeight = eye.y - ocean_drawn_surface_height(eye);
+	const float fragmentHeight =
+		fragmentPosition.y - ocean_drawn_surface_height(fragmentPosition);
+
+	// Both ends in the same medium, so nothing on this ray is misdescribed.
+	// Rejected here rather than by the arithmetic below so that a scene with an
+	// ocean nobody is looking through pays no unprojection.
+	[branch]
+	if ((eyeHeight < 0) == (fragmentHeight < 0))
+	{
+		return distanceToEye;
+	}
+
+	// Where the ray meets the surface, as a share of the segment. Both heights
+	// are measured against the wave surface over their own end, so this is the
+	// same linear clip between the same two heights that `GetWaterFog` uses to
+	// find its submerged length - and it must be, or the stretch one of them
+	// calls air is the stretch the other calls water. Taken as the eye's share
+	// of the two magnitudes rather than as a signed ratio, which is the same
+	// number for a straddling segment and is symmetric: the eye is under the
+	// surface as often as the fragment is, and a form that divides by the
+	// signed span collapses to zero for one of the two directions.
+	const float crossing = distanceToEye * saturate(abs(eyeHeight)
+		/ max(abs(eyeHeight) + abs(fragmentHeight), 0.00001));
+
+	return lerp(crossing, distanceToEye, ocean_underwater_factor(screenUV));
+}
+
+/**
  * Adds the light scattered between the eye and a fragment.
  *
  * This is what the volume exists for. The inscatter reaching a fragment depends
@@ -232,7 +305,10 @@ inline void ApplyVolumetricLight(
 		return;
 	}
 
-	const float distanceToEye = length(fragmentPosition - GetCamera().position);
+	const float distanceToEye = VolumetricFroxelColumnLength(
+		screenUV,
+		fragmentPosition,
+		length(fragmentPosition - GetCamera().position));
 
 	float slice = VolumetricFroxelDepthToW(
 		distanceToEye, GetFrame().volumetricfroxel_range)
