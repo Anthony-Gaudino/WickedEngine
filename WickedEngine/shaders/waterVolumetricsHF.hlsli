@@ -63,19 +63,6 @@ static const float WATER_VOLUMETRICS_FADE_DEPTH = 1.0;
  */
 static const float WATER_EYE_SUBMERSION_MARGIN = 10.0;
 
-/**
- * Cosine of the critical angle, measured from the vertical.
- *
- * \[
- * \sin\theta_c = \frac{1}{n}, \qquad
- * \cos\theta_c = \sqrt{1 - \frac{1}{n^2}} \approx 0.6612
- * \]
- * for \( n = 1.333 \), so about 48.6 degrees. Nothing that came through the
- * surface travels further from the vertical than this, in either direction: it
- * is the edge of Snell's window seen from below, and the steepest a ray leaving
- * the water can have been seen from above.
- */
-static const float WATER_CRITICAL_ANGLE_COSINE = 0.6612;
 
 /**
  * Optical path of downwelling daylight, as a multiple of depth.

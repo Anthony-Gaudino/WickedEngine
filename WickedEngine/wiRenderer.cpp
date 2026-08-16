@@ -6687,7 +6687,8 @@ void DrawLightVisualizers(
 }
 void DrawLensFlares(
 	const Visibility& vis,
-	CommandList cmd
+	CommandList cmd,
+	const float snellWindowStrength
 )
 {
 	if (IsWireRender())
@@ -6708,9 +6709,9 @@ void DrawLensFlares(
 			XMVECTOR POS;
 
 			// Where the light APPEARS to be, which is not where it is once the
-			// eye is under the water: the surface bends everything above it
-			// into the ~97 degree cone of Snell's window, and the flare is an
-			// artefact of the image, so it belongs at the image.
+			// eye is under the water and the window is compressing the view
+			// into the ~97 degree cone. A flare is an artefact of the image, so
+			// it belongs wherever the image of the light is.
 			//
 			// Kept apart from POS rather than replacing it, because POS is also
 			// what the vertex shader measures the light's path through the
@@ -6731,8 +6732,38 @@ void DrawLensFlares(
 				// light: a source at a finite distance needs a per-point
 				// solution, which is a quartic, and is left unbent everywhere
 				// else in the engine too.
-				if (vis.scene->weather.IsOceanEnabled() &&
-					vis.camera->Eye.y <= vis.scene->weather.oceanParameters.waterHeight)
+				//
+				// **Weighted by how much window is actually being drawn**, and
+				// the two ends of that are both exact. Without the window the
+				// submerged view is not compressed at all - the surface's own
+				// screen space refraction shows the sky along the straight ray,
+				// so the sun is where it has always been and bending the flare
+				// would take it off the sun. With the window at full strength
+				// the compressed image is all there is. In between the pass
+				// blends the two, and the sun really is in two places at once;
+				// one flare can only be in one of them, so it travels between
+				// them as the strength is dragged.
+				const float compression = wi::math::saturate(snellWindowStrength);
+
+				const bool eyeIsSubmerged =
+					vis.scene->weather.IsOceanEnabled() &&
+					vis.camera->Eye.y <= vis.scene->weather.oceanParameters.waterHeight;
+
+				// Past the critical angle the surface is a mirror, so a
+				// submerged eye is shown sky only within 48.6 degrees of
+				// vertical. The window compresses the whole hemisphere into
+				// that cone, and there is always a place in it to see the sun.
+				// Without the window there is not: the view out is a straight
+				// lookup, so a sun lower than about 41 degrees of elevation is
+				// nowhere on screen, and its flare would be a bright smear
+				// lying on the mirror with nothing behind it.
+				if (eyeIsSubmerged && compression <= 0 &&
+					XMVectorGetY(-D) < WATER_CRITICAL_ANGLE_COSINE)
+				{
+					continue;
+				}
+
+				if (compression > 0 && eyeIsSubmerged)
 				{
 					const XMVECTOR refracted = XMVector3Refract(
 						D, XMVectorSet(0, 1, 0, 0), 1.0f / WATER_REFRACTIVE_INDEX);
@@ -6742,8 +6773,18 @@ void DrawLensFlares(
 					// rather than a light that has no way in.
 					if (!XMVector3Equal(refracted, XMVectorZero()))
 					{
+						// Interpolated as a DIRECTION and renormalized. The
+						// two far plane points are kilometres apart, and a
+						// straight lerp between them dips towards the eye
+						// instead of sweeping across the sky.
+						const XMVECTOR apparentD = XMVector3Normalize(
+							XMVectorLerp(
+								D,
+								XMVector3Normalize(refracted),
+								compression));
+
 						apparentPOS = vis.camera->GetEye()
-							+ XMVector3Normalize(refracted) * -vis.camera->zFarP;
+							+ apparentD * -vis.camera->zFarP;
 					}
 				}
 

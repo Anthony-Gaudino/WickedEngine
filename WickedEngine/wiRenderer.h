@@ -428,9 +428,15 @@ namespace wi::renderer
 		uint32_t instance_replication = 1
 	);
 	// Draw Lens Flares for lights that have them enabled
+	//	snellWindowStrength : how much of Snell's window this frame composites
+	//		over a submerged view, which decides where a light APPEARS to be
+	//		from under the water. Defaults to none, which is right for any path
+	//		that does not draw the window - the path tracer among them - and
+	//		leaves every flare where its light really is.
 	void DrawLensFlares(
 		const Visibility& vis,
-		wi::graphics::CommandList cmd
+		wi::graphics::CommandList cmd,
+		float snellWindowStrength = 0
 	);
 	// Call once per frame to re-render out of date environment probes
 	void RefreshEnvProbes(const Visibility& vis, wi::graphics::CommandList cmd);

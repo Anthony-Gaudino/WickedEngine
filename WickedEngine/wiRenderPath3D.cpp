@@ -2742,9 +2742,16 @@ namespace wi
 
 		if (getLensFlareEnabled())
 		{
+			// The window decides where a submerged eye SEES the sun, and the
+			// flare has to be put where the sun looks like it is. The same
+			// expression the underwater pass is given below, so the two cannot
+			// disagree about how much compression there is.
 			wi::renderer::DrawLensFlares(
 				visibility_main,
-				cmd
+				cmd,
+				getUnderwaterSnellEnabled()
+					? getUnderwaterSnellStrength()
+					: 0.0f
 			);
 		}
 
