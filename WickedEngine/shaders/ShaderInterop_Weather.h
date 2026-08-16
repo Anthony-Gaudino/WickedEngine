@@ -347,6 +347,19 @@ struct alignas(16) ShaderWind
  */
 static const uint OCEAN_FLAG_SUBSURFACE_SCATTERING = 1u << 0u;
 
+/**
+ * Refractive index of water for visible light, relative to air.
+ *
+ * Fresh water at green wavelengths. Sea water is nearer 1.34 and the index
+ * climbs towards the blue end, but neither difference survives being rendered.
+ *
+ * Kept here, where it compiles as C++ as well, because the CPU has to bend a
+ * light the same way the shaders do to decide where its flare belongs on
+ * screen. A second copy on that side is how the flare and the sun it belongs to
+ * would come to disagree about where the sun is.
+ */
+static const float WATER_REFRACTIVE_INDEX = 1.333F;
+
 struct alignas(16) ShaderOcean
 {
 	float water_height;

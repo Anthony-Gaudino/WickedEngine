@@ -49,15 +49,6 @@
 static const float WATER_VOLUMETRICS_FADE_DEPTH = 1.0;
 
 /**
- * Refractive index of water for visible light, relative to air.
- *
- * Matches the value the engine's other water shaders use - fresh water at green
- * wavelengths. Sea water is nearer 1.34 and the index climbs towards the blue
- * end, but neither difference survives being rendered.
- */
-static const float WATER_REFRACTIVE_INDEX = 1.333;
-
-/**
  * Height above the wave surface within which the eye may still be submerged.
  *
  * The eye's own height settles which side of the surface its CENTRE is on, but

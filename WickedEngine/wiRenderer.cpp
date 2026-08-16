@@ -6707,6 +6707,16 @@ void DrawLensFlares(
 
 			XMVECTOR POS;
 
+			// Where the light APPEARS to be, which is not where it is once the
+			// eye is under the water: the surface bends everything above it
+			// into the ~97 degree cone of Snell's window, and the flare is an
+			// artefact of the image, so it belongs at the image.
+			//
+			// Kept apart from POS rather than replacing it, because POS is also
+			// what the vertex shader measures the light's path through the
+			// water along, and that path is the real one.
+			XMVECTOR apparentPOS;
+
 			if (light.GetType() == LightComponent::DIRECTIONAL)
 			{
 				// directional light flare will be placed at infinite position along direction vector:
@@ -6714,26 +6724,51 @@ void DrawLensFlares(
 				if (XMVectorGetX(XMVector3Dot(D, XMVectorSet(0, -1, 0, 0))) < 0)
 					continue; // sun below horizon, skip lensflare
 				POS = vis.camera->GetEye() + D * -vis.camera->zFarP;
+				apparentPOS = POS;
+
+				// Snell's law at the still plane, the same bend
+				// RefractIntoWater applies in the shaders. Only a directional
+				// light: a source at a finite distance needs a per-point
+				// solution, which is a quartic, and is left unbent everywhere
+				// else in the engine too.
+				if (vis.scene->weather.IsOceanEnabled() &&
+					vis.camera->Eye.y <= vis.scene->weather.oceanParameters.waterHeight)
+				{
+					const XMVECTOR refracted = XMVector3Refract(
+						D, XMVectorSet(0, 1, 0, 0), 1.0f / WATER_REFRACTIVE_INDEX);
+
+					// Total internal reflection cannot arise entering the
+					// denser medium, so a zero here is a degenerate direction
+					// rather than a light that has no way in.
+					if (!XMVector3Equal(refracted, XMVectorZero()))
+					{
+						apparentPOS = vis.camera->GetEye()
+							+ XMVector3Normalize(refracted) * -vis.camera->zFarP;
+					}
+				}
 
 				XMFLOAT3 dir;
 				XMStoreFloat3(&dir, D);
+				// The TRUE direction: this drives the cloud map lookup, and the
+				// clouds stand above the water on the unbent part of the path.
 				cb.xLensFlareDirectionalLight = wi::math::pack_half3(dir);
 			}
 			else
 			{
 				// point and spotlight flare will be placed to the source position:
 				POS = XMLoadFloat3(&light.position);
+				apparentPOS = POS;
 
 				// not using occlusion texture
 				device->BindResource(wi::texturehelper::getWhite(), 0, cmd);
 			}
 
-			if (XMVectorGetX(XMVector3Dot(XMVectorSubtract(POS, vis.camera->GetEye()), vis.camera->GetAt())) > 0) // check if the camera is facing towards the flare or not
+			if (XMVectorGetX(XMVector3Dot(XMVectorSubtract(apparentPOS, vis.camera->GetEye()), vis.camera->GetAt())) > 0) // check if the camera is facing towards the flare or not
 			{
 				device->BindPipelineState(&PSO_lensflare, cmd);
 
 				// Get the screen position of the flare:
-				XMVECTOR flarePos = XMVector3Project(POS, 0, 0, 1, 1, 1, 0, vis.camera->GetProjection(), vis.camera->GetView(), XMMatrixIdentity());
+				XMVECTOR flarePos = XMVector3Project(apparentPOS, 0, 0, 1, 1, 1, 0, vis.camera->GetProjection(), vis.camera->GetView(), XMMatrixIdentity());
 
 				XMStoreFloat3(&cb.xLensFlarePos, flarePos);
 
