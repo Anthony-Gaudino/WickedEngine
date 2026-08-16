@@ -1945,6 +1945,19 @@ namespace wi::scene
 				oceanParameters.waterMedium.SetTintStrength(tintStrength);
 				archive >> oceanParameters.foamColor;
 			}
+			if (seri.GetVersion() >= 11)
+			{
+				archive >> oceanShoreFoamWidth;
+				archive >> oceanShoreFoamStrength;
+			}
+			else
+			{
+				// Shoreline foam predates its switch, and _flags was read
+				// above from an archive that could not have carried the bit -
+				// so without this every scene written before now would load
+				// with its shores bare.
+				SetOceanShoreFoam(true);
+			}
 		}
 		else
 		{
@@ -2190,6 +2203,11 @@ namespace wi::scene
 				archive << oceanParameters.waterMedium.GetTintColor();
 				archive << oceanParameters.waterMedium.GetTintStrength();
 				archive << oceanParameters.foamColor;
+			}
+			if (seri.GetVersion() >= 11)
+			{
+				archive << oceanShoreFoamWidth;
+				archive << oceanShoreFoamStrength;
 			}
 		}
 	}

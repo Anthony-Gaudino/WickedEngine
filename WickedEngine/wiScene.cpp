@@ -970,7 +970,13 @@ namespace wi::scene
 		{
 			shaderscene.weather.ocean.flags |= OCEAN_FLAG_SUBSURFACE_SCATTERING;
 		}
+		if (weather.IsOceanShoreFoam())
+		{
+			shaderscene.weather.ocean.flags |= OCEAN_FLAG_SHORE_FOAM;
+		}
 		shaderscene.weather.ocean.subsurface_strength = weather.oceanSubsurfaceStrength;
+		shaderscene.weather.ocean.shore_foam_width = weather.oceanShoreFoamWidth;
+		shaderscene.weather.ocean.shore_foam_strength = weather.oceanShoreFoamStrength;
 		// Derived from the surface mesh, not authored. Published once here so
 		// the vertex shader that flattens the waves and everything that has to
 		// agree with the surface as drawn read the same band.

@@ -348,6 +348,11 @@ struct alignas(16) ShaderWind
 static const uint OCEAN_FLAG_SUBSURFACE_SCATTERING = 1u << 0u;
 
 /**
+ * Foam gathers in the shallows where the water runs up onto a shore.
+ */
+static const uint OCEAN_FLAG_SHORE_FOAM = 1u << 1u;
+
+/**
  * Refractive index of water for visible light, relative to air.
  *
  * Fresh water at green wavelengths. Sea water is nearer 1.34 and the index
@@ -421,8 +426,21 @@ struct alignas(16) ShaderOcean
 	// which is a question about the display primaries rather than the water.
 	float3 fluorescence;
 
+	// Depth of water at which shoreline foam has thinned to 1/e of its
+	// strength, in metres. An e-folding depth rather than the edge of a band:
+	// the foam has no boundary to alias along, and widening it moves the whole
+	// falloff rather than pushing a hard edge out to sea. Fills the word left
+	// over by fluorescence above, so it costs nothing to carry.
+	float shore_foam_width;
+
+	// Artistic gain on the shoreline foam, 0 to 1. Scales the foam's opacity
+	// and, with it, how much of the refraction behind the foam is restored -
+	// the two describe the same foam and cannot be set against each other.
+	float shore_foam_strength;
+
 	bool IsValid() { return texture_displacementmap >= 0; }
 	bool IsSubsurfaceScattering() { return flags & OCEAN_FLAG_SUBSURFACE_SCATTERING; }
+	bool IsShoreFoam() { return flags & OCEAN_FLAG_SHORE_FOAM; }
 };
 
 struct alignas(16) ShaderWeather

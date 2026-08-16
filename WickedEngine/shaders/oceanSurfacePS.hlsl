@@ -409,6 +409,18 @@ float4 main(PSIn input) : SV_TARGET
 		const bool shore_is_submerged =
 			shore_has_geometry && shore_water_column > 0;
 
+		// Whether this pixel grows shoreline foam at all: a sea bed with water
+		// standing over it, and the feature left switched on.
+		const bool shore_foam_present =
+			shore_is_submerged && GetWeather().ocean.IsShoreFoam();
+
+		// Reciprocal of the authored e-folding depth, which is what the
+		// exponent below wants. Guarded against zero for the paths the
+		// editor's slider range does not cover - a script or a hand written
+		// scene can set anything.
+		const float shore_foam_falloff =
+			rcp(max(GetWeather().ocean.shore_foam_width, 0.001));
+
 		// How high THIS piece of surface stands over that ground, which is the
 		// other way the water here can fail to be shallow. The column above
 		// establishes that the ground is under water and how deeply, but it
@@ -425,8 +437,10 @@ float4 main(PSIn input) : SV_TARGET
 		const float shore_depth = max(
 			shore_water_column, surface.P.y - shore_position.y);
 
-		float foam_shore =
-			shore_is_submerged ? saturate(exp(-shore_depth * 2)) : 0;
+		float foam_shore = shore_foam_present
+			? saturate(exp(-shore_depth * shore_foam_falloff))
+				* GetWeather().ocean.shore_foam_strength
+			: 0;
 		float foam_wave = pow(saturate(gradient.a), 4) * saturate(exp(-water_depth * 0.1));
 		float foam_combined = saturate(foam_shore + foam_wave);
 		float foam = smoothstep(0.5, 0.6, saturate(foam_combined + 0.1));
@@ -484,8 +498,15 @@ float4 main(PSIn input) : SV_TARGET
 		surface.refraction.a *= 1 - foam * (half)xOceanFoamColor.a;
 		// Same guard: with no sea bed under water there is no shoreline to
 		// restore the refraction over.
+		//
+		// Reaches half as far as the foam and is scaled by the same gain, so
+		// the two cannot be set against each other: thinning the foam without
+		// thinning this would brighten water that has no foam left on it.
 		surface.refraction.a = saturate(surface.refraction.a +
-			(shore_is_submerged ? saturate(exp(-shore_depth * 4)) : 0));
+			(shore_foam_present
+				? saturate(exp(-shore_depth * shore_foam_falloff * 2))
+					* GetWeather().ocean.shore_foam_strength
+				: 0));
 	}
 #endif
 

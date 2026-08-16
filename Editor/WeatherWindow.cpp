@@ -952,6 +952,35 @@ void WeatherWindow::Create(EditorComponent* _editor)
 		});
 	AddWidget(&ocean_subsurfaceStrengthSlider);
 
+	ocean_shoreFoamCheckBox.Create("Shore foam: ");
+	ocean_shoreFoamCheckBox.SetSize(XMFLOAT2(hei, hei));
+	ocean_shoreFoamCheckBox.SetPos(XMFLOAT2(x, y += step));
+	ocean_shoreFoamCheckBox.SetTooltip("When enabled, foam gathers in the shallows where the water runs up onto a shore. Needs a sea bed under the water to gather on, so it does nothing over open sea.");
+	ocean_shoreFoamCheckBox.OnClick([this](wi::gui::EventArgs args) {
+		GetWeather().SetOceanShoreFoam(args.bValue);
+		});
+	AddWidget(&ocean_shoreFoamCheckBox);
+
+	ocean_shoreFoamWidthSlider.Create(0.05f, 5, 0.5f, 100000, "Shore foam width: ");
+	ocean_shoreFoamWidthSlider.SetSize(XMFLOAT2(wid, hei));
+	ocean_shoreFoamWidthSlider.SetPos(XMFLOAT2(x, y += step));
+	ocean_shoreFoamWidthSlider.SetValue(editor->GetCurrentScene().weather.oceanShoreFoamWidth);
+	ocean_shoreFoamWidthSlider.SetTooltip("How far out from the beach the foam reaches, as the depth of water in metres at which it has thinned to a third. Moves the foam rather than fading it.");
+	ocean_shoreFoamWidthSlider.OnSlide([this](wi::gui::EventArgs args) {
+		GetWeather().oceanShoreFoamWidth = args.fValue;
+		});
+	AddWidget(&ocean_shoreFoamWidthSlider);
+
+	ocean_shoreFoamStrengthSlider.Create(0, 1, 1, 100000, "Shore foam strength: ");
+	ocean_shoreFoamStrengthSlider.SetSize(XMFLOAT2(wid, hei));
+	ocean_shoreFoamStrengthSlider.SetPos(XMFLOAT2(x, y += step));
+	ocean_shoreFoamStrengthSlider.SetValue(editor->GetCurrentScene().weather.oceanShoreFoamStrength);
+	ocean_shoreFoamStrengthSlider.SetTooltip("How opaque the foam gets where it is thickest, and with it how much of the shallow water still shows through. Fades the foam rather than moving it.");
+	ocean_shoreFoamStrengthSlider.OnSlide([this](wi::gui::EventArgs args) {
+		GetWeather().oceanShoreFoamStrength = args.fValue;
+		});
+	AddWidget(&ocean_shoreFoamStrengthSlider);
+
 	// Water optics: the inherent optical properties of the water, which decide
 	// turbidity, hue and how far one can see through it.
 	ocean_waterTypeComboBox.Create("Water type: ");
@@ -1260,6 +1289,9 @@ void WeatherWindow::UpdateData()
 		ocean_windDriftStrengthSlider.SetValue(weather.oceanWindDriftStrength);
 		ocean_subsurfaceCheckBox.SetCheck(weather.IsOceanSubsurfaceScattering());
 		ocean_subsurfaceStrengthSlider.SetValue(weather.oceanSubsurfaceStrength);
+		ocean_shoreFoamCheckBox.SetCheck(weather.IsOceanShoreFoam());
+		ocean_shoreFoamWidthSlider.SetValue(weather.oceanShoreFoamWidth);
+		ocean_shoreFoamStrengthSlider.SetValue(weather.oceanShoreFoamStrength);
 		UpdateWaterMedium();
 
 		volumetricCloudsCheckBox.SetCheck(weather.IsVolumetricClouds());
@@ -1509,6 +1541,9 @@ void WeatherWindow::ResizeLayout()
 	layout.add(ocean_windDriftStrengthSlider);
 	layout.add_right(ocean_subsurfaceCheckBox);
 	layout.add(ocean_subsurfaceStrengthSlider);
+	layout.add_right(ocean_shoreFoamCheckBox);
+	layout.add(ocean_shoreFoamWidthSlider);
+	layout.add(ocean_shoreFoamStrengthSlider);
 	layout.add(ocean_waterTypeComboBox);
 	layout.add(ocean_algaeSlider);
 	layout.add(ocean_siltSlider);

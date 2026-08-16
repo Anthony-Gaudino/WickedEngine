@@ -62,6 +62,9 @@ public:
 	wi::gui::Slider ocean_windDriftStrengthSlider;
 	wi::gui::CheckBox ocean_subsurfaceCheckBox;
 	wi::gui::Slider ocean_subsurfaceStrengthSlider;
+	wi::gui::CheckBox ocean_shoreFoamCheckBox;
+	wi::gui::Slider ocean_shoreFoamWidthSlider;
+	wi::gui::Slider ocean_shoreFoamStrengthSlider;
 	wi::gui::ComboBox ocean_waterTypeComboBox;
 	wi::gui::Slider ocean_algaeSlider;
 	wi::gui::Slider ocean_siltSlider;

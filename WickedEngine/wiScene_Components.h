@@ -1837,9 +1837,16 @@ namespace wi::scene
 			OCEAN_WIND_DRIVEN = 1 << 11,
 			OCEAN_WIND_DRIFT = 1 << 12,
 			OCEAN_SUBSURFACE_SCATTERING = 1 << 13,
+			OCEAN_SHORE_FOAM = 1 << 14,
 		};
-		// Subsurface scattering is on by default.
-		uint32_t _flags = OCEAN_SUBSURFACE_SCATTERING;
+		// Subsurface scattering and shoreline foam are on by default, each
+		// having existed before it was given a switch.
+		//
+		// **These defaults do not reach a scene that is loaded.** The archive
+		// overwrites _flags wholesale, so a scene written before a bit existed
+		// reads it back as clear whatever is set here, and a new default-on bit
+		// has to be brought forward by its own version gate in the serializer.
+		uint32_t _flags = OCEAN_SUBSURFACE_SCATTERING | OCEAN_SHORE_FOAM;
 
 		constexpr bool IsOceanEnabled() const { return _flags & OCEAN_ENABLED; }
 		constexpr bool IsRealisticSky() const { return _flags & REALISTIC_SKY; }
@@ -1861,6 +1868,7 @@ namespace wi::scene
 		// scatters towards the eye, giving the green-gold glow through a crest
 		// that is lit from behind.
 		constexpr bool IsOceanSubsurfaceScattering() const { return _flags & OCEAN_SUBSURFACE_SCATTERING; }
+		constexpr bool IsOceanShoreFoam() const { return _flags & OCEAN_SHORE_FOAM; }
 
 		constexpr void SetOceanEnabled(bool value = true) { set_flag(_flags, OCEAN_ENABLED, value); }
 		constexpr void SetRealisticSky(bool value = true) { set_flag(_flags, REALISTIC_SKY, value); }
@@ -1875,6 +1883,7 @@ namespace wi::scene
 		constexpr void SetOceanWindDriven(bool value = true) { set_flag(_flags, OCEAN_WIND_DRIVEN, value); }
 		constexpr void SetOceanWindDrift(bool value = true) { set_flag(_flags, OCEAN_WIND_DRIFT, value); }
 		constexpr void SetOceanSubsurfaceScattering(bool value = true) { set_flag(_flags, OCEAN_SUBSURFACE_SCATTERING, value); }
+		constexpr void SetOceanShoreFoam(bool value = true) { set_flag(_flags, OCEAN_SHORE_FOAM, value); }
 
 		XMFLOAT3 sunColor = XMFLOAT3(0, 0, 0);
 		XMFLOAT3 sunDirection = XMFLOAT3(0, 1, 0);
@@ -1901,6 +1910,14 @@ namespace wi::scene
 		// derived from the water medium, so this is an artistic gain over a
 		// physical result rather than the effect's only control.
 		float oceanSubsurfaceStrength = 1.0f;
+		// Depth of water at which shoreline foam has thinned to 1/e, in
+		// metres, when OCEAN_SHORE_FOAM is set. Widening it moves the whole
+		// falloff seaward rather than pushing a hard edge out.
+		float oceanShoreFoamWidth = 0.5f;
+		// Gain on the shoreline foam, 0 to 1. Also scales how much of the
+		// refraction behind the foam is restored, the two being descriptions
+		// of the same foam.
+		float oceanShoreFoamStrength = 1.0f;
 		float stars = 0.5f;
 		XMFLOAT3 gravity = XMFLOAT3(0, -10, 0);
 		float sky_rotation = 0; // horizontal rotation for skyMap texture (in radians)
