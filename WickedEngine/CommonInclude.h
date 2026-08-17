@@ -255,14 +255,14 @@ template <typename T>
  *
  * @return Smooth interpolated value in [0, 1].
  */
-template <typename T>
+template <std::floating_point T>
 [[nodiscard]] constexpr T smoothstep(T edge0, T edge1, T x) noexcept
 {
 	const T t = saturate((x - edge0) / (edge1 - edge0));
 
 	return t * t * (T(3) - T(2) * t);
 }
- 
+
 /**
  * Concept for types with .x, .y arithmetic members (Vec2-like).
  */
@@ -271,7 +271,7 @@ concept Vec2Like = requires(T v) {
     { v.x } -> std::convertible_to<std::common_type_t<decltype(v.x)>>;
     { v.y } -> std::convertible_to<std::common_type_t<decltype(v.y)>>;
 } && std::is_arithmetic_v<decltype(std::declval<T>().x)> && std::is_arithmetic_v<decltype(std::declval<T>().y)>;
- 
+
 /**
  * Concept for types with .x, .y, .z, .w arithmetic members (Vec4-like).
  */
@@ -283,7 +283,7 @@ concept Vec4Like = requires(T v) {
     { v.w } -> std::convertible_to<std::common_type_t<decltype(v.w)>>;
 } && std::is_arithmetic_v<decltype(std::declval<T>().x)> && std::is_arithmetic_v<decltype(std::declval<T>().y)> &&
    std::is_arithmetic_v<decltype(std::declval<T>().z)> && std::is_arithmetic_v<decltype(std::declval<T>().w)>;
- 
+
 /**
  * Bilinear interpolation on a 2x2 grid.
  *
