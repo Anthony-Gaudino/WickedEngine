@@ -11,6 +11,7 @@
 #pragma once
 
 #include <cassert>
+#include <atomic>
 #include <bit>
 #include <cmath>
 #include <type_traits>
@@ -815,403 +816,107 @@ struct StackVector
 
 /*
 ################################################################################
-CPU Intrinsics
-################################################################################
-*/
-
-// Windows, Xbox:
-#if defined(_WIN32)
-#include <intrin.h>
-#if defined(_M_ARM64)
-#include <arm64intr.h>
-#endif // _M_ARM64
-
-/**
- * Atomically performs bitwise AND on a 32-bit value.
- *
- * @param[in,out] ptr - Pointer to the value.
- * @param[in] mask - Bitmask to AND with.
- *
- * @return The original value before the operation.
- */
-[[nodiscard]] inline long AtomicAnd(
-	volatile long* ptr,
-	long mask
-) noexcept
-{
-	return _InterlockedAnd(ptr, mask);
-}
-
-/**
- * Atomically performs bitwise AND on a 64-bit value.
- *
- * @param[in,out] ptr - Pointer to the value.
- * @param[in] mask - Bitmask to AND with.
- *
- * @return The original value before the operation.
- */
-[[nodiscard]] inline long long AtomicAnd(
-	volatile long long* ptr,
-	long long mask
-) noexcept
-{
-	return _InterlockedAnd64(ptr, mask);
-}
-
-/**
- * Atomically performs bitwise OR on a 32-bit value.
- *
- * @param[in,out] ptr - Pointer to the value.
- * @param[in] mask - Bitmask to OR with.
- *
- * @return The original value before the operation.
- */
-[[nodiscard]] inline long AtomicOr(
-	volatile long* ptr,
-	long mask
-) noexcept
-{
-	return _InterlockedOr(ptr, mask);
-}
-
-/**
- * Atomically performs bitwise OR on a 64-bit value.
- *
- * @param[in,out] ptr - Pointer to the value.
- * @param[in] mask - Bitmask to OR with.
- *
- * @return The original value before the operation.
- */
-[[nodiscard]] inline long long AtomicOr(
-	volatile long long* ptr,
-	long long mask
-) noexcept
-{
-	return _InterlockedOr64(ptr, mask);
-}
-
-/**
- * Atomically performs bitwise XOR on a 32-bit value.
- *
- * @param[in,out] ptr - Pointer to the value.
- * @param[in] mask - Bitmask to XOR with.
- *
- * @return The original value before the operation.
- */
-[[nodiscard]] inline long AtomicXor(
-	volatile long* ptr,
-	long mask
-) noexcept
-{
-	return _InterlockedXor(ptr, mask);
-}
-
-/**
- * Atomically performs bitwise XOR on a 64-bit value.
- *
- * @param[in,out] ptr - Pointer to the value.
- * @param[in] mask - Bitmask to XOR with.
- *
- * @return The original value before the operation.
- */
-[[nodiscard]] inline long long AtomicXor(
-	volatile long long* ptr,
-	long long mask
-) noexcept
-{
-	return _InterlockedXor64(ptr, mask);
-}
-
-/**
- * Atomically adds a value to a 32-bit integer.
- *
- * @param[in,out] ptr - Pointer to the value.
- * @param[in] val - Value to add.
- *
- * @return The original value before the addition.
- */
-[[nodiscard]] inline long AtomicAdd(
-	volatile long* ptr,
-	long val
-) noexcept
-{
-	return _InterlockedExchangeAdd(ptr, val);
-}
-
-/**
- * Atomically adds a value to a 64-bit integer.
- *
- * @param[in,out] ptr - Pointer to the value.
- * @param[in] val - Value to add.
- *
- * @return The original value before the addition.
- */
-[[nodiscard]] inline long long AtomicAdd(
-	volatile long long* ptr,
-	long long val
-) noexcept
-{
-	return _InterlockedExchangeAdd64(ptr, val);
-}
-
-/**
- * Atomically loads a 32-bit value.
- *
- * @param[in] ptr - Pointer to the value.
- *
- * @return The loaded value.
- */
-[[nodiscard]] inline long AtomicLoad(
-	const volatile long* ptr
-) noexcept
-{
-	// _InterlockedOr with 0 acts as atomic load on Windows.
-	// The cast is safe because atomic load doesn't modify memory.
-	return _InterlockedOr((volatile long*)ptr, 0);
-}
-
-/**
- * Atomically loads a 64-bit value.
- *
- * @param[in] ptr - Pointer to the value.
- *
- * @return The loaded value.
- */
-[[nodiscard]] inline long long AtomicLoad(
-	const volatile long long* ptr
-) noexcept
-{
-	return _InterlockedOr64((volatile long long*)ptr, 0);
-}
-
-/*
-################################################################################
-Bit Manipulation (Windows)
+Atomic Operations
 ################################################################################
 */
 
 /**
- * Counts the number of set bits (population count) in an unsigned integer.
- *
- * @param[in] value - Unsigned integer value.
- *
- * @return Number of set bits (0 to bit width of type).
- */
-template <typename T>
-[[nodiscard]] inline T countbits(T value) noexcept
-{
-	static_assert(std::is_unsigned_v<T>, "countbits requires unsigned integer type");
-
-	return static_cast<T>(std::popcount(value));
-}
-
-/**
- * Finds the index of the most significant set bit (0-based from MSB).
- *
- * Returns bit width if value is 0.
- *
- * @param[in] value - Unsigned integer value.
- *
- * @return Index of most significant set bit, or bit width if value is 0.
- *
- * @note Returns bit width for 0 input to distinguish from bit 0 being set.
- */
-template <typename T>
-[[nodiscard]] inline T firstbithigh(T value) noexcept
-{
-	static_assert(std::is_unsigned_v<T>, "firstbithigh requires unsigned integer type");
-
-	if (value == 0)
-	{
-		return static_cast<T>(sizeof(T) * 8);
-	}
-
-	return static_cast<T>((sizeof(T) * 8 - 1) - std::countl_zero(value));
-}
-
-/**
- * Finds the index of the least significant set bit (0-based from LSB).
- *
- * Returns bit width if value is 0.
- *
- * @param[in] value - Unsigned integer value.
- *
- * @return Index of least significant set bit, or bit width if value is 0.
- */
-template <typename T>
-[[nodiscard]] inline T firstbitlow(T value) noexcept
-{
-	static_assert(std::is_unsigned_v<T>, "firstbitlow requires unsigned integer type");
-
-	if (value == 0)
-	{
-		return static_cast<T>(sizeof(T) * 8);
-	}
-
-	return static_cast<T>(std::countr_zero(value));
-}
-#endif // _WIN32
-
-/*
-################################################################################
-Atomic Operations (Linux/PlayStation)
-################################################################################
-*/
-
-/**
- * Atomically performs bitwise AND on a 32-bit value.
+ * Atomically performs bitwise AND on an integer.
  *
  * @param[in,out] ptr - Pointer to the value.
  * @param[in] mask - Bitmask to AND with.
  *
  * @return The original value before the operation.
  */
-[[nodiscard]] inline long AtomicAnd(
-	volatile long* ptr,
-	long mask
-) noexcept
+template <typename T, typename U>
+[[nodiscard]] inline T AtomicAnd(volatile T* ptr, U mask) noexcept
 {
-	return __atomic_fetch_and(ptr, mask, __ATOMIC_SEQ_CST);
+	static_assert(std::is_integral_v<T> && (sizeof(T) == 4 || sizeof(T) == 8),
+		"AtomicAnd requires 32-bit or 64-bit integral type");
+	static_assert(std::is_integral_v<U>, "Mask must be integral type");
+
+	std::atomic_ref<T> ref(*const_cast<T*>(ptr));
+
+	return ref.fetch_and(static_cast<T>(mask), std::memory_order_acq_rel);
 }
 
 /**
- * Atomically performs bitwise AND on a 64-bit value.
- *
- * @param[in,out] ptr - Pointer to the value.
- * @param[in] mask - Bitmask to AND with.
- *
- * @return The original value before the operation.
- */
-[[nodiscard]] inline long long AtomicAnd(
-	volatile long long* ptr,
-	long long mask
-) noexcept
-{
-	return __atomic_fetch_and(ptr, mask, __ATOMIC_SEQ_CST);
-}
-
-/**
- * Atomically performs bitwise OR on a 32-bit value.
+ * Atomically performs bitwise OR on an integer.
  *
  * @param[in,out] ptr - Pointer to the value.
  * @param[in] mask - Bitmask to OR with.
  *
  * @return The original value before the operation.
  */
-[[nodiscard]] inline long AtomicOr(
-	volatile long* ptr,
-	long mask
-) noexcept
+template <typename T, typename U>
+[[nodiscard]] inline T AtomicOr(volatile T* ptr, U mask) noexcept
 {
-	return __atomic_fetch_or(ptr, mask, __ATOMIC_SEQ_CST);
+	static_assert(std::is_integral_v<T> && (sizeof(T) == 4 || sizeof(T) == 8),
+		"AtomicOr requires 32-bit or 64-bit integral type");
+	static_assert(std::is_integral_v<U>, "Mask must be integral type");
+
+	std::atomic_ref<T> ref(*const_cast<T*>(ptr));
+
+	return ref.fetch_or(static_cast<T>(mask), std::memory_order_acq_rel);
 }
 
 /**
- * Atomically performs bitwise OR on a 64-bit value.
- *
- * @param[in,out] ptr - Pointer to the value.
- * @param[in] mask - Bitmask to OR with.
- *
- * @return The original value before the operation.
- */
-[[nodiscard]] inline long long AtomicOr(
-	volatile long long* ptr,
-	long long mask
-) noexcept
-{
-	return __atomic_fetch_or(ptr, mask, __ATOMIC_SEQ_CST);
-}
-
-/**
- * Atomically performs bitwise XOR on a 32-bit value.
+ * Atomically performs bitwise XOR on an integer.
  *
  * @param[in,out] ptr - Pointer to the value.
  * @param[in] mask - Bitmask to XOR with.
  *
  * @return The original value before the operation.
  */
-[[nodiscard]] inline long AtomicXor(
-	volatile long* ptr,
-	long mask
-) noexcept
+template <typename T, typename U>
+[[nodiscard]] inline T AtomicXor(volatile T* ptr, U mask) noexcept
 {
-	return __atomic_fetch_xor(ptr, mask, __ATOMIC_SEQ_CST);
+	static_assert(std::is_integral_v<T> && (sizeof(T) == 4 || sizeof(T) == 8),
+		"AtomicXor requires 32-bit or 64-bit integral type");
+	static_assert(std::is_integral_v<U>, "Mask must be integral type");
+
+	std::atomic_ref<T> ref(*const_cast<T*>(ptr));
+
+	return ref.fetch_xor(static_cast<T>(mask), std::memory_order_acq_rel);
 }
 
 /**
- * Atomically performs bitwise XOR on a 64-bit value.
- *
- * @param[in,out] ptr - Pointer to the value.
- * @param[in] mask - Bitmask to XOR with.
- *
- * @return The original value before the operation.
- */
-[[nodiscard]] inline long long AtomicXor(
-	volatile long long* ptr,
-	long long mask
-) noexcept
-{
-	return __atomic_fetch_xor(ptr, mask, __ATOMIC_SEQ_CST);
-}
-
-/**
- * Atomically adds a value to a 32-bit integer.
+ * Atomically adds a value to an integer.
  *
  * @param[in,out] ptr - Pointer to the value.
  * @param[in] val - Value to add.
  *
  * @return The original value before the addition.
  */
-[[nodiscard]] inline long AtomicAdd(
-	volatile long* ptr,
-	long val
-) noexcept
+template <typename T, typename U>
+[[nodiscard]] inline T AtomicAdd(volatile T* ptr, U val) noexcept
 {
-	return __atomic_fetch_add(ptr, val, __ATOMIC_SEQ_CST);
+	static_assert(std::is_integral_v<T> && (sizeof(T) == 4 || sizeof(T) == 8),
+		"AtomicAdd requires 32-bit or 64-bit integral type");
+	static_assert(std::is_integral_v<U>, "Value must be integral type");
+
+	std::atomic_ref<T> ref(*const_cast<T*>(ptr));
+
+	return ref.fetch_add(static_cast<T>(val), std::memory_order_acq_rel);
 }
 
 /**
- * Atomically adds a value to a 64-bit integer.
- *
- * @param[in,out] ptr - Pointer to the value.
- * @param[in] val - Value to add.
- *
- * @return The original value before the addition.
- */
-[[nodiscard]] inline long long AtomicAdd(
-	volatile long long* ptr,
-	long long val
-) noexcept
-{
-	return __atomic_fetch_add(ptr, val, __ATOMIC_SEQ_CST);
-}
-
-/**
- * Atomically loads a 32-bit value.
+ * Atomically loads an integer.
  *
  * @param[in] ptr - Pointer to the value.
  *
  * @return The loaded value.
  */
-[[nodiscard]] inline long AtomicLoad(
-	const volatile long* ptr
-) noexcept
+template <typename T>
+[[nodiscard]] inline T AtomicLoad(const volatile T* ptr) noexcept
 {
-	return __atomic_load_n(ptr, __ATOMIC_SEQ_CST);
-}
+	static_assert(std::is_integral_v<T> && (sizeof(T) == 4 || sizeof(T) == 8),
+		"AtomicLoad requires 32-bit or 64-bit integral type");
 
-/**
- * Atomically loads a 64-bit value.
- *
- * @param[in] ptr - Pointer to the value.
- *
- * @return The loaded value.
- */
-[[nodiscard]] inline long long AtomicLoad(
-	const volatile long long* ptr
-) noexcept
-{
-	return __atomic_load_n(ptr, __ATOMIC_SEQ_CST);
+	// Cast away volatile for std::atomic_ref (which doesn't accept volatile)
+	std::atomic_ref<const T> ref(*const_cast<const T*>(ptr));
+
+	return ref.load(std::memory_order_acquire);
 }
 
 /*
