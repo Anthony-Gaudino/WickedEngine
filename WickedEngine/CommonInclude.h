@@ -364,7 +364,7 @@ struct StackString
 	 *
 	 * @return Null-terminated C-string pointer.
 	 */
-	[[nodiscard]] constexpr const char* const c_str() const noexcept
+	[[nodiscard]] constexpr char* const c_str() const noexcept
 	{
 		return chars;
 	}
