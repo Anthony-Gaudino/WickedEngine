@@ -1085,8 +1085,8 @@ template<BitmaskEnum E>
  * @param[in] flag - Flag to set or clear.
  * @param[in] set - true to set, false to clear.
  */
-template<typename T, typename U>
-constexpr void set_flag(T& flags, U flag, bool set) noexcept
+template <std::integral T, typename E>
+constexpr void set_flag(T& flags, E flag, bool set) noexcept
 {
 	if (set)
 	{
