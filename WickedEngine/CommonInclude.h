@@ -546,12 +546,12 @@ struct StackVector
 	std::size_t last = 0;
 	
 	/**
-	 * Sets the logical size of the vector.
+	 * Sets the logical size of the vector (resizes).
 	 *
 	 * @param[in] size - New logical size. Must not exceed compile-time
 	 *                   capacity.
 	 */
-	constexpr void set_size(std::size_t size) noexcept
+	constexpr void resize(std::size_t size) noexcept
 	{
 		assert(size <= count);
 
