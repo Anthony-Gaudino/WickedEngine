@@ -17,6 +17,7 @@
 #include <cmath>
 #include <numeric>
 #include <type_traits>
+#include <utility>
 
 /**
  * Array size helper macro.
@@ -1029,9 +1030,7 @@ using EnableIfBitmaskOps = std::enable_if_t<
 template<typename E, EnableIfBitmaskOps<E> = 0>
 constexpr E operator|(E lhs, E rhs) noexcept
 {
-	using U = std::underlying_type_t<E>;
-
-	return static_cast<E>(static_cast<U>(lhs) | static_cast<U>(rhs));
+	return static_cast<E>(std::to_underlying(lhs) | std::to_underlying(rhs));
 }
 
 /**
@@ -1045,9 +1044,7 @@ constexpr E operator|(E lhs, E rhs) noexcept
 template<typename E, EnableIfBitmaskOps<E> = 0>
 constexpr E operator|=(E& lhs, E rhs) noexcept
 {
-	using U = std::underlying_type_t<E>;
-
-	lhs = static_cast<E>(static_cast<U>(lhs) | static_cast<U>(rhs));
+	lhs = static_cast<E>(std::to_underlying(lhs) | std::to_underlying(rhs));
 
 	return lhs;
 }
@@ -1063,9 +1060,7 @@ constexpr E operator|=(E& lhs, E rhs) noexcept
 template<typename E, EnableIfBitmaskOps<E> = 0>
 constexpr E operator&(E lhs, E rhs) noexcept
 {
-	using U = std::underlying_type_t<E>;
-
-	return static_cast<E>(static_cast<U>(lhs) & static_cast<U>(rhs));
+	return static_cast<E>(std::to_underlying(lhs) & std::to_underlying(rhs));
 }
 
 /**
@@ -1079,9 +1074,7 @@ constexpr E operator&(E lhs, E rhs) noexcept
 template<typename E, EnableIfBitmaskOps<E> = 0>
 constexpr E operator&=(E& lhs, E rhs) noexcept
 {
-	using U = std::underlying_type_t<E>;
-
-	lhs = static_cast<E>(static_cast<U>(lhs) & static_cast<U>(rhs));
+	lhs = static_cast<E>(std::to_underlying(lhs) & std::to_underlying(rhs));
 
 	return lhs;
 }
@@ -1096,11 +1089,7 @@ constexpr E operator&=(E& lhs, E rhs) noexcept
 template<typename E, EnableIfBitmaskOps<E> = 0>
 constexpr E operator~(E rhs) noexcept
 {
-	using U = std::underlying_type_t<E>;
-
-	rhs = static_cast<E>(~static_cast<U>(rhs));
-
-	return rhs;
+	return static_cast<E>(~std::to_underlying(rhs));
 }
 
 /**
