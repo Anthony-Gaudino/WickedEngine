@@ -799,6 +799,25 @@ Atomic Operations
 */
 
 /**
+ * Concept for 32-bit or 64-bit integral types (for atomic operations).
+ */
+template <typename T>
+concept AtomicIntegral = std::is_integral_v<T>
+    && (sizeof(T) == 4 || sizeof(T) == 8);
+
+/**
+ * Concept for integral types (for bit manipulation).
+ */
+template <typename T>
+concept Integral = std::is_integral_v<T>;
+
+/**
+ * Concept for unsigned integral types.
+ */
+template <typename T>
+concept UnsignedIntegral = std::is_unsigned_v<T>;
+
+/**
  * Atomically performs bitwise AND on an integer.
  *
  * @param[in,out] ptr - Pointer to the value.
@@ -806,12 +825,9 @@ Atomic Operations
  *
  * @return The original value before the operation.
  */
-template <typename T, typename U>
+template <AtomicIntegral T, Integral U>
 [[nodiscard]] inline T AtomicAnd(volatile T* ptr, U mask) noexcept
 {
-	static_assert(std::is_integral_v<T> && (sizeof(T) == 4 || sizeof(T) == 8),
-		"AtomicAnd requires 32-bit or 64-bit integral type");
-	static_assert(std::is_integral_v<U>, "Mask must be integral type");
 
 	std::atomic_ref<T> ref(*const_cast<T*>(ptr));
 
@@ -826,12 +842,9 @@ template <typename T, typename U>
  *
  * @return The original value before the operation.
  */
-template <typename T, typename U>
+template <AtomicIntegral T, Integral U>
 [[nodiscard]] inline T AtomicOr(volatile T* ptr, U mask) noexcept
 {
-	static_assert(std::is_integral_v<T> && (sizeof(T) == 4 || sizeof(T) == 8),
-		"AtomicOr requires 32-bit or 64-bit integral type");
-	static_assert(std::is_integral_v<U>, "Mask must be integral type");
 
 	std::atomic_ref<T> ref(*const_cast<T*>(ptr));
 
@@ -846,12 +859,9 @@ template <typename T, typename U>
  *
  * @return The original value before the operation.
  */
-template <typename T, typename U>
+template <AtomicIntegral T, Integral U>
 [[nodiscard]] inline T AtomicXor(volatile T* ptr, U mask) noexcept
 {
-	static_assert(std::is_integral_v<T> && (sizeof(T) == 4 || sizeof(T) == 8),
-		"AtomicXor requires 32-bit or 64-bit integral type");
-	static_assert(std::is_integral_v<U>, "Mask must be integral type");
 
 	std::atomic_ref<T> ref(*const_cast<T*>(ptr));
 
@@ -866,12 +876,9 @@ template <typename T, typename U>
  *
  * @return The original value before the addition.
  */
-template <typename T, typename U>
+template <AtomicIntegral T, Integral U>
 [[nodiscard]] inline T AtomicAdd(volatile T* ptr, U val) noexcept
 {
-	static_assert(std::is_integral_v<T> && (sizeof(T) == 4 || sizeof(T) == 8),
-		"AtomicAdd requires 32-bit or 64-bit integral type");
-	static_assert(std::is_integral_v<U>, "Value must be integral type");
 
 	std::atomic_ref<T> ref(*const_cast<T*>(ptr));
 
@@ -885,11 +892,9 @@ template <typename T, typename U>
  *
  * @return The loaded value.
  */
-template <typename T>
+template <AtomicIntegral T>
 [[nodiscard]] inline T AtomicLoad(const volatile T* ptr) noexcept
 {
-	static_assert(std::is_integral_v<T> && (sizeof(T) == 4 || sizeof(T) == 8),
-		"AtomicLoad requires 32-bit or 64-bit integral type");
 
 	// Cast away volatile for std::atomic_ref (which doesn't accept volatile)
 	std::atomic_ref<const T> ref(*const_cast<const T*>(ptr));
@@ -910,10 +915,9 @@ Bit Manipulation (Linux/PlayStation)
  *
  * @return Number of set bits (0 to bit width of type).
  */
-template <typename T>
+template <UnsignedIntegral T>
 [[nodiscard]] inline T countbits(T value) noexcept
 {
-	static_assert(std::is_unsigned_v<T>, "countbits requires unsigned integer type");
 
 	return static_cast<T>(std::popcount(value));
 }
@@ -929,10 +933,9 @@ template <typename T>
  *
  * @note Returns bit width for 0 input to distinguish from bit 0 being set.
  */
-template <typename T>
+template <UnsignedIntegral T>
 [[nodiscard]] inline T firstbithigh(T value) noexcept
 {
-	static_assert(std::is_unsigned_v<T>, "firstbithigh requires unsigned integer type");
 
 	if (value == 0)
 	{
@@ -951,10 +954,9 @@ template <typename T>
  *
  * @return Index of least significant set bit, or bit width if value is 0.
  */
-template <typename T>
+template <UnsignedIntegral T>
 [[nodiscard]] inline T firstbitlow(T value) noexcept
 {
-	static_assert(std::is_unsigned_v<T>, "firstbitlow requires unsigned integer type");
 
 	if (value == 0)
 	{
