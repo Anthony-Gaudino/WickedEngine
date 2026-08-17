@@ -196,14 +196,9 @@ template <typename T>
  *
  * @return Fractional part of x.
  */
-template <typename T>
+template <std::floating_point T>
 [[nodiscard]] constexpr T frac(T x) noexcept
 {
-	static_assert(
-		std::is_floating_point_v<T>,
-		"frac only supports floating-point types"
-	);
-
 	T f = x - std::trunc(x);
 
 	// std::trunc returns fractional part with same sign as x.
