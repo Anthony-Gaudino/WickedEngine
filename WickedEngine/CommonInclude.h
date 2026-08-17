@@ -689,7 +689,7 @@ struct StackVector
 	 *
 	 * @note Asserts if vector is empty.
 	 */
-	constexpr const T& back() const noexcept
+	[[nodiscard]] constexpr const T& back() const noexcept
 	{
 		assert(!empty());
 
@@ -703,7 +703,7 @@ struct StackVector
 	 *
 	 * @note Asserts if vector is empty.
 	 */
-	constexpr T& back() noexcept
+	[[nodiscard]] constexpr T& back() noexcept
 	{
 		assert(!empty());
 
@@ -717,7 +717,7 @@ struct StackVector
 	 *
 	 * @note Asserts if vector is empty.
 	 */
-	constexpr const T& front() const noexcept
+	[[nodiscard]] constexpr const T& front() const noexcept
 	{
 		assert(!empty());
 
@@ -731,7 +731,7 @@ struct StackVector
 	 *
 	 * @note Asserts if vector is empty.
 	 */
-	constexpr T& front() noexcept
+	[[nodiscard]] constexpr T& front() noexcept
 	{
 		assert(!empty());
 
@@ -743,7 +743,7 @@ struct StackVector
 	 *
 	 * @return Reference to the newly constructed element.
 	 */
-	constexpr T& emplace_back() noexcept
+	[[nodiscard]] constexpr T& emplace_back() noexcept
 	{
 		push_back({});
 
@@ -759,7 +759,7 @@ struct StackVector
 	 *
 	 * @note Asserts if index >= size().
 	 */
-	constexpr const T& operator[](std::size_t index) const noexcept
+	[[nodiscard]] constexpr const T& operator[](std::size_t index) const noexcept
 	{
 		assert(index < last);
 
@@ -775,7 +775,7 @@ struct StackVector
 	 *
 	 * @note Asserts if index >= size().
 	 */
-	constexpr T& operator[](std::size_t index) noexcept
+	[[nodiscard]] constexpr T& operator[](std::size_t index) noexcept
 	{
 		assert(index < last);
 
@@ -791,7 +791,7 @@ struct StackVector
 	 *
 	 * @note Asserts if index >= size().
 	 */
-	constexpr const T& at(std::size_t index) const noexcept
+	[[nodiscard]] constexpr const T& at(std::size_t index) const noexcept
 	{
 		assert(index < last);
 
@@ -807,7 +807,7 @@ struct StackVector
 	 *
 	 * @note Asserts if index >= size().
 	 */
-	constexpr T& at(std::size_t index) noexcept
+	[[nodiscard]] constexpr T& at(std::size_t index) noexcept
 	{
 		assert(index < last);
 
@@ -1027,7 +1027,7 @@ using EnableIfBitmaskOps = std::enable_if_t<
  * @return Result of bitwise OR.
  */
 template<typename E, EnableIfBitmaskOps<E> = 0>
-constexpr E operator|(E lhs, E rhs) noexcept
+[[nodiscard]] constexpr E operator|(E lhs, E rhs) noexcept
 {
 	return static_cast<E>(std::to_underlying(lhs) | std::to_underlying(rhs));
 }
@@ -1041,7 +1041,7 @@ constexpr E operator|(E lhs, E rhs) noexcept
  * @return Reference to modified lhs.
  */
 template<typename E, EnableIfBitmaskOps<E> = 0>
-constexpr E operator|=(E& lhs, E rhs) noexcept
+[[nodiscard]] constexpr E operator|=(E& lhs, E rhs) noexcept
 {
 	lhs = static_cast<E>(std::to_underlying(lhs) | std::to_underlying(rhs));
 
@@ -1057,7 +1057,7 @@ constexpr E operator|=(E& lhs, E rhs) noexcept
  * @return Result of bitwise AND.
  */
 template<typename E, EnableIfBitmaskOps<E> = 0>
-constexpr E operator&(E lhs, E rhs) noexcept
+[[nodiscard]] constexpr E operator&(E lhs, E rhs) noexcept
 {
 	return static_cast<E>(std::to_underlying(lhs) & std::to_underlying(rhs));
 }
@@ -1071,7 +1071,7 @@ constexpr E operator&(E lhs, E rhs) noexcept
  * @return Reference to modified lhs.
  */
 template<typename E, EnableIfBitmaskOps<E> = 0>
-constexpr E operator&=(E& lhs, E rhs) noexcept
+[[nodiscard]] constexpr E operator&=(E& lhs, E rhs) noexcept
 {
 	lhs = static_cast<E>(std::to_underlying(lhs) & std::to_underlying(rhs));
 
@@ -1086,7 +1086,7 @@ constexpr E operator&=(E& lhs, E rhs) noexcept
  * @return Result of bitwise NOT.
  */
 template<typename E, EnableIfBitmaskOps<E> = 0>
-constexpr E operator~(E rhs) noexcept
+[[nodiscard]] constexpr E operator~(E rhs) noexcept
 {
 	return static_cast<E>(~std::to_underlying(rhs));
 }
