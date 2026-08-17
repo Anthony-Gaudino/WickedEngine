@@ -364,7 +364,7 @@ struct StackString
 	 *
 	 * @return Null-terminated C-string pointer.
 	 */
-	[[nodiscard]] constexpr char* const c_str() const noexcept
+	[[nodiscard]] constexpr const char* c_str() const noexcept
 	{
 		return chars;
 	}
@@ -923,55 +923,44 @@ Bit Manipulation (Linux/PlayStation)
  *
  * @return Number of set bits (0 to bit width of type).
  */
-template <UnsignedIntegral T>
-[[nodiscard]] inline T countbits(T value) noexcept
+template <std::unsigned_integral T>
+[[nodiscard]] constexpr int countbits(T value) noexcept
 {
-
-	return static_cast<T>(std::popcount(value));
+	return std::popcount(value);
 }
 
 /**
- * Finds the index of the most significant set bit (0-based from MSB).
+ * Finds the index of the most significant set bit (0-based from LSB).
  *
- * Returns bit width if value is 0.
+ * Returns the bit width if value is 0.
  *
  * @param[in] value - Unsigned integer value.
  *
  * @return Index of most significant set bit, or bit width if value is 0.
- *
- * @note Returns bit width for 0 input to distinguish from bit 0 being set.
  */
-template <UnsignedIntegral T>
-[[nodiscard]] inline T firstbithigh(T value) noexcept
+template <std::unsigned_integral T>
+[[nodiscard]] constexpr int firstbithigh(T value) noexcept
 {
-
-	if (value == 0)
-	{
-		return static_cast<T>(sizeof(T) * 8);
-	}
-
-	return static_cast<T>((sizeof(T) * 8 - 1) - std::countl_zero(value));
+	return value == 0
+		? std::numeric_limits<T>::digits
+		: std::bit_width(value) - 1;
 }
 
 /**
  * Finds the index of the least significant set bit (0-based from LSB).
  *
- * Returns bit width if value is 0.
+ * Returns the bit width if value is 0.
  *
  * @param[in] value - Unsigned integer value.
  *
  * @return Index of least significant set bit, or bit width if value is 0.
  */
-template <UnsignedIntegral T>
-[[nodiscard]] inline T firstbitlow(T value) noexcept
+template <std::unsigned_integral T>
+[[nodiscard]] constexpr int firstbitlow(T value) noexcept
 {
-
-	if (value == 0)
-	{
-		return static_cast<T>(sizeof(T) * 8);
-	}
-
-	return static_cast<T>(std::countr_zero(value));
+	return value == 0
+		? std::numeric_limits<T>::digits
+		: std::countr_zero(value);
 }
 
 /*
