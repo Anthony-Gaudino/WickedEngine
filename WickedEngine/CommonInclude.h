@@ -254,10 +254,18 @@ template <typename T>
  * @param[in] x - Input value.
  *
  * @return Smooth interpolated value in [0, 1].
+ *
+ * @note If edge0 == edge1, returns 0 (degenerate case).
  */
 template <std::floating_point T>
 [[nodiscard]] constexpr T smoothstep(T edge0, T edge1, T x) noexcept
 {
+	// Handle degenerate case where edge0 == edge1 (divide by zero)
+	if (edge1 == edge0)
+	{
+		return T(0);
+	}
+
 	const T t = saturate((x - edge0) / (edge1 - edge0));
 
 	return t * t * (T(3) - T(2) * t);
