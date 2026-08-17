@@ -11,9 +11,11 @@
 #pragma once
 
 #include <cassert>
+#include <algorithm>
 #include <atomic>
 #include <bit>
 #include <cmath>
+#include <numeric>
 #include <type_traits>
 
 /**
@@ -168,7 +170,7 @@ template <typename T>
 template <typename T>
 [[nodiscard]] constexpr T clamp(T x, T a, T b) noexcept
 {
-	return x < a ? a : (x > b ? b : x);
+	return std::clamp(x, a, b);
 }
 
 /**
@@ -223,7 +225,7 @@ template <typename T>
 template <typename T>
 [[nodiscard]] constexpr T lerp(T x, T y, T a) noexcept
 {
-	return x + a * (y - x);
+	return std::lerp(x, y, a);
 }
 
 /**
