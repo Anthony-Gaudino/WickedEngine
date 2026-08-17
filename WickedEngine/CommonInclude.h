@@ -11,6 +11,7 @@
 #pragma once
 
 #include <cassert>
+#include <bit>
 #include <cmath>
 #include <type_traits>
 
@@ -990,176 +991,66 @@ Bit Manipulation (Windows)
 */
 
 /**
- * Counts the number of set bits (population count) in a 32-bit value.
+ * Counts the number of set bits (population count) in an unsigned integer.
  *
- * @param[in] value - 32-bit integer.
+ * @param[in] value - Unsigned integer value.
  *
- * @return Number of set bits (0-32).
+ * @return Number of set bits (0 to bit width of type).
  */
-[[nodiscard]] inline unsigned int countbits(unsigned int value) noexcept
+template <typename T>
+[[nodiscard]] inline T countbits(T value) noexcept
 {
-	return __popcnt(value);
-}
+	static_assert(std::is_unsigned_v<T>, "countbits requires unsigned integer type");
 
-/**
- * Counts the number of set bits (population count) in a 64-bit value.
- *
- * @param[in] value - 64-bit integer.
- *
- * @return Number of set bits (0-64).
- */
-[[nodiscard]] inline unsigned long countbits(unsigned long value) noexcept
-{
-	return (unsigned long)__popcnt64((unsigned long long)value);
-}
-
-/**
- * Counts the number of set bits (population count) in a 64-bit value.
- *
- * @param[in] value - 64-bit integer.
- *
- * @return Number of set bits (0-64).
- */
-[[nodiscard]] inline unsigned long long countbits(
-	unsigned long long value
-) noexcept
-{
-	return __popcnt64(value);
+	return static_cast<T>(std::popcount(value));
 }
 
 /**
  * Finds the index of the most significant set bit (0-based from MSB).
  *
- * Returns bit width (32) if value is 0.
+ * Returns bit width if value is 0.
  *
- * @param[in] value - 32-bit integer.
+ * @param[in] value - Unsigned integer value.
  *
- * @return Index of most significant set bit (0-31), or 32 if value is 0.
+ * @return Index of most significant set bit, or bit width if value is 0.
  *
  * @note Returns bit width for 0 input to distinguish from bit 0 being set.
  */
-[[nodiscard]] inline unsigned int firstbithigh(unsigned int value) noexcept
+template <typename T>
+[[nodiscard]] inline T firstbithigh(T value) noexcept
 {
-	unsigned long bit_index;
+	static_assert(std::is_unsigned_v<T>, "firstbithigh requires unsigned integer type");
 
-	if (_BitScanReverse(&bit_index, (unsigned long)value))
+	if (value == 0)
 	{
-		return 31u - (unsigned int)bit_index;
+		return static_cast<T>(sizeof(T) * 8);
 	}
 
-	return 32u;
-}
-
-/**
- * Finds the index of the most significant set bit in a 64-bit value.
- *
- * Returns bit width (32) if value is 0.
- *
- * @param[in] value - 64-bit integer (on Windows, unsigned long is 32-bit).
- *
- * @return Index of most significant set bit (0-31), or 32 if value is 0.
- */
-[[nodiscard]] inline unsigned long firstbithigh(unsigned long value) noexcept
-{
-	unsigned long bit_index;
-
-	if (_BitScanReverse64(&bit_index, (unsigned long long)value))
-	{
-		return 31ul - bit_index;
-	}
-
-	return 32ul;
-}
-
-/**
- * Finds the index of the most significant set bit in a 64-bit value.
- *
- * Returns bit width (64) if value is 0.
- *
- * @param[in] value - 64-bit integer.
- *
- * @return Index of most significant set bit (0-63), or 64 if value is 0.
- */
-[[nodiscard]] inline unsigned long long firstbithigh(
-	unsigned long long value
-) noexcept
-{
-	unsigned long bit_index;
-
-	if (_BitScanReverse64(&bit_index, value))
-	{
-		return 63ull - bit_index;
-	}
-
-	return 64ull;
+	return static_cast<T>((sizeof(T) * 8 - 1) - std::countl_zero(value));
 }
 
 /**
  * Finds the index of the least significant set bit (0-based from LSB).
  *
- * Returns bit width (32) if value is 0.
+ * Returns bit width if value is 0.
  *
- * @param[in] value - 32-bit integer.
+ * @param[in] value - Unsigned integer value.
  *
- * @return Index of least significant set bit (0-31), or 32 if value is 0.
+ * @return Index of least significant set bit, or bit width if value is 0.
  */
-[[nodiscard]] inline unsigned int firstbitlow(unsigned int value) noexcept
+template <typename T>
+[[nodiscard]] inline T firstbitlow(T value) noexcept
 {
-	unsigned long bit_index;
+	static_assert(std::is_unsigned_v<T>, "firstbitlow requires unsigned integer type");
 
-	if (_BitScanForward(&bit_index, value))
+	if (value == 0)
 	{
-		return (unsigned int)bit_index;
+		return static_cast<T>(sizeof(T) * 8);
 	}
 
-	return 32u;
+	return static_cast<T>(std::countr_zero(value));
 }
-
-/**
- * Finds the index of the least significant set bit in a 64-bit value (on
- * Windows, unsigned long is 32-bit).
- *
- * Returns bit width (32) if value is 0.
- *
- * @param[in] value - 64-bit integer (on Windows, unsigned long is 32-bit).
- *
- * @return Index of least significant set bit (0-31), or 32 if value is 0.
- */
-[[nodiscard]] inline unsigned long firstbitlow(unsigned long value) noexcept
-{
-	unsigned long bit_index;
-
-	if (_BitScanForward64(&bit_index, (unsigned long long)value))
-	{
-		return bit_index;
-	}
-
-	return 32ul;
-}
-
-/**
- * Finds the index of the least significant set bit in a 64-bit value.
- *
- * Returns bit width (64) if value is 0.
- *
- * @param[in] value - 64-bit integer.
- *
- * @return Index of least significant set bit (0-63), or 64 if value is 0.
- */
-[[nodiscard]] inline unsigned long firstbitlow(
-	unsigned long long value
-) noexcept
-{
-	unsigned long bit_index;
-
-	if (_BitScanForward64(&bit_index, value))
-	{
-		return bit_index;
-	}
-
-	return 64ul;
-}
-#else
+#endif // _WIN32
 
 /*
 ################################################################################
@@ -1330,163 +1221,65 @@ Bit Manipulation (Linux/PlayStation)
 */
 
 /**
- * Counts the number of set bits (population count) in a 32-bit value.
+ * Counts the number of set bits (population count) in an unsigned integer.
  *
- * @param[in] value - 32-bit integer.
+ * @param[in] value - Unsigned integer value.
  *
- * @return Number of set bits (0-32).
+ * @return Number of set bits (0 to bit width of type).
  */
-[[nodiscard]] inline unsigned int countbits(unsigned int value) noexcept
+template <typename T>
+[[nodiscard]] inline T countbits(T value) noexcept
 {
-	return __builtin_popcount(value);
-}
+	static_assert(std::is_unsigned_v<T>, "countbits requires unsigned integer type");
 
-/**
- * Counts the number of set bits (population count) in a 64-bit value.
- *
- * @param[in] value - 64-bit integer.
- *
- * @return Number of set bits (0-64).
- */
-[[nodiscard]] inline unsigned long countbits(unsigned long value) noexcept
-{
-	return __builtin_popcountl(value);
-}
-
-/**
- * Counts the number of set bits (population count) in a 64-bit value.
- *
- * @param[in] value - 64-bit integer.
- *
- * @return Number of set bits (0-64).
- */
-[[nodiscard]] inline unsigned long long countbits(
-	unsigned long long value
-) noexcept
-{
-	return __builtin_popcountll(value);
+	return static_cast<T>(std::popcount(value));
 }
 
 /**
  * Finds the index of the most significant set bit (0-based from MSB).
  *
- * Returns bit width (32) if value is 0.
+ * Returns bit width if value is 0.
  *
- * @param[in] value - 32-bit integer.
+ * @param[in] value - Unsigned integer value.
  *
- * @return Index of most significant set bit (0-31), or 32 if value is 0.
+ * @return Index of most significant set bit, or bit width if value is 0.
  *
  * @note Returns bit width for 0 input to distinguish from bit 0 being set.
  */
-[[nodiscard]] inline unsigned int firstbithigh(unsigned int value) noexcept
+template <typename T>
+[[nodiscard]] inline T firstbithigh(T value) noexcept
 {
+	static_assert(std::is_unsigned_v<T>, "firstbithigh requires unsigned integer type");
+
 	if (value == 0)
 	{
-		return 32u;
+		return static_cast<T>(sizeof(T) * 8);
 	}
 
-	return __builtin_clz(value);
-}
-
-/**
- * Finds the index of the most significant set bit in a 64-bit value.
- *
- * Returns bit width (size of unsigned long * 8) if value is 0.
- *
- * @param[in] value - 64-bit integer.
- *
- * @return Index of most significant set bit, or bit width if value is 0.
- */
-[[nodiscard]] inline unsigned long firstbithigh(unsigned long value) noexcept
-{
-	if (value == 0)
-	{
-		return sizeof(unsigned long) * 8;
-	}
-
-	return __builtin_clzl(value);
-}
-
-/**
- * Finds the index of the most significant set bit in a 64-bit value.
- *
- * Returns bit width (64) if value is 0.
- *
- * @param[in] value - 64-bit integer.
- *
- * @return Index of most significant set bit (0-63), or 64 if value is 0.
- */
-[[nodiscard]] inline unsigned long long firstbithigh(
-	unsigned long long value
-) noexcept
-{
-	if (value == 0)
-	{
-		return 64ull;
-	}
-
-	return __builtin_clzll(value);
+	return static_cast<T>((sizeof(T) * 8 - 1) - std::countl_zero(value));
 }
 
 /**
  * Finds the index of the least significant set bit (0-based from LSB).
  *
- * Returns bit width (32) if value is 0.
+ * Returns bit width if value is 0.
  *
- * @param[in] value - 32-bit integer.
- *
- * @return Index of least significant set bit (0-31), or 32 if value is 0.
- */
-[[nodiscard]] inline unsigned int firstbitlow(unsigned int value) noexcept
-{
-	if (value == 0)
-	{
-		return 32u;
-	}
-
-	return __builtin_ctz(value);
-}
-
-/**
- * Finds the index of the least significant set bit in a 64-bit value.
- *
- * Returns bit width (size of unsigned long * 8) if value is 0.
- *
- * @param[in] value - 64-bit integer.
+ * @param[in] value - Unsigned integer value.
  *
  * @return Index of least significant set bit, or bit width if value is 0.
  */
-[[nodiscard]] inline unsigned long firstbitlow(unsigned long value) noexcept
+template <typename T>
+[[nodiscard]] inline T firstbitlow(T value) noexcept
 {
+	static_assert(std::is_unsigned_v<T>, "firstbitlow requires unsigned integer type");
+
 	if (value == 0)
 	{
-		return sizeof(unsigned long) * 8;
+		return static_cast<T>(sizeof(T) * 8);
 	}
 
-	return __builtin_ctzl(value);
+	return static_cast<T>(std::countr_zero(value));
 }
-
-/**
- * Finds the index of the least significant set bit in a 64-bit value.
- *
- * Returns bit width (64) if value is 0.
- *
- * @param[in] value - 64-bit integer.
- *
- * @return Index of least significant set bit (0-63), or 64 if value is 0.
- */
-[[nodiscard]] inline unsigned long long firstbitlow(
-	unsigned long long value
-) noexcept
-{
-	if (value == 0)
-	{
-		return 64ull;
-	}
-
-	return __builtin_ctzll(value);
-}
-#endif // _WIN32
 
 /*
 ################################################################################
