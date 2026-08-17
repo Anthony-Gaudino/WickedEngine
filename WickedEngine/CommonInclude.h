@@ -1014,7 +1014,7 @@ template<BitmaskEnum E>
  * @return Reference to modified lhs.
  */
 template<BitmaskEnum E>
-[[nodiscard]] constexpr E operator|=(E& lhs, E rhs) noexcept
+[[nodiscard]] constexpr E& operator|=(E& lhs, E rhs) noexcept
 {
 	lhs = static_cast<E>(std::to_underlying(lhs) | std::to_underlying(rhs));
 
@@ -1044,7 +1044,7 @@ template<BitmaskEnum E>
  * @return Reference to modified lhs.
  */
 template<BitmaskEnum E>
-[[nodiscard]] constexpr E operator&=(E& lhs, E rhs) noexcept
+[[nodiscard]] constexpr E& operator&=(E& lhs, E rhs) noexcept
 {
 	lhs = static_cast<E>(std::to_underlying(lhs) & std::to_underlying(rhs));
 
