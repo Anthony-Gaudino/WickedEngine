@@ -163,7 +163,7 @@ namespace wi
 		wi::graphics::Texture rtPostprocess; // ping-pong with main scene RT in post-process chain
 
 		wi::graphics::Texture depthBuffer_Main; // used for depth-testing, can be MSAA
-		wi::graphics::Texture depthBuffer_Ocean; // scratch copy the ocean surface draws into, can be MSAA
+		wi::graphics::Texture depthBuffer_PreOcean; // depth as it stood before the ocean drew, can be MSAA
 		wi::graphics::Texture depthBuffer_Copy; // used for shader resource, single sample
 		wi::graphics::Texture depthBuffer_Copy1; // used for disocclusion check
 		wi::graphics::Texture depthBuffer_Reflection; // used for reflection

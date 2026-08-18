@@ -50,7 +50,7 @@ namespace wi
 		rtPostprocess = {};
 
 		depthBuffer_Main = {};
-		depthBuffer_Ocean = {};
+		depthBuffer_PreOcean = {};
 		depthBuffer_Copy = {};
 		depthBuffer_Copy1 = {};
 		depthBuffer_Reflection = {};
@@ -539,33 +539,31 @@ namespace wi
 			rtWaterRipple = {};
 		}
 
-		// The ocean surface draws into a depth buffer of its own rather than
-		// the main one. It has to write depth: its displaced grid folds over
-		// itself wherever choppy waves overhang, so two water fragments land on
-		// one pixel and only depth picks the nearer. But the transparent pass
-		// is now ordered by water side, so nothing drawn after the ocean should
-		// be depth-tested against it - that is what used to erase the editor
-		// overlays and the gaussian splats across the waterline. Handing it a
-		// copy of the opaque depth satisfies both: the water is still occluded
-		// by geometry in front of it and by itself, and its writes are thrown
-		// away with the copy.
+		// The depth as it stood the moment before the ocean surface drew.
+		//
+		// The water writes depth into the main buffer, so that everything the
+		// transparent pass issues after it is occluded by the water the way it
+		// is by any other geometry standing in front. The diagnostic overlays
+		// are the one thing that must not be: they are not ordered around the
+		// water at all and are meant to be readable through it, so they are
+		// drawn against this instead.
 		//
 		// Allocated only while there is an ocean, because it is a full
 		// resolution depth buffer and matches the main one sample for sample.
 		if (scene->weather.IsOceanEnabled() && depthBuffer_Main.IsValid())
 		{
-			if (depthBuffer_Ocean.desc.width != depthBuffer_Main.desc.width ||
-				depthBuffer_Ocean.desc.height != depthBuffer_Main.desc.height ||
-				depthBuffer_Ocean.desc.sample_count != depthBuffer_Main.desc.sample_count)
+			if (depthBuffer_PreOcean.desc.width != depthBuffer_Main.desc.width ||
+				depthBuffer_PreOcean.desc.height != depthBuffer_Main.desc.height ||
+				depthBuffer_PreOcean.desc.sample_count != depthBuffer_Main.desc.sample_count)
 			{
 				TextureDesc desc = depthBuffer_Main.desc;
-				device->CreateTexture(&desc, nullptr, &depthBuffer_Ocean);
-				device->SetName(&depthBuffer_Ocean, "renderpath3D.depthBuffer_Ocean");
+				device->CreateTexture(&desc, nullptr, &depthBuffer_PreOcean);
+				device->SetName(&depthBuffer_PreOcean, "renderpath3D.depthBuffer_PreOcean");
 			}
 		}
 		else
 		{
-			depthBuffer_Ocean = {};
+			depthBuffer_PreOcean = {};
 		}
 
 		if (wi::renderer::GetSurfelGIEnabled())
@@ -2321,6 +2319,35 @@ namespace wi
 		const wi::renderer::WATERSIDE nearSide = !oceanVisible ? wi::renderer::WATERSIDE_ALL :
 			(eyeAboveWater ? wi::renderer::WATERSIDE_ABOVE : wi::renderer::WATERSIDE_SUBMERGED);
 
+		// The diagnostic overlays close the pass out on the depth as it stood
+		// before the ocean drew, so the water cannot reject them. Everything
+		// else the transparent pass issues after the water is meant to be
+		// occluded by it, which is what the main buffer now carries; the
+		// overlays are not ordered around the water at all and have to stay
+		// readable through it.
+		const bool overlaysIgnoreWater =
+			oceanVisible && depthBuffer_PreOcean.IsValid();
+		RenderPassImage rp_overlay[3];
+		uint32_t rp_overlay_count = 0;
+		if (overlaysIgnoreWater)
+		{
+			rp_overlay[rp_overlay_count++] = RenderPassImage::RenderTarget(&rtMain_render, RenderPassImage::LoadOp::LOAD);
+			if (getMSAASampleCount() > 1)
+			{
+				rp_overlay[rp_overlay_count++] = RenderPassImage::Resolve(&rtMain);
+			}
+			rp_overlay[rp_overlay_count++] = RenderPassImage::DepthStencil(
+				&depthBuffer_PreOcean,
+				RenderPassImage::LoadOp::LOAD,
+				// Nothing reads this copy afterwards, so let a tiler skip
+				// writing it back.
+				RenderPassImage::StoreOp::DONTCARE,
+				ResourceState::DEPTHSTENCIL,
+				ResourceState::DEPTHSTENCIL,
+				ResourceState::DEPTHSTENCIL
+			);
+		}
+
 		// Restricts every following draw to one side of the water, by putting the
 		// side on the camera instead of plumbing it through each draw call. The
 		// shaders that split read it straight out of the camera constant buffer.
@@ -2548,27 +2575,17 @@ namespace wi
 			wi::renderer::Postprocess_Downsample4x(rtMain, rtSceneCopy, cmd);
 			device->EventEnd(cmd);
 
-			// The ocean writes depth so that its own displaced grid can occlude
-			// itself, but nothing drawn after it may be depth-tested against
-			// the water - the transparent pass is ordered by water side
-			// instead, and the editor overlays that come later are not ordered
-			// at all. So it draws against a scratch copy of the opaque depth,
-			// taken here: the water is still occluded by geometry in front of
-			// it and by itself, and its writes leave with the copy.
-			//
-			// If the scratch buffer is missing the ocean falls back to the main
-			// depth buffer, which is the old behaviour: correct water, but its
-			// depth then erases whatever is drawn behind it afterwards.
-			const bool oceanScratchDepth = depthBuffer_Ocean.IsValid();
-			if (oceanScratchDepth)
+			// Keep the depth without the water in it for the overlays that come
+			// after the near pass, which are drawn against this copy.
+			if (overlaysIgnoreWater)
 			{
-				device->EventBegin("Copy depth for ocean", cmd);
+				device->EventBegin("Copy depth before the ocean", cmd);
 				GPUBarrier barriers[] = {
 					GPUBarrier::Image(&depthBuffer_Main, depthBuffer_Main.desc.layout, ResourceState::COPY_SRC),
-					GPUBarrier::Image(&depthBuffer_Ocean, depthBuffer_Ocean.desc.layout, ResourceState::COPY_DST),
+					GPUBarrier::Image(&depthBuffer_PreOcean, depthBuffer_PreOcean.desc.layout, ResourceState::COPY_DST),
 				};
 				device->Barrier(barriers, arraysize(barriers), cmd);
-				device->CopyResource(&depthBuffer_Ocean, &depthBuffer_Main, cmd);
+				device->CopyResource(&depthBuffer_PreOcean, &depthBuffer_Main, cmd);
 				for (int i = 0; i < arraysize(barriers); ++i)
 				{
 					std::swap(barriers[i].image.layout_before, barriers[i].image.layout_after);
@@ -2584,12 +2601,18 @@ namespace wi
 			{
 				rp_ocean[rp_ocean_count++] = RenderPassImage::Resolve(&rtMain);
 			}
+			// The water writes its depth into the main buffer. It has to write
+			// depth at all because its displaced grid folds over itself
+			// wherever choppy waves overhang, so two water fragments land on
+			// one pixel and only depth picks the nearer; writing it here is
+			// what then rejects the near pass below wherever a crest stands in
+			// front of it. Nothing that belongs behind the water is drawn after
+			// this point - the far pass above put it down already, where the
+			// surface's refraction picks it up.
 			rp_ocean[rp_ocean_count++] = RenderPassImage::DepthStencil(
-				oceanScratchDepth ? &depthBuffer_Ocean : &depthBuffer_Main,
+				&depthBuffer_Main,
 				RenderPassImage::LoadOp::LOAD,
-				// Nothing reads the scratch depth afterwards, so let a tiler
-				// skip writing it back. The main buffer must still be kept.
-				oceanScratchDepth ? RenderPassImage::StoreOp::DONTCARE : RenderPassImage::StoreOp::STORE,
+				RenderPassImage::StoreOp::STORE,
 				ResourceState::DEPTHSTENCIL,
 				ResourceState::DEPTHSTENCIL,
 				ResourceState::DEPTHSTENCIL
@@ -2666,10 +2689,6 @@ namespace wi
 			wi::profiler::EndRange(range); // Transparent Scene
 		}
 
-		wi::renderer::DrawDebugWorld(*scene, *camera, *this, cmd);
-
-		wi::renderer::DrawWireframeOverlay(visibility_main, wi::enums::RENDERPASS_MAIN, cmd);
-
 		// The near side only for these: the far side was drawn before the ocean
 		// above, so that the water refracts it rather than rejecting it.
 		//
@@ -2705,6 +2724,23 @@ namespace wi
 		}
 
 		wi::renderer::DrawSpritesAndFonts(*scene, *camera, false, cmd, nearSide);
+
+		// Everything the water is allowed to occlude has been drawn. What is
+		// left is drawn against the depth from before the ocean, so that the
+		// overlays are readable through the surface: they are placed by their
+		// own rules rather than around the water, so hiding them behind it
+		// hides them for no reason the viewer can see. This is also why they
+		// come after the scene content rather than before it - an overlay reads
+		// as an overlay by being on top.
+		if (overlaysIgnoreWater)
+		{
+			device->RenderPassEnd(cmd);
+			device->RenderPassBegin(rp_overlay, rp_overlay_count, cmd);
+		}
+
+		wi::renderer::DrawDebugWorld(*scene, *camera, *this, cmd);
+
+		wi::renderer::DrawWireframeOverlay(visibility_main, wi::enums::RENDERPASS_MAIN, cmd);
 
 		XMVECTOR sunDirection = XMLoadFloat3(&scene->weather.sunDirection);
 		if (getLightShaftsEnabled() && XMVectorGetX(XMVector3Dot(sunDirection, camera->GetAt())) > 0)

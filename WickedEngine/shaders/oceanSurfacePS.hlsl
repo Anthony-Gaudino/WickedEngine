@@ -12,7 +12,6 @@ Texture2D<float4> texture_ocean_displacementmap : register(t0);
 Texture2D<float4> texture_gradientmap : register(t1);
 Texture2D<float4> texture_perlin : register(t2);
 
-[earlydepthstencil]
 float4 main(PSIn input) : SV_TARGET
 {
 #ifdef SHADOWMAPRENDERING
@@ -33,6 +32,10 @@ float4 main(PSIn input) : SV_TARGET
 	// discards against, and gives a 2.5 cm band - the thin water mark seen
 	// when breaking the surface. Rasterizing the mesh into that metre as well
 	// puts a hard geometric edge over it.
+	//
+	// The depth write has to follow this discard, never precede it: the surface
+	// writes into the main depth buffer, so a fragment that wrote before being
+	// rejected here would occlude everything drawn behind it in that metre.
 	float4 pos2D = mul(camera.view_projection, float4(input.GetPos3D(), 1));
 	pos2D.xyz /= pos2D.w;
 	if (pos2D.z > ocean_waterline_handoff_depth())
