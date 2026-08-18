@@ -100,6 +100,7 @@ public:
 	wi::gui::CheckBox underwaterSnellRTCheckBox;
 	wi::gui::CheckBox underwaterGodRaysProceduralCheckBox;
 	wi::gui::CheckBox waterSunShaftsCheckBox;
+	wi::gui::CheckBox waterSegmentModelCheckBox;
 	wi::gui::Slider volumetricFroxelRangeSlider;
 	wi::gui::CheckBox underwaterParticlesCheckBox;
 	wi::gui::Slider underwaterParticleDensitySlider;

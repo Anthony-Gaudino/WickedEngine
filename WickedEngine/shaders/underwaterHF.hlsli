@@ -42,6 +42,47 @@ inline float ocean_displacement_fade(in float distanceToEye)
 }
 
 /**
+ * How far the waves reach from the still water plane, in metres.
+ *
+ * The tallest crest and the deepest trough are taken together, as one magnitude
+ * either side of the plane: a wave train is very nearly symmetric about it, and
+ * one bound covering both directions is one reduction instead of two.
+ *
+ * **Measured, not derived.** The value is reduced over the displacement map by
+ * the pass that writes it (`oceanUpdateDisplacementMapCS`), so it describes the
+ * sea that is on screen this frame rather than bounding it from the parameters.
+ * A bound guessed from the spectrum has to be generous to stay safe, and a
+ * generous bound gives away exactly the work it was introduced to save.
+ *
+ * Everything that asks whether a ray can meet the water at all tests against
+ * this: a straight segment's lowest point is at one of its ends, so a segment
+ * with both ends further than this from the plane cannot cross the surface, and
+ * that is exact rather than conservative.
+ *
+ * Example usage:
+ * @code
+ * const float reach = ocean_max_displacement();
+ * if (min(eyeHeight, targetHeight) > reach) { return; } // cannot cross
+ * @endcode
+ *
+ * @return Largest displacement from the still plane, in metres. Zero where
+ *         there is no displacement map, which is exact - the surface is then
+ *         the still plane everywhere.
+ */
+inline float ocean_max_displacement()
+{
+	const int buffer = GetWeather().ocean.buffer_max_displacement;
+
+	[branch]
+	if (buffer < 0)
+	{
+		return 0;
+	}
+
+	return asfloat(bindless_buffers[descriptor_index(buffer)].Load(0));
+}
+
+/**
  * Distance in front of the near plane where the drawn ocean surface hands over
  * to the analytic waterline, in metres.
  *

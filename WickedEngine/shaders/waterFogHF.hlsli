@@ -29,6 +29,7 @@
 
 #include "waterVolumetricsHF.hlsli"
 #include "waterSunShaftsHF.hlsli"
+#include "waterSegmentHF.hlsli"
 #include "volumetricFroxelHF.hlsli"
 
 /**
@@ -385,31 +386,19 @@ WaterFog MakeWaterFog(
  * water is in front of it from a depth buffer - which is impossible to do for
  * a transparent, since transparents are not in one.
  *
- * **Clipped against the WAVE surface, not the still plane.** Each end knows its
- * own signed height above the surface over it, and the water between them is
- * taken to be bounded by the straight line joining those two heights. That
- * keeps the submerged share of the segment a linear clip, exactly as a flat
- * plane made it - only tilted - so it costs a sample at each end and nothing
- * else. It is what stops an eye sitting in a trough, which is in the air but
- * below the still plane, from fogging the whole world as though submerged, and
- * an object inside a crest, which is in the water but above the still plane,
- * from being seen through as if the crest were glass.
- *
- * @note A crest BETWEEN the two ends is still missed - a straight line joining
- *       the endpoints cannot know about it. Seeing through the shoulder of a
- *       wave to the sky beyond needs the surface sampled along the segment,
- *       which is a march, not a clip.
+ * **Measured along the segment, not between its ends.** `TraceWaterSegment`
+ * walks the wave height field, so the water it reports is the water the ray
+ * actually crossed - including a crest standing between the two ends, which
+ * both are dry and which a clip between their heights therefore reports as no
+ * water at all. That is what stops the shoulder of a wave being seen through as
+ * if it were glass, and it is the same measurement that stops an eye sitting in
+ * a trough from fogging the whole world as though submerged.
  *
  * **Rejected cheapest first**, because this is called from every draw shader in
  * the frame. The camera flag is uniform across the draw and costs nothing in a
- * scene with no ocean; past it each end is measured against the surface, and
- * only past that exact test does anything unproject a pixel.
- *
- * There is deliberately no cheap height rejection before those measurements.
- * One would need a bound on how tall a crest can be, and there is none to have
- * - the amplitude is authored and the displacement comes off an FFT on the GPU.
- * A guessed bound does not clamp the waves, it just stops asking about them, so
- * a sea that exceeds it silently loses its fog above the guess.
+ * scene with no ocean; past it the trace rejects on the ends alone wherever
+ * both are clear of the tallest wave, and only a segment that really reaches
+ * the water pays for a march or unprojects a pixel.
  *
  * @param[in] screenUV - Screen space UV coordinates (0-1) of the fragment.
  * @param[in] fragmentPosition - World position of the fragment.
@@ -417,12 +406,24 @@ WaterFog MakeWaterFog(
  *                             surface over it (in metres): negative under the
  *                             water, positive in the air, zero on the interface
  *                             itself.
+ * @param[in] traceSegment - Walk the height field between the two ends, rather
+ *                           than taking the surface between them to be the
+ *                           straight line joining their heights. False only
+ *                           where the fragment IS the interface: choppiness
+ *                           moves a point sideways as well as up, so a crest's
+ *                           fragment does not sit over the part of the map that
+ *                           produced it, and every sample taken near it drifts
+ *                           either side of zero. The drift is what shows - as
+ *                           banding along the wave shape, trough by trough.
  *
  * @return The fog over that segment. Transparent and unlit when the water does
  *         not apply, so callers need no test of their own.
  */
 WaterFog GetWaterFog(
-	float2 screenUV, float3 fragmentPosition, float fragmentHeight
+	float2 screenUV,
+	float3 fragmentPosition,
+	float fragmentHeight,
+	bool traceSegment
 )
 {
 	WaterFog fog;
@@ -440,12 +441,40 @@ WaterFog GetWaterFog(
 	// The same quantity the caller supplied for the far end, for the near one.
 	const float eyeHeight = eye.y - ocean_drawn_surface_height(eye);
 
-	// Nothing on this segment is under water, so there is nothing to fog. Exact
-	// now that both ends have been measured against the surface rather than the
-	// plane: the submerged share below is clipped between these same two
-	// heights, so this is the case where it would come out zero.
+	const float3 towardsEye = eye - fragmentPosition;
+	const float segment = length(towardsEye);
+	const float3 toEye = towardsEye / max(segment, 0.00001);
+
+	const uint2 pixel = (uint2)(screenUV * GetCamera().internal_resolution);
+
+	// What the view segment met on its way here.
+	WaterSegment water;
+
 	[branch]
-	if (min(eyeHeight, fragmentHeight) >= 0)
+	if (traceSegment && GetCamera().IsWaterSegmentModel())
+	{
+		water = TraceWaterSegment(eye, fragmentPosition, pixel);
+	}
+	else
+	{
+		// The surface between the two ends taken to be the straight line
+		// joining their heights, which is a linear clip and costs one sample at
+		// each end. It cannot see a crest standing between them.
+		water.crosses = (eyeHeight < 0) != (fragmentHeight < 0);
+		water.submerged = segment * saturate(
+			-min(eyeHeight, fragmentHeight)
+			/ max(abs(fragmentHeight - eyeHeight), 0.00001));
+		water.entryPoint = lerp(
+			eye,
+			fragmentPosition,
+			saturate(eyeHeight / max(eyeHeight - fragmentHeight, 0.00001)));
+		water.entry = distance(eye, water.entryPoint);
+		water.entryNormal = float3(0, 1, 0);
+	}
+
+	// No water anywhere on this segment, so there is nothing to fog.
+	[branch]
+	if (water.submerged <= 0)
 	{
 		return fog;
 	}
@@ -460,12 +489,20 @@ WaterFog GetWaterFog(
 			? (half)ocean_underwater_factor(screenUV)
 			: (half)0;
 
-	// The water is there if EITHER end of the segment is in it. Taking the
-	// larger is what admits the case this whole function used to miss: an eye
-	// in the air looking at something under water. The medium is fully present
-	// along that segment even though the eye is not in it.
+	// Water standing between two ends that are both in the air - a crest seen
+	// edge on. The eye's graded submersion has nothing to say about it: that
+	// term sweeps the waterline as the CAMERA crosses, and neither end of this
+	// segment is crossing anything.
+	const bool crestBetween =
+		water.crosses && eyeHeight >= 0 && fragmentHeight >= 0;
+
+	// The water is there if either end is in it, or if the segment ran through
+	// it on the way. Taking the larger is what admits an eye in the air looking
+	// at something under water: the medium is fully present along that segment
+	// even though the eye is not in it.
 	const WaterVolumetrics medium = MakeWaterVolumetrics(
-		max(eyeSubmersion, fragmentHeight < 0 ? (half)1 : (half)0));
+		max(eyeSubmersion,
+			(fragmentHeight < 0 || crestBetween) ? (half)1 : (half)0));
 
 	[branch]
 	if (!medium.IsActive())
@@ -473,27 +510,22 @@ WaterFog GetWaterFog(
 		return fog;
 	}
 
-	const float3 towardsEye = eye - fragmentPosition;
-	const float segment = length(towardsEye);
-	const float3 toEye = towardsEye / max(segment, 0.00001);
-
-	// The straight segment, clipped at the surface. Right whenever the eye is in
-	// the water: between two points in one medium nothing bends. Both ends on
-	// the same side saturate to the whole segment or to none of it, so only a
-	// segment that actually crosses divides.
-	const float straightPath = segment * saturate(
-		-min(eyeHeight, fragmentHeight)
-		/ max(abs(fragmentHeight - eyeHeight), 0.00001));
-
-	// The refracted leg, for an eye in the air. This is not a refinement of the
-	// straight path, it REPLACES it - light leaving the water bends towards the
-	// horizontal, so a grazing view crosses far less water than the line of
-	// sight suggests. An eye two metres up looking at a sea bed one metre down
-	// three hundred metres out has a hundred metres of straight segment below
-	// the plane and about one and a half metres of actual water. Using the
-	// segment would extinguish water you can plainly see through.
-	const float refractedPath =
-		SubmergedViewPath(max(0, -fragmentHeight), toEye);
+	// The refracted leg, for an eye in the air looking at something under the
+	// water. This is not a refinement of the traced length, it REPLACES it -
+	// light leaving the water bends towards the horizontal, so a grazing view
+	// crosses far less water than the line of sight suggests. An eye two metres
+	// up looking at a sea bed one metre down three hundred metres out has a
+	// hundred metres of segment below the plane and about one and a half metres
+	// of actual water. Using the segment would extinguish water you can plainly
+	// see through.
+	//
+	// Only where the far end is submerged, which is what that bound describes.
+	// A dry fragment seen through a crest is a chord across the wave, short by
+	// construction and already measured, and there is no depth below a surface
+	// to hand this instead.
+	const float airPath = fragmentHeight < 0
+		? SubmergedViewPath(-fragmentHeight, toEye)
+		: water.submerged;
 
 	// Blend on the EYE's submersion, not the medium's: the medium is fully
 	// present in both cases and cannot tell them apart. The two formulas differ
@@ -501,7 +533,7 @@ WaterFog GetWaterFog(
 	// mirror from just above and a window from just below - so they are faded
 	// across rather than switched, on the same graded test that sweeps the
 	// waterline down the screen.
-	const float path = lerp(refractedPath, straightPath, eyeSubmersion);
+	const float path = lerp(airPath, water.submerged, eyeSubmersion);
 
 	// Which of the two descriptions of the sun this segment is entitled to.
 	//
@@ -539,22 +571,16 @@ WaterFog GetWaterFog(
 		[branch]
 		if (GetCamera().IsWaterSunShafts() && any(sunModulation > 0))
 		{
-			// Where this view ray meets the water, clipped between the same two
-			// heights the fog itself is - so the march begins on the wave
-			// surface the rest of this function measures against, and every
-			// fragment along the ray begins in the same place whatever its own
-			// depth.
-			const float3 surfaceCrossing = lerp(
-				eye,
-				fragmentPosition,
-				saturate(eyeHeight / max(eyeHeight - fragmentHeight, 0.00001)));
-
+			// It begins where the view ray met the water, which is the same
+			// crossing the rest of this function measured against - so every
+			// fragment along one ray begins the march in the same place
+			// whatever its own depth.
 			sunModulation *= WaterSunShaftModulation(
 				medium,
-				surfaceCrossing,
+				water.entryPoint,
 				toEye,
-				refractedPath,
-				(uint2)(screenUV * GetCamera().internal_resolution));
+				airPath,
+				pixel);
 		}
 	}
 
@@ -575,12 +601,36 @@ WaterFog GetWaterFog(
 }
 
 /**
+ * The water's fog between the eye and a fragment of known height.
+ *
+ * For a caller that knows where its fragment stands with respect to the
+ * surface and is not willing to have it measured. Nothing along the segment is
+ * sampled either: a caller in that position is describing the interface
+ * itself, and the surface cannot stand in front of itself - the ocean's own
+ * depth already settled which piece of it this pixel shows.
+ *
+ * @param[in] screenUV - Screen space UV coordinates (0-1) of the fragment.
+ * @param[in] fragmentPosition - World position of the fragment.
+ * @param[in] fragmentHeight - Signed height of the fragment above the water
+ *                             surface over it (in metres).
+ *
+ * @return The fog over that segment.
+ */
+WaterFog GetWaterFog(
+	float2 screenUV, float3 fragmentPosition, float fragmentHeight
+)
+{
+	return GetWaterFog(screenUV, fragmentPosition, fragmentHeight, false);
+}
+
+/**
  * The water's fog between the eye and a fragment somewhere in the scene.
  *
- * Measures the fragment against the wave surface over it, which is what every
- * ordinary draw wants. The camera flag is tested here as well as inside, so a
- * scene with no ocean never pays the displacement map sample that measuring
- * would take.
+ * Traces the segment, which is what every ordinary draw wants: the fragment is
+ * somewhere in the world and the water may be anywhere between it and the eye.
+ * The camera flag is tested here as well as inside, so a scene with no ocean
+ * never pays the displacement map sample that measuring the fragment would
+ * take.
  *
  * @param[in] screenUV - Screen space UV coordinates (0-1) of the fragment.
  * @param[in] fragmentPosition - World position of the fragment.
@@ -602,7 +652,8 @@ WaterFog GetWaterFog(float2 screenUV, float3 fragmentPosition)
 	return GetWaterFog(
 		screenUV,
 		fragmentPosition,
-		fragmentPosition.y - ocean_drawn_surface_height(fragmentPosition)
+		fragmentPosition.y - ocean_drawn_surface_height(fragmentPosition),
+		true
 	);
 }
 

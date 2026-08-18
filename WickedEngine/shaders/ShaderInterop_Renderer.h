@@ -1394,6 +1394,12 @@ enum SHADERCAMERA_OPTIONS
 	// an eye in the air is refracted - so the shafts are marched by the
 	// fragment that wants them, over the leg it already sized for its own fog.
 	SHADERCAMERA_OPTION_WATER_SUN_SHAFTS = 1 << 7,
+	// Answer "where is the water" by tracing the view segment against the wave
+	// height field rather than by testing a point against it.
+	//
+	// Diagnostic only: it exists so an artifact can be attributed and the march
+	// costed against the tests it replaces.
+	SHADERCAMERA_OPTION_WATER_SEGMENT_MODEL = 1 << 8,
 };
 
 struct alignas(16) ShaderCamera
@@ -1599,6 +1605,7 @@ struct alignas(16) ShaderCamera
 	inline bool IsWaterSideSubmerged() { return options & SHADERCAMERA_OPTION_WATERSIDE_SUBMERGED; }
 	inline bool IsWaterSideAbove() { return options & SHADERCAMERA_OPTION_WATERSIDE_ABOVE; }
 	inline bool IsWaterSunShafts() { return options & SHADERCAMERA_OPTION_WATER_SUN_SHAFTS; }
+	inline bool IsWaterSegmentModel() { return options & SHADERCAMERA_OPTION_WATER_SEGMENT_MODEL; }
 
 	inline float3 screen_to_nearplane(float4 svposition)
 	{

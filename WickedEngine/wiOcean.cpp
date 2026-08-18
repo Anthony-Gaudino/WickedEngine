@@ -493,6 +493,15 @@ namespace wi
 		buf_desc.size = buf_desc.stride * 2 * output_size;
 		device->CreateBufferZeroed(&buf_desc, &buffer_Float_Dxyz);
 
+		// One word, reduced over the whole displacement map each frame. Raw
+		// rather than structured because the reduction is an atomic, and the
+		// atomics are on ByteAddressBuffer.
+		buf_desc.misc_flags = ResourceMiscFlag::BUFFER_RAW;
+		buf_desc.stride = 0;
+		buf_desc.size = sizeof(uint32_t);
+		device->CreateBufferZeroed(&buf_desc, &buffer_MaxDisplacement);
+		device->SetName(&buffer_MaxDisplacement, "ocean.maxDisplacement");
+
 		TextureDesc tex_desc;
 		tex_desc.width = hmap_dim;
 		tex_desc.height = hmap_dim;
@@ -754,8 +763,17 @@ namespace wi
 		device->Barrier(barriers, arraysize(barriers), cmd);
 
 		// Update displacement map:
+		//
+		// The tallest wave is reduced out of the same pass, which is already
+		// visiting every texel of it. Cleared here rather than accumulated
+		// across frames: the waves this describes are this frame's, and a
+		// running maximum would only ever grow.
+		device->ClearUAV(&buffer_MaxDisplacement, 0, cmd);
+		device->Barrier(GPUBarrier::Memory(&buffer_MaxDisplacement), cmd);
+
 		device->BindComputeShader(&updateDisplacementMapCS, cmd);
 		device->BindUAV(&displacementMap, 0, cmd);
+		device->BindUAV(&buffer_MaxDisplacement, 1, cmd);
 		device->BindResource(&buffer_Float_Dxyz, 0, cmd);
 		device->Dispatch(
 			(params.dmap_dim + OCEAN_COMPUTE_TILESIZE - 1) / OCEAN_COMPUTE_TILESIZE,
@@ -763,7 +781,11 @@ namespace wi
 			1,
 			cmd
 		);
-		device->Barrier(GPUBarrier::Image(&displacementMap, ResourceState::UNORDERED_ACCESS, displacementMap.desc.layout), cmd);
+		GPUBarrier displacementDone[] = {
+			GPUBarrier::Image(&displacementMap, ResourceState::UNORDERED_ACCESS, displacementMap.desc.layout),
+			GPUBarrier::Memory(&buffer_MaxDisplacement),
+		};
+		device->Barrier(displacementDone, arraysize(displacementDone), cmd);
 
 		// Update gradient map:
 		device->BindComputeShader(&updateGradientFoldingCS, cmd);
@@ -976,6 +998,11 @@ namespace wi
 	const Texture* Ocean::getGradientMap() const
 	{
 		return &gradientMap;
+	}
+
+	const GPUBuffer* Ocean::GetMaxDisplacementBuffer() const noexcept
+	{
+		return &buffer_MaxDisplacement;
 	}
 
 	XMFLOAT2 Ocean::GetDisplacementFadeBand() const noexcept

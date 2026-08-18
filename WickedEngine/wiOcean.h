@@ -114,6 +114,24 @@ namespace wi
 		const wi::graphics::Texture* getDisplacementMap() const;
 		const wi::graphics::Texture* getGradientMap() const;
 
+		/**
+		 * Buffer holding the tallest wave in the patch, as one float's bits.
+		 *
+		 * Reduced over the displacement map by the pass that writes it, so it
+		 * describes the waves that are on screen this frame. Everything that
+		 * has to decide whether a ray can meet the water at all tests against
+		 * it, and it has to be measured rather than derived from the
+		 * parameters: a bound that is too small drops crossings that are really
+		 * there, and one too large costs the work it was meant to save.
+		 *
+		 * @return The buffer, for publishing its bindless index. Never null.
+		 *
+		 * @note Read as `asfloat(buffer.Load(0))`, in metres. Zero until the
+		 *       first simulation step has run.
+		 */
+		[[nodiscard]] const wi::graphics::GPUBuffer*
+			GetMaxDisplacementBuffer() const noexcept;
+
 		const wi::primitive::AABB GetAABB(const XMFLOAT3& camera_pos) const;
 
 		/**
@@ -189,6 +207,12 @@ namespace wi
 
 		// Height & choppy buffer in the space domain, corresponding to H(t), Dx(t) and Dy(t)
 		wi::graphics::GPUBuffer buffer_Float_Dxyz;
+
+		// Largest vertical displacement anywhere in the current wave patch, as
+		// the bits of a float. Reduced on the GPU by the pass that writes the
+		// displacement map, so it is a measurement of the waves that are
+		// actually there rather than a bound guessed from the parameters.
+		wi::graphics::GPUBuffer buffer_MaxDisplacement;
 
 	};
 }

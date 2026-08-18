@@ -4,6 +4,7 @@
 StructuredBuffer<float2> g_InputDxyz : register(t0);
 
 RWTexture2D<float4> output : register(u0);
+RWByteAddressBuffer max_displacement : register(u1);
 
 [numthreads(OCEAN_COMPUTE_TILESIZE, OCEAN_COMPUTE_TILESIZE, 1)]
 void main(uint3 DTid : SV_DispatchThreadID)
@@ -23,4 +24,14 @@ void main(uint3 DTid : SV_DispatchThreadID)
 	float dy = f1 * sign_correction * xOceanChoppyScale;
 
 	output[DTid.xy] = float4(dx, dy, dz, 1);
+
+	// The tallest wave in the patch, for the tests that ask whether a ray can
+	// meet the water at all. Taken as a magnitude and used either way up: a
+	// trough reaches as far below the still plane as a crest reaches above it,
+	// and one bound covering both is one atomic instead of two.
+	//
+	// Compared as bits rather than as a float. Positive floats order the same
+	// way their bit patterns do as unsigned integers, and the atomics are
+	// integer-only.
+	max_displacement.InterlockedMax(0, asuint(abs(dz)));
 }

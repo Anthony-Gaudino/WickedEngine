@@ -786,6 +786,10 @@ namespace wi
 			{
 				camera->shadercamera_options |= SHADERCAMERA_OPTION_WATER_SUN_SHAFTS;
 			}
+			if (getWaterSegmentModelEnabled())
+			{
+				camera->shadercamera_options |= SHADERCAMERA_OPTION_WATER_SEGMENT_MODEL;
+			}
 		}
 
 		camera->texture_primitiveID_index = device->GetDescriptorIndex(&rtPrimitiveID, SubresourceType::SRV);

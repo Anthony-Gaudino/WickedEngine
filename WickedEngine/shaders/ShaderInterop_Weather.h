@@ -456,6 +456,16 @@ struct alignas(16) ShaderOcean
 	// the two describe the same foam and cannot be set against each other.
 	float shore_foam_strength;
 
+	/**
+	 * Buffer holding the tallest wave in the patch, as one float's bits.
+	 *
+	 * Reduced over the displacement map on the GPU each frame
+	 * (`oceanUpdateDisplacementMapCS`), so it measures the waves that are on
+	 * screen instead of bounding them from the parameters. Read through
+	 * `MaxDisplacement()` rather than directly. -1 where there is no ocean.
+	 */
+	int buffer_max_displacement;
+
 	bool IsValid() { return texture_displacementmap >= 0; }
 	bool IsSubsurfaceScattering() { return flags & OCEAN_FLAG_SUBSURFACE_SCATTERING; }
 	bool IsShoreFoam() { return flags & OCEAN_FLAG_SHORE_FOAM; }
