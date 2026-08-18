@@ -27,8 +27,8 @@ float4 main(VertextoPixel input) : SV_TARGET
 	[branch]
 	if (flags & (
 		FONT_FLAG_CLIP_PLANE |
-		FONT_FLAG_WATERSIDE_SUBMERGED |
-		FONT_FLAG_WATERSIDE_ABOVE))
+		FONT_FLAG_WATERSIDE_BEYOND |
+		FONT_FLAG_WATERSIDE_NEAR))
 	{
 		const float2 screenUV = input.pos.xy * GetCamera().internal_resolution_rcp;
 		const float3 P = reconstruct_position(screenUV, input.pos.z);
@@ -47,8 +47,8 @@ float4 main(VertextoPixel input) : SV_TARGET
 		// where the transparent pass issued it as a separate draw.
 		ClipToWaterSide(
 			P,
-			(flags & FONT_FLAG_WATERSIDE_SUBMERGED) != 0,
-			(flags & FONT_FLAG_WATERSIDE_ABOVE) != 0
+			(flags & FONT_FLAG_WATERSIDE_BEYOND) != 0,
+			(flags & FONT_FLAG_WATERSIDE_NEAR) != 0
 		);
 	}
 

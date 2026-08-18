@@ -173,13 +173,13 @@ namespace wi::image
 			image.highlight_xy = wi::math::pack_half2(params.highlight_pos.x * canvas_aspect, params.highlight_pos.y);
 			image.highlight_color_spread = wi::math::pack_half4(params.highlight_color.x, params.highlight_color.y, params.highlight_color.z, params.highlight_spread);
 		}
-		if (params.isWaterSideSubmerged())
+		if (params.isWaterSideBeyond())
 		{
-			image.flags |= IMAGE_FLAG_WATERSIDE_SUBMERGED;
+			image.flags |= IMAGE_FLAG_WATERSIDE_BEYOND;
 		}
-		if (params.isWaterSideAbove())
+		if (params.isWaterSideNear())
 		{
-			image.flags |= IMAGE_FLAG_WATERSIDE_ABOVE;
+			image.flags |= IMAGE_FLAG_WATERSIDE_NEAR;
 		}
 		if (params.isClipPlaneEnabled())
 		{

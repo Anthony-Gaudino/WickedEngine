@@ -63,8 +63,8 @@ namespace wi::image
 			DISTORTION_MASK = 1 << 12,
 			HIGHLIGHT = 1 << 13,
 			UNDERWATER_FOG = 1 << 14,
-			WATERSIDE_SUBMERGED = 1 << 15,
-			WATERSIDE_ABOVE = 1 << 16,
+			WATERSIDE_BEYOND = 1 << 15,
+			WATERSIDE_NEAR = 1 << 16,
 			CLIP_PLANE = 1 << 17,
 		};
 		uint32_t _flags = EMPTY;
@@ -148,8 +148,8 @@ namespace wi::image
 		constexpr bool isMirrorEnabled() const { return _flags & MIRROR; }
 		constexpr bool isExtractNormalMapEnabled() const { return _flags & EXTRACT_NORMALMAP; }
 		constexpr bool isUnderwaterFogEnabled() const { return _flags & UNDERWATER_FOG; }
-		constexpr bool isWaterSideSubmerged() const { return _flags & WATERSIDE_SUBMERGED; }
-		constexpr bool isWaterSideAbove() const { return _flags & WATERSIDE_ABOVE; }
+		constexpr bool isWaterSideBeyond() const { return _flags & WATERSIDE_BEYOND; }
+		constexpr bool isWaterSideNear() const { return _flags & WATERSIDE_NEAR; }
 		constexpr bool isClipPlaneEnabled() const { return _flags & CLIP_PLANE; }
 		constexpr bool isFullScreenEnabled() const { return _flags & FULLSCREEN; }
 		constexpr bool isBackgroundEnabled() const { return _flags & BACKGROUND; }
@@ -177,9 +177,9 @@ namespace wi::image
 		// the rest per pixel. Set by the transparent pass, which issues a scene
 		// sprite once on each side of the water so that one crossing the
 		// waterline is refracted below it and dry above it.
-		constexpr void enableWaterSideSubmerged() { _flags |= WATERSIDE_SUBMERGED; }
+		constexpr void enableWaterSideBeyond() { _flags |= WATERSIDE_BEYOND; }
 		// Keep only the part of this draw above the ocean surface.
-		constexpr void enableWaterSideAbove() { _flags |= WATERSIDE_ABOVE; }
+		constexpr void enableWaterSideNear() { _flags |= WATERSIDE_NEAR; }
 		// Clip this draw per pixel against the camera's clip plane, so that a
 		// planar reflection does not show what is behind its mirror. Only
 		// meaningful for something drawn into the scene with a

@@ -6269,13 +6269,13 @@ void DrawSpritesAndFonts(
 		{
 			params.enableClipPlane();
 		}
-		if (waterSide == WATERSIDE_SUBMERGED)
+		if (waterSide == WATERSIDE_BEYOND)
 		{
-			params.enableWaterSideSubmerged();
+			params.enableWaterSideBeyond();
 		}
-		else if (waterSide == WATERSIDE_ABOVE)
+		else if (waterSide == WATERSIDE_NEAR)
 		{
-			params.enableWaterSideAbove();
+			params.enableWaterSideNear();
 		}
 	};
 	static thread_local wi::vector<uint64_t> distance_sorter;

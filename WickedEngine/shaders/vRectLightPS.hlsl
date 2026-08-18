@@ -19,8 +19,8 @@ float4 main(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_TARGET
 	// where the transparent pass issued it as a separate draw.
 	ClipToWaterSide(
 		P,
-		GetCamera().IsWaterSideSubmerged(),
-		GetCamera().IsWaterSideAbove()
+		GetCamera().IsWaterSideBeyond(),
+		GetCamera().IsWaterSideNear()
 	);
 
 	// The water between this visualizer and the eye. Without it the gizmo for a

@@ -1384,8 +1384,8 @@ enum SHADERCAMERA_OPTIONS
 	// same way with no plumbing of its own. Bracketed tightly around the draws
 	// that should split: diagnostics, gaussian splats and screen space effects
 	// must NOT be clipped, so the option is cleared before they are drawn.
-	SHADERCAMERA_OPTION_WATERSIDE_SUBMERGED = 1 << 5,
-	SHADERCAMERA_OPTION_WATERSIDE_ABOVE = 1 << 6,
+	SHADERCAMERA_OPTION_WATERSIDE_BEYOND = 1 << 5,
+	SHADERCAMERA_OPTION_WATERSIDE_NEAR = 1 << 6,
 	// Cut the water's sun glow into shafts for a fragment under the surface
 	// while the eye is above it.
 	//
@@ -1602,8 +1602,8 @@ struct alignas(16) ShaderCamera
 	inline bool IsOrtho() { return options & SHADERCAMERA_OPTION_ORTHO; }
 	inline bool IsWaterFog() { return options & SHADERCAMERA_OPTION_WATER_FOG; }
 	inline bool IsUnderwaterGodRays() { return options & SHADERCAMERA_OPTION_UNDERWATER_GODRAYS; }
-	inline bool IsWaterSideSubmerged() { return options & SHADERCAMERA_OPTION_WATERSIDE_SUBMERGED; }
-	inline bool IsWaterSideAbove() { return options & SHADERCAMERA_OPTION_WATERSIDE_ABOVE; }
+	inline bool IsWaterSideBeyond() { return options & SHADERCAMERA_OPTION_WATERSIDE_BEYOND; }
+	inline bool IsWaterSideNear() { return options & SHADERCAMERA_OPTION_WATERSIDE_NEAR; }
 	inline bool IsWaterSunShafts() { return options & SHADERCAMERA_OPTION_WATER_SUN_SHAFTS; }
 	inline bool IsWaterSegmentModel() { return options & SHADERCAMERA_OPTION_WATER_SEGMENT_MODEL; }
 

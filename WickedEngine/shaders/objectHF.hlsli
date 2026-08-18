@@ -576,8 +576,8 @@ float4 main(PixelInput input, in bool is_frontface : SV_IsFrontFace APPEND_COVER
 	// the shadow and prepass permutations.
 	ClipToWaterSide(
 		surface.P,
-		camera.IsWaterSideSubmerged(),
-		camera.IsWaterSideAbove()
+		camera.IsWaterSideBeyond(),
+		camera.IsWaterSideNear()
 	);
 	
 #ifdef OBJECTSHADER_USE_UVSETS

@@ -71,16 +71,16 @@ namespace wi::font
 			FLIP_HORIZONTAL = 1 << 4,
 			FLIP_VERTICAL = 1 << 5,
 			UNDERWATER_FOG = 1 << 6,
-			WATERSIDE_SUBMERGED = 1 << 7,
-			WATERSIDE_ABOVE = 1 << 8,
+			WATERSIDE_BEYOND = 1 << 7,
+			WATERSIDE_NEAR = 1 << 8,
 			CLIP_PLANE = 1 << 9,
 		};
 		uint32_t _flags = SDF_RENDERING;
 
 		constexpr bool isSDFRenderingEnabled() const { return _flags & SDF_RENDERING; }
 		constexpr bool isUnderwaterFogEnabled() const { return _flags & UNDERWATER_FOG; }
-		constexpr bool isWaterSideSubmerged() const { return _flags & WATERSIDE_SUBMERGED; }
-		constexpr bool isWaterSideAbove() const { return _flags & WATERSIDE_ABOVE; }
+		constexpr bool isWaterSideBeyond() const { return _flags & WATERSIDE_BEYOND; }
+		constexpr bool isWaterSideNear() const { return _flags & WATERSIDE_NEAR; }
 		constexpr bool isClipPlaneEnabled() const { return _flags & CLIP_PLANE; }
 		// Fog this draw with the ocean's water. Only meaningful for text drawn into
 		// the scene with a customProjection; never set it for UI.
@@ -89,9 +89,9 @@ namespace wi::font
 		// the rest per pixel. Set by the transparent pass, which issues scene
 		// text once on each side of the water so that text crossing the
 		// waterline is refracted below it and dry above it.
-		constexpr void enableWaterSideSubmerged() { _flags |= WATERSIDE_SUBMERGED; }
+		constexpr void enableWaterSideBeyond() { _flags |= WATERSIDE_BEYOND; }
 		// Keep only the part of this draw above the ocean surface.
-		constexpr void enableWaterSideAbove() { _flags |= WATERSIDE_ABOVE; }
+		constexpr void enableWaterSideNear() { _flags |= WATERSIDE_NEAR; }
 		// Clip this draw per pixel against the camera's clip plane, so that a
 		// planar reflection does not show what is behind its mirror. Only
 		// meaningful for text drawn into the scene with a customProjection.

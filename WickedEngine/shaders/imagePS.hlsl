@@ -10,8 +10,8 @@ float4 main(VertextoPixel input) : SV_TARGET
 	[branch]
 	if (image.flags & (
 		IMAGE_FLAG_CLIP_PLANE |
-		IMAGE_FLAG_WATERSIDE_SUBMERGED |
-		IMAGE_FLAG_WATERSIDE_ABOVE))
+		IMAGE_FLAG_WATERSIDE_BEYOND |
+		IMAGE_FLAG_WATERSIDE_NEAR))
 	{
 		const float3 P = reconstruct_position(
 			input.uv_screen(), input.screen.z / input.screen.w
@@ -34,8 +34,8 @@ float4 main(VertextoPixel input) : SV_TARGET
 		// where the transparent pass issued it as a separate draw.
 		ClipToWaterSide(
 			P,
-			(image.flags & IMAGE_FLAG_WATERSIDE_SUBMERGED) != 0,
-			(image.flags & IMAGE_FLAG_WATERSIDE_ABOVE) != 0
+			(image.flags & IMAGE_FLAG_WATERSIDE_BEYOND) != 0,
+			(image.flags & IMAGE_FLAG_WATERSIDE_NEAR) != 0
 		);
 	}
 

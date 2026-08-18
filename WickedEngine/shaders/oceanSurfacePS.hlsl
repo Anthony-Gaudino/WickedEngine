@@ -261,15 +261,40 @@ float4 main(PSIn input) : SV_TARGET
 		water_depth += texture_ocean_displacementmap.SampleLevel(sampler_linear_wrap, refraction_position.xz * xOceanPatchSizeRecip, 0).z; // texture contains xzy!
 		if (camera_below_water && V.y < 0)
 			water_depth = -water_depth;
-		if (water_depth <= 0)
+		// How much water stands in front of what this ray refracted, which is
+		// what the surface is entitled to bend. Below the still plane that is
+		// the target's depth, which is what this has always ramped on. Above it
+		// the answer is not zero: a crest can stand in front of something that
+		// is perfectly dry, and the ray cut a chord through the wave to reach
+		// it. On flat water the two are the same number, since there is no
+		// water above the plane to cross.
+		//
+		// A target with no water in front of it at all still gives zero, which
+		// is what the unperturbed fallback below is for: a perturbed UV that
+		// wandered onto something nearer than the water must not drag it into
+		// the refraction.
+		float refracted_water = water_depth;
+
+		[branch]
+		if (refracted_water <= 0 && GetCamera().IsWaterSegmentModel())
 		{
-			// Above water, fill holes by taking unperturbed sample:
+			refracted_water = TraceWaterSegment(
+				GetCamera().position,
+				refraction_position,
+				WATER_SEGMENT_STABLE_PHASE
+			).submerged;
+		}
+
+		if (refracted_water <= 0)
+		{
+			// Nothing in front of it to bend the ray, so fill holes by taking
+			// the unperturbed sample:
 			refraction_uv = ScreenCoord.xy;
 		}
 		else
 		{
-			// Below water, compute perturbation according to first sample water depth:
-			refraction_uv = ScreenCoord.xy + surface.N.xz * bump_strength * saturate(1 - exp(-water_depth));
+			// Perturbation according to the water the first sample is behind:
+			refraction_uv = ScreenCoord.xy + surface.N.xz * bump_strength * saturate(1 - exp(-refracted_water));
 		}
 		surface.refraction.rgb = texture_refraction.SampleLevel(sampler_linear_mirror, refraction_uv, 0).rgb;
 		// Recompute depth params again with actual perturbation:

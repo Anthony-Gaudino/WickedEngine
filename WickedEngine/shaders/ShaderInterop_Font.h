@@ -13,8 +13,8 @@ static const uint FONT_FLAG_UNDERWATER_FOG = 1u << 3u;
 // transparent pass issues scene text twice, once on each side of the water, so
 // that text crossing the waterline is refracted below it and dry above it.
 // Exactly one of the two is set, or neither.
-static const uint FONT_FLAG_WATERSIDE_SUBMERGED = 1u << 4u;
-static const uint FONT_FLAG_WATERSIDE_ABOVE = 1u << 5u;
+static const uint FONT_FLAG_WATERSIDE_BEYOND = 1u << 4u;
+static const uint FONT_FLAG_WATERSIDE_NEAR = 1u << 5u;
 // Clip this draw against the camera's clip plane, for a planar reflection. Set
 // only for text drawn into the scene, which is the only text with a world
 // position behind its transform.

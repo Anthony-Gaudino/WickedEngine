@@ -22,8 +22,8 @@ float4 main(float4 pos : SV_Position, half4 col : COLOR) : SV_Target
 	// where the transparent pass issued it as a separate draw.
 	ClipToWaterSide(
 		P,
-		GetCamera().IsWaterSideSubmerged(),
-		GetCamera().IsWaterSideAbove()
+		GetCamera().IsWaterSideBeyond(),
+		GetCamera().IsWaterSideNear()
 	);
 
 	half4 color = col;

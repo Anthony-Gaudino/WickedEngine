@@ -2309,19 +2309,22 @@ namespace wi
 		// drawn after it and lies beyond it is rejected outright, and whatever
 		// is not yet in the scene copy taken just below can never be seen
 		// through the water. Both halves of the transparent pass therefore have
-		// to be placed relative to the ocean by which side of the water plane
-		// they are on - and which side is which flips with the camera, since
-		// from below the surface the submerged content is the near side.
+		// to be placed relative to the ocean by whether the water stands
+		// between them and the eye.
+		//
+		// That question does not flip with the camera the way "which side of
+		// the surface is it on" did: whichever side the eye is, what the water
+		// covers goes down before the ocean and everything else after it.
 		const bool oceanVisible =
 			scene->weather.IsOceanEnabled() &&
 			scene->ocean.IsValid() &&
 			(!scene->ocean.IsOccluded() || !wi::renderer::GetOcclusionCullingEnabled());
 		const bool eyeAboveWater =
 			camera->Eye.y > scene->weather.oceanParameters.waterHeight;
-		const wi::renderer::WATERSIDE farSide = !oceanVisible ? wi::renderer::WATERSIDE_ALL :
-			(eyeAboveWater ? wi::renderer::WATERSIDE_SUBMERGED : wi::renderer::WATERSIDE_ABOVE);
-		const wi::renderer::WATERSIDE nearSide = !oceanVisible ? wi::renderer::WATERSIDE_ALL :
-			(eyeAboveWater ? wi::renderer::WATERSIDE_ABOVE : wi::renderer::WATERSIDE_SUBMERGED);
+		const wi::renderer::WATERSIDE farSide = oceanVisible
+			? wi::renderer::WATERSIDE_BEYOND : wi::renderer::WATERSIDE_ALL;
+		const wi::renderer::WATERSIDE nearSide = oceanVisible
+			? wi::renderer::WATERSIDE_NEAR : wi::renderer::WATERSIDE_ALL;
 
 		// The diagnostic overlays close the pass out on the depth as it stood
 		// before the ocean drew, so the water cannot reject them. Everything
@@ -2361,13 +2364,13 @@ namespace wi
 		// must not be clipped by it.
 		auto bindWaterSide = [&](wi::renderer::WATERSIDE side) {
 			CameraComponent sidedCamera = *camera;
-			if (side == wi::renderer::WATERSIDE_SUBMERGED)
+			if (side == wi::renderer::WATERSIDE_BEYOND)
 			{
-				sidedCamera.shadercamera_options |= SHADERCAMERA_OPTION_WATERSIDE_SUBMERGED;
+				sidedCamera.shadercamera_options |= SHADERCAMERA_OPTION_WATERSIDE_BEYOND;
 			}
-			else if (side == wi::renderer::WATERSIDE_ABOVE)
+			else if (side == wi::renderer::WATERSIDE_NEAR)
 			{
-				sidedCamera.shadercamera_options |= SHADERCAMERA_OPTION_WATERSIDE_ABOVE;
+				sidedCamera.shadercamera_options |= SHADERCAMERA_OPTION_WATERSIDE_NEAR;
 			}
 			wi::renderer::BindCameraCB(
 				sidedCamera,
@@ -2395,10 +2398,10 @@ namespace wi
 			// water, nothing below it - none of that draws a single pixel. So
 			// sweep the scene first and find out what is actually over there.
 			//
-			// Every bound below is conservative: anything that might straddle
-			// the surface counts as far side and is drawn in both passes, where
-			// the per-fragment clip sorts it out. So this can only ever skip
-			// work, never content.
+			// Every bound below is conservative: anything that might have water
+			// in front of it counts as far side and is drawn in both passes,
+			// where the per-fragment clip sorts it out. So this can only ever
+			// skip work, never content.
 			//
 			// The band the surface sweeps is taken from the ocean's own bounds,
 			// so there is one assumption about how far the waves displace
@@ -2407,10 +2410,23 @@ namespace wi
 			const wi::primitive::AABB oceanBounds = scene->ocean.GetAABB(camera->Eye);
 			const float waterTop = oceanBounds.getMax().y;
 			const float waterBottom = oceanBounds.getMin().y;
+
+			// A straight segment's extremes are its endpoints, so the water can
+			// only stand between the eye and a point if one of those two
+			// reaches the band the surface sweeps. With the eye inside that band
+			// the near end already does, and anything at all can be behind a
+			// wave - a camera in the surf can have a crest in front of a cliff
+			// top.
+			const bool eyeInWaveBand =
+				camera->Eye.y <= waterTop && camera->Eye.y >= waterBottom;
 			auto reachesFarSide = [&](const wi::primitive::AABB& aabb) {
-				return farSide == wi::renderer::WATERSIDE_SUBMERGED
-					? (aabb.getMin().y <= waterTop)   // any part low enough to be under water
-					: (aabb.getMax().y > waterBottom); // any part high enough to be above it
+				if (eyeInWaveBand)
+				{
+					return true;
+				}
+				return camera->Eye.y > waterTop
+					? (aabb.getMin().y <= waterTop)    // reaches down into the waves
+					: (aabb.getMax().y >= waterBottom); // reaches up into them
 			};
 
 			bool farSideTransparents = false;
@@ -2484,15 +2500,16 @@ namespace wi
 			// at all counts, as with sprites and emitters above.
 			const bool farSideTrails = wi::renderer::AreTrailsQueued();
 
-			// The suspended particles exist only below the surface, so they are
-			// far side content exactly when the far side is the submerged one -
-			// with the camera under water the far side is the air above it,
-			// where every particle is clipped away. Beyond that the only
-			// question is whether the field, which is centred on the camera,
-			// reaches down as far as the water at all.
+			// The suspended particles exist only below the surface, so the water
+			// stands in front of every one of them exactly when the eye is
+			// above it. Submerged, the eye is in the same body of water as the
+			// field and nothing separates them, so they all belong to the near
+			// pass instead. Beyond that the only question is whether the field,
+			// which is centred on the camera, reaches down as far as the water
+			// at all.
 			const bool farSideParticles =
 				getUnderwaterParticlesEnabled() &&
-				farSide == wi::renderer::WATERSIDE_SUBMERGED &&
+				eyeAboveWater &&
 				camera->Eye.y
 					- (wi::scene::environment::UnderwaterParticles(
 						scene->weather.oceanParameters.waterMedium,
@@ -2711,11 +2728,10 @@ namespace wi
 		wi::renderer::DrawSoftParticles(visibility_main, false, cmd);
 		// Unlike the other content here the particles belong to one side of the
 		// water outright, so they are drawn once rather than in both halves.
-		// With the camera above the surface the near side is the air, holding
-		// none of them, and the field has already gone down in the far pass
+		// With the camera above the surface the water stands in front of every
+		// one of them, and the field has already gone down in the far pass
 		// before the ocean - where the surface refracts it, as it should.
-		if (getUnderwaterParticlesEnabled() &&
-			nearSide != wi::renderer::WATERSIDE_ABOVE)
+		if (getUnderwaterParticlesEnabled() && !eyeAboveWater)
 		{
 			wi::renderer::DrawUnderwaterParticles(
 				visibility_main, getUnderwaterParticleDensity(), cmd);

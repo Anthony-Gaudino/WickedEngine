@@ -293,12 +293,14 @@ namespace wi::renderer
 	// Splitting the transparents by which side of the water plane they are on
 	// lets the ones behind the surface be drawn first, so the water refracts
 	// them, and the ones in front of it last, so the water cannot reject them.
-	// Which side is which flips with the camera.
+	// Which half of the transparent pass a draw belongs to, decided per fragment
+	// by whether the ocean surface stands between it and the eye. The same
+	// question wherever the camera is, so neither side flips with it.
 	enum WATERSIDE
 	{
 		WATERSIDE_ALL, // no split: draw everything (no ocean, or no split wanted)
-		WATERSIDE_SUBMERGED, // only what is below the water plane
-		WATERSIDE_ABOVE, // only what is above the water plane
+		WATERSIDE_BEYOND, // only what the water stands in front of
+		WATERSIDE_NEAR, // only what nothing but air separates from the eye
 	};
 
 	// Draw the world from a camera. You must call BindCameraCB() at least once in this command list prior to this

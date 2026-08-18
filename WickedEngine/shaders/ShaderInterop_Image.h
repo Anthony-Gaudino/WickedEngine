@@ -29,8 +29,8 @@ enum IMAGE_FLAGS
 	// transparent pass issues a scene sprite twice, once on each side of the
 	// water, so that a sprite crossing the waterline is refracted below it and
 	// dry above it. Exactly one of the two is set, or neither.
-	IMAGE_FLAG_WATERSIDE_SUBMERGED = 1u << 17u,
-	IMAGE_FLAG_WATERSIDE_ABOVE = 1u << 18u,
+	IMAGE_FLAG_WATERSIDE_BEYOND = 1u << 17u,
+	IMAGE_FLAG_WATERSIDE_NEAR = 1u << 18u,
 	// Clip this draw against the camera's clip plane, for a planar reflection.
 	// Set only for sprites drawn into the scene: a full screen blit issued
 	// during the same pass has no world position to test.

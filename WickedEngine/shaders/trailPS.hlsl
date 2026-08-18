@@ -32,8 +32,8 @@ float4 main(float4 pos : SV_Position, float4 screen : SCREEN, float4 uv : TEXCOO
 	// the transparent pass issued it as a separate draw.
 	ClipToWaterSide(
 		P,
-		GetCamera().IsWaterSideSubmerged(),
-		GetCamera().IsWaterSideAbove()
+		GetCamera().IsWaterSideBeyond(),
+		GetCamera().IsWaterSideNear()
 	);
 
 	// The water between this trail and the eye. Without it a submerged trail

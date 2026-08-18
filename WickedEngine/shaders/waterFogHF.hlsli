@@ -453,7 +453,8 @@ WaterFog GetWaterFog(
 	[branch]
 	if (traceSegment && GetCamera().IsWaterSegmentModel())
 	{
-		water = TraceWaterSegment(eye, fragmentPosition, pixel);
+		water = TraceWaterSegment(
+			eye, fragmentPosition, blue_noise(pixel).x);
 	}
 	else
 	{

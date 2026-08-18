@@ -25,8 +25,8 @@ float4 main(VertextoPixel input) : SV_TARGET
 	// it.
 	ClipToWaterSide(
 		pos3D,
-		GetCamera().IsWaterSideSubmerged(),
-		GetCamera().IsWaterSideAbove()
+		GetCamera().IsWaterSideBeyond(),
+		GetCamera().IsWaterSideNear()
 	);
 
 	// Blocker shadow map check:

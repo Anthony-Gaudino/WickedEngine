@@ -149,7 +149,9 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			// camera straddling a crest, looking through the wave it is sitting
 			// in.
 			const WaterSegment water = TraceWaterSegment(
-				campos, mad(GetCamera().z_far, rayDir, campos), DTid.xy);
+				campos,
+				mad(GetCamera().z_far, rayDir, campos),
+				blue_noise(DTid.xy).x);
 
 			ocean_surface_ahead = water.crosses;
 			ocean_dist = water.entry;

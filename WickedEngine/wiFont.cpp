@@ -662,13 +662,13 @@ namespace wi::font
 			flags |= FONT_FLAG_UNDERWATER_FOG;
 			hdr_scaling = params.hdr_scaling;
 		}
-		if (params.isWaterSideSubmerged())
+		if (params.isWaterSideBeyond())
 		{
-			flags |= FONT_FLAG_WATERSIDE_SUBMERGED;
+			flags |= FONT_FLAG_WATERSIDE_BEYOND;
 		}
-		if (params.isWaterSideAbove())
+		if (params.isWaterSideNear())
 		{
-			flags |= FONT_FLAG_WATERSIDE_ABOVE;
+			flags |= FONT_FLAG_WATERSIDE_NEAR;
 		}
 		if (params.isClipPlaneEnabled())
 		{

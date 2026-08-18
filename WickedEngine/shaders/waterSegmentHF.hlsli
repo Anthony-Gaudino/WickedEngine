@@ -43,6 +43,17 @@ static const uint WATER_SEGMENT_STEPS = 12;
 static const uint WATER_SEGMENT_REFINEMENTS = 3;
 
 /**
+ * Sample phase for a caller whose answer is a decision rather than a quantity.
+ *
+ * The step centre, fixed. A moving phase is what keeps a continuous result from
+ * terracing, but a fragment that is classified rather than measured takes one
+ * branch or the other, and the two look nothing alike - a moving phase would
+ * flip it between them from frame to frame, which arrives as flicker along a
+ * crest's edge rather than as a dither the temporal pass can resolve.
+ */
+static const float WATER_SEGMENT_STABLE_PHASE = 0.5;
+
+/**
  * Where a view segment meets the ocean, and how much water it crossed.
  */
 struct WaterSegment
@@ -136,10 +147,12 @@ inline float3 WaterSegmentSurfaceNormal(in float3 position)
  * the search reduces to the plane intersection and the result is the same one
  * the plane test gives - exactly, not nearly.
  *
- * The first sample is offset by `blue_noise` for the reason every march in this
- * codebase is: a step function sampled N times returns N+1 distinct answers,
- * which arrives as terraces along a crest. Blue noise carries its own per-frame
- * phase, so the temporal pass averages it instead of printing a fixed pattern.
+ * The first sample sits wherever the caller's `jitter` puts it, because a step
+ * function sampled N times returns N+1 distinct answers and a fixed phase
+ * prints them as terraces along a crest. A caller measuring a quantity passes
+ * `blue_noise`, which carries its own per-frame phase for the temporal pass to
+ * average out; a caller taking a decision passes `WATER_SEGMENT_STABLE_PHASE`
+ * instead, for the reason recorded there.
  *
  * **At most two crossings are resolved**, the first and the last. A ray
  * crossing three or more times - two separate crests seen edge on - counts the
@@ -149,7 +162,7 @@ inline float3 WaterSegmentSurfaceNormal(in float3 position)
  *
  * Example usage:
  * @code
- * const WaterSegment water = TraceWaterSegment(eye, P, pixel);
+ * const WaterSegment water = TraceWaterSegment(eye, P, blue_noise(pixel).x);
  * if (water.crosses) { ... } // the surface stands between the eye and P
  * const float3 transmittance = exp(-water.submerged * medium.sigmaT);
  * @endcode
@@ -159,14 +172,14 @@ inline float3 WaterSegmentSurfaceNormal(in float3 position)
  *                     origin far from it is answered against the surface as the
  *                     CAMERA sees it drawn.
  * @param[in] target - World position the segment ends at.
- * @param[in] pixel - Pixel coordinate, for offsetting the first sample.
+ * @param[in] jitter - Where inside its step the first sample sits, in [0, 1).
  *
  * @return What the segment met. All fields are zero where there is no ocean.
  */
 inline WaterSegment TraceWaterSegment(
 	in float3 origin,
 	in float3 target,
-	in uint2 pixel
+	in float jitter
 )
 {
 	WaterSegment result;
@@ -264,7 +277,6 @@ inline WaterSegment TraceWaterSegment(
 	// missed however many samples are spent on the rest.
 	const float lastStep = (float)(WATER_SEGMENT_STEPS - 1);
 	const float stepSize = marched / lastStep;
-	const float jitter = blue_noise(pixel).x;
 
 	// Brackets around the first and the last sign change found. Held as a
 	// distance pair so the refinement below has something to halve.
@@ -407,6 +419,78 @@ inline WaterSegment TraceWaterSegment(
 	result.submerged = originSubmerged ? segment - span : span;
 
 	return result;
+}
+
+/**
+ * Discards a fragment that belongs to the other side of the water.
+ *
+ * The ocean is the only transparent that writes depth, so the transparent pass
+ * draws around it: what the water stands in front of goes down first, where the
+ * surface's screen space refraction picks it up, and everything else after,
+ * where the surface's depth cannot reject it. A billboard can belong to
+ * **both** - part of it behind a wave, part of it clear - so it is issued in
+ * both passes and each keeps only its own share. That is why this is per
+ * fragment and not a per-object classification: classifying by origin makes a
+ * sprite snap whole from one side to the other as it crosses, and it can never
+ * be partly behind anything.
+ *
+ * **The question is about the segment, not the fragment.** A point above the
+ * surface over its own position can still have a crest between it and the eye,
+ * and what stands between them is what decides which pass can draw it: only the
+ * first pass runs early enough for the water to refract and fog what it covers.
+ * Asking whether the fragment is wet answers a different question, and answers
+ * it correctly only on a flat sea.
+ *
+ * The two sides are strictly complementary - one boolean out of one function,
+ * given the same two points in either pass - so no fragment is kept by both
+ * (which would blend it twice) or dropped by both (which would leave a hole).
+ * The phase is fixed for the same reason: see `WATER_SEGMENT_STABLE_PHASE`.
+ *
+ * Example usage:
+ * @code
+ * ClipToWaterSide(P, camera.IsWaterSideBeyond(), camera.IsWaterSideNear());
+ * @endcode
+ *
+ * @param[in] position - World space position of the fragment.
+ * @param[in] keepBeyond - Keep only what the water stands in front of.
+ * @param[in] keepNear - Keep only what nothing but air separates from the eye.
+ *
+ * @note Does nothing unless exactly one side is selected, so a draw that is not
+ *       split pays only the flag test.
+ */
+inline void ClipToWaterSide(
+	in float3 position,
+	in bool keepBeyond,
+	in bool keepNear
+)
+{
+	[branch]
+	if (keepBeyond != keepNear)
+	{
+		bool beyond;
+
+		[branch]
+		if (GetCamera().IsWaterSegmentModel())
+		{
+			beyond = TraceWaterSegment(
+				GetCamera().position,
+				position,
+				WATER_SEGMENT_STABLE_PHASE
+			).crosses;
+		}
+		else
+		{
+			// The DRAWN surface over the fragment's own position. Judged
+			// against waves the grid flattened away, a fragment would be
+			// dropped by both sides or kept by both.
+			beyond = WaterSegmentHeightAbove(position) <= 0;
+		}
+
+		if (keepBeyond != beyond)
+		{
+			discard;
+		}
+	}
 }
 
 #endif // WI_WATER_SEGMENT_HF
