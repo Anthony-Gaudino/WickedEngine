@@ -133,52 +133,57 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		// also trace it: Otherwise the ocean surface could be same as infinite
 		// depth and incorrectly fogged
 		//
-		// Traced against the DISPLACED surface rather than the still plane,
-		// because the eye can stand above that plane and still be under water -
-		// anywhere inside a crest. An upward ray that misses the plane is
-		// answered with a point z_far away along its horizontal heading, and
-		// that heading is a function of the ray's azimuth alone, so every wave
-		// lookup taken at it fans out into stripes about the vertical.
-		//
-		// Two steps of a height field solve: the first lands the hit at the
-		// right horizontal position, the second corrects the height there. The
-		// window only ever looks within the critical angle of vertical, where
-		// the surface is close to single valued. The refinement is kept only
-		// while it still lands in front of the eye, because a grazing ray
-		// re-intersected against a height field walks away rather than
-		// converging.
-		const float3 ocean_up = float3(0, 1, 0);
-		float ocean_dist = intersectPlaneClampInfiniteDist(
-			campos, rayDir, ocean_up, ocean_drawn_surface_height(campos));
+		// Every quantity the window is built from is meaningless without a
+		// crossing, so where the ray finds none the window is switched off
+		// rather than handed the nearest wrong answer.
+		float ocean_dist = 0;
+		bool ocean_surface_ahead = false;
+		float3 ocean_surface_pos = campos;
+		float3 ocean_surface_normal = float3(0, 1, 0);
+
 		[branch]
-		if (ocean_dist > 0)
+		if (GetCamera().IsWaterSegmentModel())
 		{
-			const float refined_dist = intersectPlaneClampInfiniteDist(
-				campos, rayDir, ocean_up,
-				ocean_drawn_surface_height(campos + rayDir * ocean_dist));
-			if (refined_dist > 0)
-			{
-				ocean_dist = refined_dist;
-			}
+			// Walked along the ray, which is the only thing that finds water
+			// standing AHEAD of the eye rather than over it - the dry half of a
+			// camera straddling a crest, looking through the wave it is sitting
+			// in.
+			const WaterSegment water = TraceWaterSegment(
+				campos, mad(GetCamera().z_far, rayDir, campos), DTid.xy);
+
+			ocean_surface_ahead = water.crosses;
+			ocean_dist = water.entry;
+			ocean_surface_pos = water.entryPoint;
+			ocean_surface_normal = water.entryNormal;
 		}
+		else
+		{
+			// Two steps of a vertical height field solve: the first lands the
+			// hit at the right horizontal position, the second corrects the
+			// height there. The refinement is kept only while it still lands in
+			// front of the eye, because a grazing ray re-intersected against a
+			// height field walks away rather than converging.
+			const float3 ocean_up = float3(0, 1, 0);
+			float solved_dist = intersectPlaneClampInfiniteDist(
+				campos, rayDir, ocean_up, ocean_drawn_surface_height(campos));
+			[branch]
+			if (solved_dist > 0)
+			{
+				const float refined_dist = intersectPlaneClampInfiniteDist(
+					campos, rayDir, ocean_up,
+					ocean_drawn_surface_height(campos + rayDir * solved_dist));
+				if (refined_dist > 0)
+				{
+					solved_dist = refined_dist;
+				}
+			}
 
-		// Whether this ray leaves the water through the surface at all.
-		//
-		// A ray cast from an eye that stands above the surface over its own
-		// position never does - the dry half of a camera straddling a crest,
-		// where the water it is looking through is ahead of the eye rather than
-		// over it. A vertical solve cannot find a crossing that is not
-		// overhead; that needs a march along the ray. Every quantity the window
-		// is built from is meaningless without a crossing, so it is switched
-		// off rather than handed the nearest wrong answer.
-		const bool ocean_surface_ahead = ocean_dist > 0;
-		ocean_dist = max(ocean_dist, 0);
-
-		// Undisplaced horizontal position, which is what the surface shader
-		// builds its own wave lookups from - the solve above moves the hit
-		// vertically only, so this correspondence holds.
-		const float3 ocean_surface_pos = campos + rayDir * ocean_dist;
-		const float2 ocean_surface_uv = ocean_surface_pos.xz * ocean.patch_size_rcp;
+			ocean_surface_ahead = solved_dist > 0;
+			ocean_dist = max(solved_dist, 0);
+			ocean_surface_pos = campos + rayDir * ocean_dist;
+			ocean_surface_normal =
+				WaterSegmentSurfaceNormal(ocean_surface_pos);
+		}
 
 		// The medium, for Snell's window below. This pass no longer fogs
 		// anything: every fragment applied the water's fog over its own view
@@ -204,24 +209,13 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		// https://en.wikipedia.org/wiki/Snell%27s_window
 		if (underwater_snell > 0)
 		{
-			// Surface normal where the ray pierces the water, rebuilt from the
+			// Surface normal where the ray pierces the water, taken from the
 			// same wave gradient map the ocean surface is shaded with. Snell's
 			// law is relative to the local surface normal, so testing the
 			// critical angle against this wavy normal (instead of a flat up
 			// vector) makes the window rim genuinely ondulate with the waves -
 			// physically based, no procedural ripple:
-			float3 surfaceNormal = float3(0, 1, 0);
-			if (ocean.texture_gradientmap >= 0)
-			{
-				Texture2D texture_gradientmap =
-					bindless_textures[descriptor_index(ocean.texture_gradientmap)];
-				const float2 gradient = texture_gradientmap.SampleLevel(
-					sampler_linear_wrap, ocean_surface_uv, 0
-				).rg;
-				surfaceNormal = normalize(
-					float3(gradient.x, ocean.texel_length * 2.0, gradient.y)
-				);
-			}
+			const float3 surfaceNormal = ocean_surface_normal;
 
 			const float cosTheta = dot(rayDir, surfaceNormal);
 			const float sinTheta = sqrt(saturate(1.0 - cosTheta * cosTheta));
