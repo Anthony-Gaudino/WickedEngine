@@ -1616,23 +1616,6 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 		});
 	AddWidget(&waterSunShaftsCheckBox);
 
-	waterSegmentModelCheckBox.Create("Water Segment Model: ");
-	waterSegmentModelCheckBox.SetTooltip("Answer \"where is the water\" by tracing the view segment against the wave height field, instead of testing whether a point is above or below the surface. A point test is right on a flat sea and wrong on a crest, which is neither overhead nor at an end of the segment. Diagnostic switch: turn it off to attribute an artifact or to cost the march against the tests it replaces.");
-	waterSegmentModelCheckBox.SetSize(XMFLOAT2(hei, hei));
-	waterSegmentModelCheckBox.SetPos(XMFLOAT2(x, y += step));
-
-	if (editor->main->config.GetSection("graphics").Has("water_segment_model"))
-	{
-		editor->renderPath->setWaterSegmentModelEnabled(editor->main->config.GetSection("graphics").GetBool("water_segment_model"));
-	}
-
-	waterSegmentModelCheckBox.OnClick([=](wi::gui::EventArgs args) {
-		editor->renderPath->setWaterSegmentModelEnabled(args.bValue);
-		editor->main->config.GetSection("graphics").Set("water_segment_model", args.bValue);
-		editor->main->config.Commit();
-		});
-	AddWidget(&waterSegmentModelCheckBox);
-
 	volumetricFroxelRangeSlider.Create(
 		20, 2000, VOLUMETRIC_FROXEL_DEFAULT_RANGE, 198,
 		"VolumetricFroxels.Range: ");
@@ -2159,7 +2142,6 @@ void GraphicsWindow::UpdateData()
 	waterRefractionRTCheckBox.SetCheck(editor->renderPath->getWaterRefractionRTEnabled());
 	underwaterGodRaysProceduralCheckBox.SetCheck(editor->renderPath->getUnderwaterGodRaysProceduralEnabled());
 	waterSunShaftsCheckBox.SetCheck(editor->renderPath->getWaterSunShaftsEnabled());
-	waterSegmentModelCheckBox.SetCheck(editor->renderPath->getWaterSegmentModelEnabled());
 	volumetricFroxelRangeSlider.SetValue(editor->renderPath->getVolumetricFroxelRange());
 	underwaterParticlesCheckBox.SetCheck(editor->renderPath->getUnderwaterParticlesEnabled());
 	underwaterParticleDensitySlider.SetValue(editor->renderPath->getUnderwaterParticleDensity());
@@ -2439,7 +2421,6 @@ void GraphicsWindow::ResizeLayout()
 	layout.add_right(waterRefractionRTCheckBox);
 	layout.add_right(underwaterGodRaysProceduralCheckBox);
 	layout.add_right(waterSunShaftsCheckBox);
-	layout.add_right(waterSegmentModelCheckBox);
 	layout.add_right(volumetricFroxelRangeSlider);
 	layout.add_right(underwaterParticleDensitySlider);
 	underwaterParticlesCheckBox.SetPos(XMFLOAT2(underwaterParticleDensitySlider.GetPos().x - underwaterParticlesCheckBox.GetSize().x - 80, underwaterParticleDensitySlider.GetPos().y));

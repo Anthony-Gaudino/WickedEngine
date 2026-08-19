@@ -123,7 +123,21 @@ float4 main(PSIn input) : SV_TARGET
 	const float bump_strength = 0.1;
 	
 	float4 water_plane = camera.reflection_plane;
-	const bool camera_below_water = dot(float4(camera.position, 1), water_plane) < 0; 
+	// Which side of the water the eye is on, and everything about how this
+	// surface is shaded turns on it: the normal faces the medium the viewer is
+	// in, the Fresnel switches to the dense-side curve, and past the critical
+	// angle the underside becomes a mirror.
+	//
+	// **Measured against the DRAWN surface over the camera, never the still
+	// plane.** Everything else about this surface is measured against the drawn
+	// one, and the two disagree by the whole wave height: an eye sitting in a
+	// trough is below the plane while plainly in the air, and a plane test
+	// hands it the entire submerged treatment - flipped normal, dense-side
+	// Fresnel, total internal reflection - which is what shades crests
+	// differently for a camera that never got wet. An eye inside a crest is the
+	// same disagreement the other way up.
+	const bool camera_below_water =
+		camera.position.y < ocean_drawn_surface_height(camera.position);
 
 	Surface surface;
 	surface.init();
@@ -261,29 +275,28 @@ float4 main(PSIn input) : SV_TARGET
 		water_depth += texture_ocean_displacementmap.SampleLevel(sampler_linear_wrap, refraction_position.xz * xOceanPatchSizeRecip, 0).z; // texture contains xzy!
 		if (camera_below_water && V.y < 0)
 			water_depth = -water_depth;
-		// How much water stands in front of what this ray refracted, which is
-		// what the surface is entitled to bend. Below the still plane that is
-		// the target's depth, which is what this has always ramped on. Above it
-		// the answer is not zero: a crest can stand in front of something that
-		// is perfectly dry, and the ray cut a chord through the wave to reach
-		// it. On flat water the two are the same number, since there is no
-		// water above the plane to cross.
+		// How much water this ray crossed to reach what it refracted, which is
+		// what the surface is entitled to bend.
 		//
-		// A target with no water in front of it at all still gives zero, which
-		// is what the unperturbed fallback below is for: a perturbed UV that
-		// wandered onto something nearer than the water must not drag it into
-		// the refraction.
-		float refracted_water = water_depth;
-
-		[branch]
-		if (refracted_water <= 0 && GetCamera().IsWaterSegmentModel())
-		{
-			refracted_water = TraceWaterSegment(
-				GetCamera().position,
-				refraction_position,
-				WATER_SEGMENT_STABLE_PHASE
-			).submerged;
-		}
+		// **Walked along the segment, never tested against the still plane.**
+		// Which side of a plane the target lies on is a different question and
+		// gives the wrong answer to this one in both directions: a crest stands
+		// in front of things that are perfectly dry, so a target above the
+		// plane is not owed zero bending; and a target below the plane can have
+		// nothing but air in front of it once the wave over it has moved on.
+		// Answering with the plane abandoned the refraction outright wherever
+		// it read zero - a shore, a bed rising out of the water, anything
+		// standing in it - and that is a whole class of surface that simply did
+		// not refract.
+		//
+		// Zero is now a real answer rather than an artefact of the test: no
+		// water was crossed, so there is nothing to bend, and the unperturbed
+		// sample below is right.
+		float refracted_water = TraceWaterSegment(
+			GetCamera().position,
+			refraction_position,
+			WATER_SEGMENT_STABLE_PHASE
+		).submerged;
 
 		if (refracted_water <= 0)
 		{

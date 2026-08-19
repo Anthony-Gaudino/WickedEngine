@@ -787,10 +787,6 @@ namespace wi
 			{
 				camera->shadercamera_options |= SHADERCAMERA_OPTION_WATER_SUN_SHAFTS;
 			}
-			if (getWaterSegmentModelEnabled())
-			{
-				camera->shadercamera_options |= SHADERCAMERA_OPTION_WATER_SEGMENT_MODEL;
-			}
 			// Gated on the capability here rather than in the shader, so the
 			// ocean can pick its pipeline from the same bit.
 			if (getWaterRefractionRTEnabled() &&

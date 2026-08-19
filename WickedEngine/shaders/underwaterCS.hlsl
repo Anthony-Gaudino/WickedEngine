@@ -141,13 +141,13 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		float3 ocean_surface_pos = campos;
 		float3 ocean_surface_normal = float3(0, 1, 0);
 
-		[branch]
-		if (GetCamera().IsWaterSegmentModel())
+		// Walked along the ray, which is the only thing that finds water
+		// standing AHEAD of the eye rather than over it - the dry half of a
+		// camera straddling a crest, looking through the wave it is sitting in.
+		// A vertical solve against the height field answers where the surface
+		// is OVERHEAD, which is a different place, and it walks away rather
+		// than converging on a grazing ray.
 		{
-			// Walked along the ray, which is the only thing that finds water
-			// standing AHEAD of the eye rather than over it - the dry half of a
-			// camera straddling a crest, looking through the wave it is sitting
-			// in.
 			const WaterSegment water = TraceWaterSegment(
 				campos,
 				mad(GetCamera().z_far, rayDir, campos),
@@ -157,34 +157,6 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			ocean_dist = water.entry;
 			ocean_surface_pos = water.entryPoint;
 			ocean_surface_normal = water.entryNormal;
-		}
-		else
-		{
-			// Two steps of a vertical height field solve: the first lands the
-			// hit at the right horizontal position, the second corrects the
-			// height there. The refinement is kept only while it still lands in
-			// front of the eye, because a grazing ray re-intersected against a
-			// height field walks away rather than converging.
-			const float3 ocean_up = float3(0, 1, 0);
-			float solved_dist = intersectPlaneClampInfiniteDist(
-				campos, rayDir, ocean_up, ocean_drawn_surface_height(campos));
-			[branch]
-			if (solved_dist > 0)
-			{
-				const float refined_dist = intersectPlaneClampInfiniteDist(
-					campos, rayDir, ocean_up,
-					ocean_drawn_surface_height(campos + rayDir * solved_dist));
-				if (refined_dist > 0)
-				{
-					solved_dist = refined_dist;
-				}
-			}
-
-			ocean_surface_ahead = solved_dist > 0;
-			ocean_dist = max(solved_dist, 0);
-			ocean_surface_pos = campos + rayDir * ocean_dist;
-			ocean_surface_normal =
-				WaterSegmentSurfaceNormal(ocean_surface_pos);
 		}
 
 		// The medium, for Snell's window below. This pass no longer fogs

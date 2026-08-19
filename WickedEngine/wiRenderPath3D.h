@@ -117,10 +117,6 @@ namespace wi
 		// the surface, for an eye that is not in it. The froxel volume covers
 		// the case where the eye IS in it and this leaves that alone.
 		bool waterSunShaftsEnabled = true;
-		// Trace the view segment against the wave height field instead of
-		// testing a point against it. Diagnostic, so an artifact can be
-		// attributed and the march costed against what it replaces.
-		bool waterSegmentModelEnabled = true;
 		// Trace the refracted ray into the scene to find what the water bends
 		// into view, instead of guessing at it with a screen space offset. The
 		// scene copy still supplies the colour; only the place it is read from
@@ -355,7 +351,6 @@ namespace wi
 		[[nodiscard]] constexpr bool getUnderwaterSnellRTEnabled() const { return underwaterSnellRTEnabled; }
 		[[nodiscard]] constexpr bool getUnderwaterGodRaysProceduralEnabled() const { return underwaterGodRaysProceduralEnabled; }
 		[[nodiscard]] constexpr bool getWaterSunShaftsEnabled() const { return waterSunShaftsEnabled; }
-		[[nodiscard]] constexpr bool getWaterSegmentModelEnabled() const { return waterSegmentModelEnabled; }
 		[[nodiscard]] constexpr bool getWaterRefractionRTEnabled() const { return waterRefractionRTEnabled; }
 		[[nodiscard]] constexpr bool getUnderwaterParticlesEnabled() const { return underwaterParticlesEnabled; }
 		constexpr bool getDitherEnabled() const { return ditherEnabled; }
@@ -436,7 +431,6 @@ namespace wi
 		constexpr void setUnderwaterSnellRTEnabled(bool value) { underwaterSnellRTEnabled = value; }
 		constexpr void setUnderwaterGodRaysProceduralEnabled(bool value) { underwaterGodRaysProceduralEnabled = value; }
 		constexpr void setWaterSunShaftsEnabled(bool value) { waterSunShaftsEnabled = value; }
-		constexpr void setWaterSegmentModelEnabled(bool value) { waterSegmentModelEnabled = value; }
 		constexpr void setWaterRefractionRTEnabled(bool value) { waterRefractionRTEnabled = value; }
 		constexpr void setUnderwaterParticlesEnabled(bool value) { underwaterParticlesEnabled = value; }
 		constexpr void setDitherEnabled(bool value) { ditherEnabled = value; }

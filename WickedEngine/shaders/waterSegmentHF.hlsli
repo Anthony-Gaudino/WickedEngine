@@ -467,24 +467,15 @@ inline void ClipToWaterSide(
 	[branch]
 	if (keepBeyond != keepNear)
 	{
-		bool beyond;
-
-		[branch]
-		if (GetCamera().IsWaterSegmentModel())
-		{
-			beyond = TraceWaterSegment(
-				GetCamera().position,
-				position,
-				WATER_SEGMENT_STABLE_PHASE
-			).crosses;
-		}
-		else
-		{
-			// The DRAWN surface over the fragment's own position. Judged
-			// against waves the grid flattened away, a fragment would be
-			// dropped by both sides or kept by both.
-			beyond = WaterSegmentHeightAbove(position) <= 0;
-		}
+		// Walked along the segment from the eye. Asking instead which side of
+		// the surface the fragment's own position lies on cannot see a crest
+		// standing between the two, so a fragment behind one is judged dry and
+		// sorted into the near pass, where nothing can refract it.
+		const bool beyond = TraceWaterSegment(
+			GetCamera().position,
+			position,
+			WATER_SEGMENT_STABLE_PHASE
+		).crosses;
 
 		if (keepBeyond != beyond)
 		{

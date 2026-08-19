@@ -451,16 +451,17 @@ WaterFog GetWaterFog(
 	WaterSegment water;
 
 	[branch]
-	if (traceSegment && GetCamera().IsWaterSegmentModel())
+	if (traceSegment)
 	{
 		water = TraceWaterSegment(
 			eye, fragmentPosition, blue_noise(pixel).x);
 	}
 	else
 	{
-		// The surface between the two ends taken to be the straight line
-		// joining their heights, which is a linear clip and costs one sample at
-		// each end. It cannot see a crest standing between them.
+		// Only where the caller has said the segment cannot cross a wave it
+		// has not already accounted for. The surface between the two ends is
+		// taken to be the straight line joining their heights, which is one
+		// sample at each end and cannot see a crest standing between them.
 		water.crosses = (eyeHeight < 0) != (fragmentHeight < 0);
 		water.submerged = segment * saturate(
 			-min(eyeHeight, fragmentHeight)
