@@ -33,15 +33,16 @@
  * enough to matter the water fog has already extinguished the fragment - so the
  * air counted with it cannot be seen.
  *
- * **The two ends are measured against different surfaces, deliberately.** The
- * far end is measured against the drawn waves, because that end is often a
- * fragment ON the surface - the ocean's own - and the plane would read a crest
- * as standing in air and a trough as drowned, which is the swell painted into
- * the water's underside. The near end is measured against the plane, because it
- * is what rejects a dry camera, and rejecting it there is what keeps the
- * displacement sample off every fragment of every scene whose camera is not in
- * the water. A camera inside a crest but above the plane therefore counts as
- * dry, which is what the rest of the engine already makes of it.
+ * **Both ends are measured against the drawn waves.** The plane reads a crest
+ * as standing in air and a trough as drowned, and it is wrong about the eye in
+ * exactly the same way: an eye sitting in a trough is below the plane and
+ * plainly dry, and taking it for submerged invents a wet leg that is not there,
+ * cutting the air fog short over the whole view - which under a realistic sky
+ * removes a bright haze and reads as the far water going dark.
+ *
+ * The plane still rejects a dry camera cheaply, offset by the tallest wave the
+ * sea can raise, so the displacement sample is paid for only inside the band
+ * where the answer is genuinely in doubt.
  *
  * @param[in] distance - Length of the segment (in metres).
  * @param[in] O - World position the segment starts at.
@@ -54,7 +55,8 @@
  * @note Switches on the eye's own height, for the whole screen at once, where
  *       the water's fog sweeps the waterline down the screen on a per-pixel
  *       test it cannot share (this has no pixel to test). The two therefore
- *       disagree for as long as the camera straddles the surface.
+ *       still disagree while the camera straddles the surface, though now over
+ *       the wave it is actually in rather than over the whole swell.
  */
 inline float2 GetFogAirSegment(float distance, float3 O, float3 V)
 {
@@ -66,7 +68,19 @@ inline float2 GetFogAirSegment(float distance, float3 O, float3 V)
 		return float2(0, distance);
 	}
 
-	const float originAbove = O.y - GetWeather().ocean.water_height;
+	// Above every crest the sea can raise, nothing needs measuring: the eye is
+	// dry and the whole segment is air. Costs no sample, which is what keeps
+	// this affordable in every draw shader that fogs anything.
+	[branch]
+	if (O.y >= GetWeather().ocean.water_height + ocean_max_displacement())
+	{
+		return float2(0, distance);
+	}
+
+	// Inside that band the plane cannot answer and the wave over the eye has to
+	// be measured, against the same drawn surface the far end is measured
+	// against.
+	const float originAbove = O.y - ocean_drawn_surface_height(O);
 
 	[branch]
 	if (originAbove >= 0)
