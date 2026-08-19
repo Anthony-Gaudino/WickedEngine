@@ -75,6 +75,16 @@ struct SceneRadiance
  * @param[in] resolutionRcp - Reciprocal render resolution for `screenUV`.
  *
  * @return The gathered radiance, hit distance, and hit/miss flag.
+ *
+ * @note The radiance is returned raw: no height fog, no aerial perspective
+ *       and no water fog are applied over the traced distance. A consumer
+ *       whose ray crosses any of those applies them itself, over `distance`
+ *       from the ray origin - the camera's own path to that origin is a
+ *       different column of air and cannot stand in for it.
+ *
+ * @note A miss returns the sky, which already carries the atmosphere and is
+ *       not to be fogged again. It is only meaningful for a ray that can
+ *       reach the sky at all; one travelling down into water tests `hit`.
  */
 SceneRadiance TraceSceneRadiance(
 	RayDesc ray,

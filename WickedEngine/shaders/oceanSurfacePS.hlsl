@@ -1,3 +1,43 @@
+/**
+ * Paints one stage of the refraction lookup instead of the water.
+ *
+ * Each mode isolates one link in the chain that fills a pixel the scene copy
+ * cannot answer for, so a single frame says which link is at fault rather than
+ * leaving it to be argued from the shaded result.
+ *
+ * - `1` - belief, and where it was lost. **White** where the copy answered.
+ *   **Red** where something nearer stands in the ray's way, **blue** where the
+ *   coordinate ran off the edge of the copy, **green** where the ray projected
+ *   from behind the eye. Red and blue have entirely different cures - one
+ *   wants the ray traced, the other wants the copy rendered wider - so the
+ *   share of each is what decides which is worth paying for.
+ * - `4` - which way out of the branch chain the fragment took. **Red** took
+ *   the no-water path and does not bend at all, **green** the below-water
+ *   perturbation, **blue** the refraction proper. A wrong result says nothing
+ *   until it says which of the three produced it.
+ * - `5` - the refraction flattened to magenta, everything else shaded as
+ *   normal. Anything still structured on the water is drawn by the surface's
+ *   own shading - reflection, specular, foam - and not by the lookup at all.
+ * - `2` - the fog's in-scatter on its own, which is the whole of what a blind
+ *   pixel is filled with. Black here means the medium returns no veiling
+ *   radiance, and the fill can never work while it does.
+ * - `3` - the refraction after the fog has been applied. Coloured here but
+ *   black on screen puts the fault after this shader's refraction entirely.
+ *
+ * 0 in anything but a diagnosis.
+ */
+#define OCEAN_REFRACTION_DEBUG 0
+
+/**
+ * Reflectance of the sea bed where it has to be invented rather than read.
+ *
+ * Stands in for a surface the eye cannot see, behind whatever blocked the
+ * refracted ray. Deliberately dull: a guess that comes out too dark reads as
+ * shadow under the object, which is roughly what belongs there, while one that
+ * comes out too bright reads as a rim drawn around it.
+ */
+static const float UNSEEN_BED_ALBEDO = 0.2F;
+
 #define DISABLE_DECALS
 #define DISABLE_ENVMAPS
 #define DISABLE_TRANSPARENT_SHADOWMAP
@@ -241,21 +281,37 @@ float4 main(PSIn input) : SV_TARGET
 	{
 		// Water refraction:
 		Texture2D texture_refraction = bindless_textures[descriptor_index(camera.texture_refraction_index)];
-		// First sample using full perturbation:
-		float2 refraction_uv = ScreenCoord.xy + surface.N.xz * bump_strength;
+		// Measured along this fragment's OWN view ray, which is what "how much
+		// water stands in front of what it is looking through" means.
+		//
+		// Never a screen-space slide of it. bump_strength is a tenth of the
+		// screen, so a wave normal of any strength moves the tap tens of pixels
+		// sideways, and everything below is decided there instead of here - a
+		// tap that lands on a dry object switches this fragment's refraction
+		// off from that far away, and the unperturbed sample it then falls back
+		// to is read beside that object, where the copy already holds it.
+		float2 refraction_uv = ScreenCoord.xy;
 
-		// Reject against the neighbourhood the SCENE COPY resolves, not the one
-		// the depth buffer does. The copy is a fraction of the screen
-		// resolution, so a silhouette in it is several full resolution pixels
-		// wide: a UV landing merely NEAR a solid, without landing on it, still
-		// reads a texel carrying that solid, and paints it into the water. Two
-		// texels of reach covers the copy's own footprint and the second texel
-		// bilinear filtering pulls in.
 		float2 refraction_dim;
 		texture_refraction.GetDimensions(refraction_dim.x, refraction_dim.y);
 		const float2 refraction_texel = rcp(refraction_dim);
 
-		float refraction_depth = find_max_depth(refraction_uv, 2, refraction_texel);
+		// Point sampled, and it has to stay that way.
+		//
+		// This measures how much water stands in front of the ray's target,
+		// which decides both whether the surface bends at all and how far down
+		// it aims. Widened to the nearest thing within a neighbourhood, it
+		// reports a dry object several screen pixels before the coordinate
+		// reaches it, and a target with no water in front of it switches the
+		// refraction off - so a ring around everything standing out of the
+		// water samples the copy at the pixel's own coordinate, which at a
+		// quarter of screen resolution is exactly where that object is drawn.
+		// The object then rims itself in its own colour.
+		//
+		// Filtering across a silhouette is a real hazard, but it belongs where
+		// the colour is fetched and is handled there.
+		float refraction_depth = texture_depth.SampleLevel(
+			sampler_point_clamp, refraction_uv, 0);
 		float3 refraction_position = reconstruct_position(refraction_uv, refraction_depth);
 		water_depth = -dot(float4(refraction_position, 1), water_plane);
 		water_depth += texture_ocean_displacementmap.SampleLevel(sampler_linear_wrap, refraction_position.xz * xOceanPatchSizeRecip, 0).z; // texture contains xzy!
@@ -285,17 +341,274 @@ float4 main(PSIn input) : SV_TARGET
 			).submerged;
 		}
 
+		// How much of what the lookup returns can be believed, and how deep to
+		// call the water where it cannot be believed at all.
+		//
+		// The copy is a screen buffer, so it can only answer for a point that
+		// was actually drawn at the coordinate that point projects to. Where
+		// something else stands there instead, the answer is NOT another part
+		// of the screen: every coordinate that has scene in it is a second copy
+		// of that scene, which is the whole family of duplication bugs this
+		// lookup has produced. The answer is the water itself, with nothing
+		// behind it, which is the one thing that cannot duplicate anything.
+		float refraction_confidence = 1;
+		float refraction_blind_depth = 0;
+
+		// Which of the three reasons took the belief away, for the diagnostic
+		// below. Red, green and blue in that order so one frame separates the
+		// causes rather than only measuring how much was lost - they have
+		// different cures, and only the count of each says which is worth
+		// paying for.
+		float3 refraction_blind_reason = 0;
+
+		// Which of the three ways out of the chain below this fragment took,
+		// for the diagnostic. They disagree about where to look and about
+		// whether to bend at all, so a result that is wrong says nothing until
+		// it says which one produced it.
+		float3 refraction_branch = 0;
+
 		if (refracted_water <= 0)
 		{
+			refraction_branch = float3(1, 0, 0);
 			// Nothing in front of it to bend the ray, so fill holes by taking
 			// the unperturbed sample:
 			refraction_uv = ScreenCoord.xy;
 		}
-		else
+		else if (camera_below_water)
 		{
+			refraction_branch = float3(0, 1, 0);
+
 			// Perturbation according to the water the first sample is behind:
 			refraction_uv = ScreenCoord.xy + surface.N.xz * bump_strength * saturate(1 - exp(-refracted_water));
 		}
+		else
+		{
+			// Follow the ray the surface actually bends, rather than sliding
+			// the lookup sideways by the wave's tilt. Level water refracts as
+			// hard as a crest does: the bend is towards the vertical, so the
+			// ray lands NEARER the eye than the straight line does, and
+			// whatever stands there was drawn lower on screen.
+			//
+			// A tilt-driven offset is zero wherever the surface happens to be
+			// level, so those pixels read the copy at their own coordinate and
+			// show the scene exactly where it really is. That is what puts an
+			// unrefracted image of a submerged object beside its refracted
+			// one: the crest bends its share, the level water beside it does
+			// not bend at all.
+			//
+			refraction_branch = float3(0, 0, 1);
+
+			// Snell's law bounds the direction. Nothing entering from air runs
+			// more than 48.6 degrees off vertical, so the descent rate never
+			// falls below 0.661 and the path down to a given depth is at most
+			// 1.51 times that depth.
+			const float3 refracted_dir = refract(
+				-surface.V, surface.N, 1.0 / WATER_REFRACTIVE_INDEX);
+			const float descent = max(0.661, -refracted_dir.y);
+
+			// Where there is no bed the depth buffer holds the far plane, and
+			// the column measured against it runs to kilometres. Cut the ray at
+			// the distance past which the water has extinguished everything
+			// anyway: beyond it the sample can contribute nothing, and carrying
+			// on only lands the lookup somewhere arbitrary. The range is a path
+			// length and the column is a vertical drop, hence the descent rate
+			// between them.
+			const WaterVolumetrics medium = MakeWaterVolumetrics(1);
+			float reach = medium.IsActive()
+				? min(refracted_water, medium.VisibleRange() * descent)
+				: refracted_water;
+
+			// refracted_water is measured down from the still plane, so this
+			// lands on the target's depth rather than on the target: the wave
+			// the ray left from stands above or below that plane by its own
+			// displacement. The error is one wave height against the whole
+			// column, and it shifts the sample rather than dropping it.
+			float3 refracted_hit =
+				surface.P + refracted_dir * (reach / descent);
+			float4 refracted_clip =
+				mul(camera.view_projection, float4(refracted_hit, 1));
+			float2 refracted_screen = clipspace_to_uv(
+				refracted_clip.xy / refracted_clip.w);
+
+			// One refinement, and it is what decides whether an object standing
+			// in the water is refracted or duplicated.
+			//
+			// The depth above belongs to whatever lies under THIS pixel, which
+			// is not what the bent ray arrives at. Aimed at the sea bed, the ray
+			// sails straight past anything standing proud of it and its image is
+			// flung far up the screen - so the object is drawn a second time,
+			// somewhere it plainly is not, instead of being displaced a little
+			// from where it is. Re-aim at the depth of whatever is drawn where
+			// the first guess landed: when that really is the first thing in the
+			// ray's way, the copy is holding exactly the right answer at exactly
+			// that coordinate.
+			//
+			// **Only ever shortened.** A step that may lengthen can chase its
+			// own target and settle somewhere unrelated, which is how a
+			// fixed-point solve here ends up mirroring the view rather than
+			// refracting it. Shortening alone is monotone and terminates.
+			//
+			// Measured as a depth below the plane, so the step divides by the
+			// descent rate, which Snell's law bounds below at 0.661 - never by a
+			// rate of recession from the eye, which collapses at a grazing view.
+			// Only where the first guess landed on the screen at all. Past the
+			// edge the depth tap clamps to the border and returns a pixel from
+			// somewhere unrelated, so refining against it replaces a bounded
+			// estimate with an arbitrary one - and the column the fog is later
+			// charged for comes from the same number.
+			const float2 guess_border =
+				min(refracted_screen, 1 - refracted_screen);
+
+			[branch]
+			if (min(guess_border.x, guess_border.y) > 0 && refracted_clip.w > 0)
+			{
+				// Point sampled. The neighbourhood maximum the column measure
+				// above takes would stop the ray at the nearest thing within
+				// eight screen pixels of where it looked, which pulls it up
+				// short all the way around every silhouette.
+				const float guess_depth = texture_depth.SampleLevel(
+					sampler_point_clamp, refracted_screen, 0);
+				const float3 guess_position =
+					reconstruct_position(refracted_screen, guess_depth);
+
+				const float guess_water =
+					-dot(float4(guess_position, 1), water_plane);
+
+				// A target above the surface is not on this ray at all. The ray
+				// descends and stays inside Snell's cone, so nothing above the
+				// water can ever be in its way - a guess landing there means the
+				// first aim passed BEHIND something standing out of the water,
+				// not that it arrived at it.
+				//
+				// Taking it as a shorter target collapses the reach to nothing,
+				// which stops the ray dead at the surface and reads the copy at
+				// the fragment's own coordinate. Beside an object that is where
+				// the object is drawn, so it rims itself in its own colour - and
+				// the endpoint, now the surface, is nearer than anything the
+				// probe can find, so the sample is approved on the way past.
+				reach = guess_water > 0 ? min(guess_water, reach) : reach;
+
+				refracted_hit = surface.P + refracted_dir * (reach / descent);
+				refracted_clip =
+					mul(camera.view_projection, float4(refracted_hit, 1));
+				refracted_screen = clipspace_to_uv(
+					refracted_clip.xy / refracted_clip.w);
+			}
+
+			refraction_uv = refracted_screen;
+
+			// A projected point gives a COORDINATE, not what is drawn at it.
+			// The pixel there holds whatever stood nearest along its OWN ray,
+			// which is the point this ray reached only while nothing is in
+			// front of it. Compare the two depths and believe the sample only
+			// while they agree: an occluder reads far nearer than the point
+			// the ray actually travelled to.
+			//
+			// Tested in view depth, not against the water plane. The plane
+			// only catches occluders standing ABOVE the surface, and the ones
+			// that matter most are under it - a nearer submerged object, and
+			// the underwater half of the screen when the eye straddles the
+			// waterline, both of which the plane test waves through.
+			// Point sampled, for a different question than the column measure
+			// above asks. That one asks how much water stands in front of the
+			// COLOUR, where the copy's coarseness means a solid two texels away
+			// still bleeds into the sample, so the nearest thing nearby is the
+			// right answer. This one asks whether THIS coordinate holds the
+			// point the ray reached - and answering that with the nearest thing
+			// anywhere nearby condemns a ring of perfectly good pixels around
+			// every silhouette, which the fill then paints.
+			const float probe_depth = texture_depth.SampleLevel(
+				sampler_point_clamp, refracted_screen, 0);
+			const float intrusion =
+				refracted_clip.w - compute_lineardepth(probe_depth);
+
+			// Scaled by distance, because the copy's depth precision and the
+			// world footprint of one of its texels both are. Floored so the
+			// two smoothstep edges stay ordered - a hit landing on the eye
+			// plane would otherwise be handed a zero-width range, which is
+			// undefined and returns a value that poisons everything downstream.
+			const float tolerance = 0.02 * max(1, refracted_clip.w);
+			const float agrees =
+				1 - smoothstep(tolerance, tolerance * 5, intrusion);
+
+			// Was the ray already blocked before it got there?
+			//
+			// The test above cannot answer that on its own. The refinement
+			// aims at the depth of whatever is drawn where its guess landed,
+			// so wherever that guess fell on an occluder the endpoint is
+			// DEFINED from that occluder - and comparing the two then compares
+			// it against itself and always agrees. A ray passing BESIDE an
+			// object settles onto it exactly as one that runs into it does,
+			// which is what rims an object in its own colour.
+			//
+			// Self-consistency is not intersection. Walk a few points along
+			// the way and require each to stand in FRONT of whatever is drawn
+			// where it projects: a ray that really reaches its endpoint is
+			// unobstructed the whole way, and one that merely ends somewhere
+			// agreeable behind an occluder is not.
+			float unblocked = 1;
+
+			[unroll]
+			for (uint walk = 1; walk <= 3; ++walk)
+			{
+				const float3 waypoint = surface.P
+					+ refracted_dir * (reach / descent) * (walk * 0.25);
+				const float4 waypoint_clip =
+					mul(camera.view_projection, float4(waypoint, 1));
+				const float2 waypoint_screen = clipspace_to_uv(
+					waypoint_clip.xy / waypoint_clip.w);
+
+				const float waypoint_scene = compute_lineardepth(
+					texture_depth.SampleLevel(
+						sampler_point_clamp, waypoint_screen, 0));
+
+				unblocked = min(unblocked, 1 - smoothstep(
+					tolerance,
+					tolerance * 5,
+					waypoint_clip.w - waypoint_scene));
+			}
+
+			// A hit that projects from BEHIND the eye has no coordinate at
+			// all: w turns negative and the divide wraps it to the opposite
+			// side of the screen, where it looks like a perfectly ordinary
+			// coordinate holding something else entirely.
+			const float infront = refracted_clip.w > 0 ? 1 : 0;
+
+			// The copy simply stops at its border. Faded rather than cut, so
+			// no seam runs along the edge of the screen.
+			const float2 border = min(refracted_screen, 1 - refracted_screen);
+			const float inside = smoothstep(0, 0.02, min(border.x, border.y));
+
+			// With no medium there is nothing to fill a blind pixel WITH, so
+			// keep the sample rather than take it out and leave black behind.
+			refraction_confidence = medium.IsActive()
+				? agrees * unblocked * inside * infront
+				: 1;
+
+			// Both the endpoint test and the walk are the same complaint - the
+			// ray never got a clear sight of what it aimed at - so they share
+			// the red channel.
+			refraction_blind_reason = float3(
+				1 - agrees * unblocked, 1 - infront, 1 - inside);
+
+
+			// The column a blind pixel is charged for is the one its ray really
+			// crossed, not the whole distance the water can be seen through.
+			// Those are the same number only in water deep enough to hide its
+			// own bed; over a bed a few metres down they are not close, and
+			// charging the visible range there paints a patch of open-ocean
+			// blue into shallow water.
+			refraction_blind_depth = reach;
+		}
+		// Filtered, and it must stay filtered.
+		//
+		// The copy is a quarter of screen resolution, so at a water pixel
+		// touching an object every texel within reach already mixes that object
+		// with the water behind it. There is no clean tap nearby to prefer, and
+		// point sampling only trades a smoothed mixture for a hard-edged one -
+		// which reads as a rim drawn around the object rather than as the
+		// antialiasing it is. The band is the copy's resolution and is closed by
+		// raising it, not by choosing differently between contaminated samples.
 		surface.refraction.rgb = texture_refraction.SampleLevel(sampler_linear_mirror, refraction_uv, 0).rgb;
 		// Recompute depth params again with actual perturbation:
 		refraction_depth = texture_depth.SampleLevel(sampler_point_clamp, refraction_uv, 0);
@@ -359,12 +672,26 @@ float4 main(PSIn input) : SV_TARGET
 		const float uncounted_depth = max(0, surface.P.y
 			- ocean_drawn_surface_height(refraction_position));
 
+		// Where the copy answered, this is the crest leg it did not charge for.
+		// Where it did not, the sample has already been taken out above and the
+		// whole visible column stands in its place, so what survives is the
+		// in-scatter alone - the colour of water with nothing behind it.
+		// Charging a blind pixel for the crest leg only would leave it near
+		// black, with a hard edge wherever the belief ran out.
+		const float fog_depth =
+			lerp(refraction_blind_depth, uncounted_depth, refraction_confidence);
+
+		// Taken for every fragment rather than only where there is a leg to
+		// charge for: a blind pixel's entire colour comes from here, and a zero
+		// path is a no-op anyway - transmittance 1, in-scatter nothing.
 		[branch]
-		if (!camera_below_water && uncounted_depth > 0)
+		if (!camera_below_water)
 		{
+			const WaterVolumetrics behindMedium = MakeWaterVolumetrics(1);
+
 			const WaterFog waterBehind = MakeWaterFog(
-				MakeWaterVolumetrics(1),
-				SubmergedViewPath(uncounted_depth, V),
+				behindMedium,
+				SubmergedViewPath(fog_depth, V),
 				V,
 				0,
 				ScreenCoord,
@@ -376,10 +703,60 @@ float4 main(PSIn input) : SV_TARGET
 				1
 			);
 
+			// What stands behind the water where the copy could not say.
+			//
+			// Not nothing: over a bed only metres down the water is nowhere
+			// near thick enough to hide it, so a pixel handed an empty
+			// background comes back almost black however carefully it is
+			// fogged. What is missing is the bed's own colour at a point the
+			// eye cannot see, and the one honest thing to say about it is that
+			// it is a dull surface under the daylight that got down there -
+			// which is the irradiance this fog is already built from, sun and
+			// sky together, so it is lit exactly as everything else at this
+			// depth is rather than by a dimmer figure of its own.
+			//
+			// Deliberately not sampled from anywhere on screen: every
+			// coordinate that holds scene holds a second copy of that scene,
+			// which is the whole family of bugs this lookup keeps producing.
+			//
+			// Self-limiting. It is weighed against the column actually crossed,
+			// so it shows through in shallow water, where it is nearly right,
+			// and is extinguished in deep water, where it is a guess.
+			// Lambertian, so the daylight arriving has to be turned into the
+			// radiance leaving before it is a colour at all: albedo over pi.
+			// Handed straight over as irradiance it comes back about three
+			// times too bright, which on a dull surface under full sun is the
+			// difference between wet sand and white paper.
+			//
+			// Dimmed by the column standing over it as well. The fog below
+			// attenuates the leg back up to the eye and this is the other one:
+			// light does not arrive ten metres down as strong as it left the
+			// surface, and without this the invented bed brightens with depth
+			// exactly where the real one is fading out.
+			const half3 unseen_bed = (half3)(
+				waterBehind.downwelling
+				* (UNSEEN_BED_ALBEDO / PI)
+				* exp(-SubmergedViewPath(fog_depth, GetSunDirection())
+					* behindMedium.sigmaT));
+
 			surface.refraction.rgb = (half3)(
-				surface.refraction.rgb * waterBehind.transmittance
+				lerp(unseen_bed, surface.refraction.rgb, refraction_confidence)
+				* waterBehind.transmittance
 				+ waterBehind.inscatter);
+
+#if OCEAN_REFRACTION_DEBUG == 2
+			return float4(waterBehind.inscatter, 1);
+#endif // OCEAN_REFRACTION_DEBUG == 2
 		}
+
+#if OCEAN_REFRACTION_DEBUG == 1
+		return float4(
+			lerp(refraction_blind_reason, (float3)1, refraction_confidence), 1);
+#elif OCEAN_REFRACTION_DEBUG == 3
+		return float4(surface.refraction.rgb, 1);
+#elif OCEAN_REFRACTION_DEBUG == 4
+		return float4(refraction_branch, 1);
+#endif // OCEAN_REFRACTION_DEBUG
 	}
 	
 #if 1
@@ -537,6 +914,13 @@ float4 main(PSIn input) : SV_TARGET
 				: 0));
 	}
 #endif
+
+#if OCEAN_REFRACTION_DEBUG == 5
+	// Flattens everything the refraction lookup produced and leaves the rest of
+	// the surface's shading alone. Whatever is still structured after this is
+	// drawn by something that is not the lookup.
+	surface.refraction.rgb = half3(1, 0, 1);
+#endif // OCEAN_REFRACTION_DEBUG == 5
 
 	ApplyLighting(surface, lighting, color);
 	

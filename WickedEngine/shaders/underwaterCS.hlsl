@@ -310,6 +310,23 @@ void main(uint3 DTid : SV_DispatchThreadID)
 					postprocess.resolution_rcp
 				);
 				aboveWater = rad.color;
+
+				// The gather gives the radiance leaving the hit and nothing
+				// of the air in front of it, so the window has to fog its own
+				// content or a distant shore reads through it as crisply as
+				// one at arm's length. Measured from the crossing along the
+				// refracted ray, which is the air the light actually crossed;
+				// the camera's own path to here is underwater and would be
+				// the wrong column. A miss returns sky, which arrives with
+				// the atmosphere already in it.
+				[branch]
+				if (rad.hit)
+				{
+					const half4 airFog = GetFog(
+						rad.distance, ocean_surface_pos, refractedDir);
+					aboveWater = lerp(
+						aboveWater, (float3)airFog.rgb, (float)airFog.a);
+				}
 			}
 			else
 #endif // RTAPI

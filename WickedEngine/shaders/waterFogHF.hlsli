@@ -104,6 +104,21 @@ struct WaterFog
 	float3 inscatter;
 
 	/**
+	 * Daylight arriving at this water, sun and sky together.
+	 *
+	 * The irradiance the in-scatter is built from, before any of it is turned
+	 * back towards the eye. Exposed so that a caller which has to stand in for
+	 * a surface it cannot see - one hidden behind an occluder, say - can light
+	 * that surface with the same daylight everything else at this depth is lit
+	 * by, instead of re-deriving a dimmer one of its own.
+	 *
+	 * @note Already carries the sun's Fresnel loss at the surface and its slant
+	 *       through the column above the eye, so it is what got IN, not what
+	 *       was sent. Multiply by an albedo to make a surface of it.
+	 */
+	float3 downwelling;
+
+	/**
 	 * Whether this fog does anything at all.
 	 *
 	 * @return true when the water is present and the segment has length.
@@ -366,6 +381,8 @@ WaterFog MakeWaterFog(
 		+ inelastic * (half3)(1 - fog.transmittance)
 		+ directional * (half3)inscatterAmount;
 
+	fog.downwelling = downwelling;
+
 	return fog;
 }
 
@@ -429,6 +446,7 @@ WaterFog GetWaterFog(
 	WaterFog fog;
 	fog.transmittance = 1;
 	fog.inscatter = 0;
+	fog.downwelling = 0;
 
 	[branch]
 	if (!GetCamera().IsWaterFog())
@@ -643,6 +661,7 @@ WaterFog GetWaterFog(float2 screenUV, float3 fragmentPosition)
 	WaterFog fog;
 	fog.transmittance = 1;
 	fog.inscatter = 0;
+	fog.downwelling = 0;
 
 	[branch]
 	if (!GetCamera().IsWaterFog())
