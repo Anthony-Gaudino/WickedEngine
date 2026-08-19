@@ -239,6 +239,7 @@ wi::vector<ShaderEntry> shaders = {
 	{"emittedparticlePS_soft_lighting", wi::graphics::ShaderStage::PS },
 	{"underwaterParticlePS", wi::graphics::ShaderStage::PS },
 	{"oceanSurfacePS", wi::graphics::ShaderStage::PS },
+	{"oceanSurfacePS_rtapi", wi::graphics::ShaderStage::PS, wi::graphics::ShaderModel::SM_6_5 },
 	{"oceanSurfacePS_envmap", wi::graphics::ShaderStage::PS },
 	{"oceanSurfacePS_shadowmap", wi::graphics::ShaderStage::PS },
 	{"hairparticlePS", wi::graphics::ShaderStage::PS },

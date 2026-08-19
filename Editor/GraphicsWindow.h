@@ -98,6 +98,7 @@ public:
 	wi::gui::Slider underwaterSnellStrengthSlider;
 	wi::gui::Slider underwaterSnellFadeSlider;
 	wi::gui::CheckBox underwaterSnellRTCheckBox;
+	wi::gui::CheckBox waterRefractionRTCheckBox;
 	wi::gui::CheckBox underwaterGodRaysProceduralCheckBox;
 	wi::gui::CheckBox waterSunShaftsCheckBox;
 	wi::gui::CheckBox waterSegmentModelCheckBox;

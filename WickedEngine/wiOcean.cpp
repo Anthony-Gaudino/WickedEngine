@@ -25,6 +25,7 @@ namespace wi
 		Shader		oceanSurfVS;
 		Shader		wireframePS;
 		Shader		oceanSurfPS;
+		Shader		oceanSurfPS_rtapi;
 		Shader		oceanSurfPS_envmap;
 		Shader		oceanSurfPS_shadowmap;
 
@@ -33,7 +34,7 @@ namespace wi
 		DepthStencilState	depthStencilState, depthStencilState_shadowmap;
 		BlendState			blendState, blendState_shadowmap;
 
-		PipelineState PSO, PSO_envmap, PSO_shadowmap, PSO_wire;
+		PipelineState PSO, PSO_rtapi, PSO_envmap, PSO_shadowmap, PSO_wire;
 		Texture perlinTex;
 
 		/*
@@ -370,6 +371,10 @@ namespace wi
 			wi::renderer::LoadShader(ShaderStage::VS, oceanSurfVS, "oceanSurfaceVS.cso");
 
 			wi::renderer::LoadShader(ShaderStage::PS, oceanSurfPS, "oceanSurfacePS.cso");
+			if (wi::graphics::GetDevice()->CheckCapability(GraphicsDeviceCapability::RAYTRACING))
+			{
+				wi::renderer::LoadShader(ShaderStage::PS, oceanSurfPS_rtapi, "oceanSurfacePS_rtapi.cso", ShaderModel::SM_6_5);
+			}
 			wi::renderer::LoadShader(ShaderStage::PS, oceanSurfPS_envmap, "oceanSurfacePS_envmap.cso");
 			wi::renderer::LoadShader(ShaderStage::PS, oceanSurfPS_shadowmap, "oceanSurfacePS_shadowmap.cso");
 			wi::renderer::LoadShader(ShaderStage::PS, wireframePS, "oceanSurfaceSimplePS.cso");
@@ -385,6 +390,12 @@ namespace wi
 				desc.rs = &rasterizerState;
 				desc.dss = &depthStencilState;
 				device->CreatePipelineState(&desc, &PSO);
+
+				if (oceanSurfPS_rtapi.IsValid())
+				{
+					desc.ps = &oceanSurfPS_rtapi;
+					device->CreatePipelineState(&desc, &PSO_rtapi);
+				}
 
 				desc.ps = &oceanSurfPS_envmap;
 				device->CreatePipelineState(&desc, &PSO_envmap);
@@ -868,9 +879,19 @@ namespace wi
 
 		const bool wire = wi::renderer::IsWireRender();
 
+		// The same option bit the surface shader tests, so the pipeline and the
+		// branch inside it can never disagree about which one is running.
+		const bool refraction_rt =
+			((camera.shadercamera_options & SHADERCAMERA_OPTION_WATER_REFRACTION_RT) != 0)
+			&& PSO_rtapi.IsValid();
+
 		if (wire)
 		{
 			device->BindPipelineState(&PSO_wire, cmd);
+		}
+		else if (refraction_rt)
+		{
+			device->BindPipelineState(&PSO_rtapi, cmd);
 		}
 		else
 		{

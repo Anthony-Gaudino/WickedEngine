@@ -1400,6 +1400,17 @@ enum SHADERCAMERA_OPTIONS
 	// Diagnostic only: it exists so an artifact can be attributed and the march
 	// costed against the tests it replaces.
 	SHADERCAMERA_OPTION_WATER_SEGMENT_MODEL = 1 << 8,
+	// Find what the water refracts by tracing the refracted ray into the scene
+	// rather than by offsetting the lookup with the wave normal.
+	//
+	// A screen space offset is a guess at where the refracted ray landed, and a
+	// guess that lands somewhere the ray could not reach draws the same object
+	// a second time. Tracing answers where it landed; the scene copy is still
+	// what says what colour is there.
+	//
+	// Requires hardware ray tracing and a valid TLAS. Without either, the
+	// offset is what is used.
+	SHADERCAMERA_OPTION_WATER_REFRACTION_RT = 1 << 9,
 };
 
 struct alignas(16) ShaderCamera
@@ -1606,6 +1617,7 @@ struct alignas(16) ShaderCamera
 	inline bool IsWaterSideNear() { return options & SHADERCAMERA_OPTION_WATERSIDE_NEAR; }
 	inline bool IsWaterSunShafts() { return options & SHADERCAMERA_OPTION_WATER_SUN_SHAFTS; }
 	inline bool IsWaterSegmentModel() { return options & SHADERCAMERA_OPTION_WATER_SEGMENT_MODEL; }
+	inline bool IsWaterRefractionRT() { return options & SHADERCAMERA_OPTION_WATER_REFRACTION_RT; }
 
 	inline float3 screen_to_nearplane(float4 svposition)
 	{

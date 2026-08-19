@@ -1530,6 +1530,23 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 		});
 	AddWidget(&underwaterSnellRTCheckBox);
 
+	waterRefractionRTCheckBox.Create("Water Refraction Ray Tracing: ");
+	waterRefractionRTCheckBox.SetTooltip("Trace the refracted ray into the scene to find what the water bends into view, instead of guessing at it with a screen space offset. Off, an object standing behind a crest is drawn twice. Requires a ray tracing capable GPU.");
+	waterRefractionRTCheckBox.SetSize(XMFLOAT2(hei, hei));
+	waterRefractionRTCheckBox.SetPos(XMFLOAT2(x, y += step));
+
+	if (editor->main->config.GetSection("graphics").Has("water_refraction_rt"))
+	{
+		editor->renderPath->setWaterRefractionRTEnabled(editor->main->config.GetSection("graphics").GetBool("water_refraction_rt"));
+	}
+
+	waterRefractionRTCheckBox.OnClick([=](wi::gui::EventArgs args) {
+		editor->renderPath->setWaterRefractionRTEnabled(args.bValue);
+		editor->main->config.GetSection("graphics").Set("water_refraction_rt", args.bValue);
+		editor->main->config.Commit();
+		});
+	AddWidget(&waterRefractionRTCheckBox);
+
 	underwaterParticlesCheckBox.Create("Underwater Particles: ");
 	underwaterParticlesCheckBox.SetTooltip("Draw the detritus suspended in the water - marine snow - so that light shafts and lamps have something to fall on. How far the field reaches and how thickly it is populated both follow the water clarity set in Weather (turbidity / water type); the slider only scales that.");
 	underwaterParticlesCheckBox.SetSize(XMFLOAT2(hei, hei));
@@ -2139,6 +2156,7 @@ void GraphicsWindow::UpdateData()
 	underwaterSnellStrengthSlider.SetValue(editor->renderPath->getUnderwaterSnellStrength());
 	underwaterSnellFadeSlider.SetValue(editor->renderPath->getUnderwaterSnellFade());
 	underwaterSnellRTCheckBox.SetCheck(editor->renderPath->getUnderwaterSnellRTEnabled());
+	waterRefractionRTCheckBox.SetCheck(editor->renderPath->getWaterRefractionRTEnabled());
 	underwaterGodRaysProceduralCheckBox.SetCheck(editor->renderPath->getUnderwaterGodRaysProceduralEnabled());
 	waterSunShaftsCheckBox.SetCheck(editor->renderPath->getWaterSunShaftsEnabled());
 	waterSegmentModelCheckBox.SetCheck(editor->renderPath->getWaterSegmentModelEnabled());
@@ -2418,6 +2436,7 @@ void GraphicsWindow::ResizeLayout()
 	underwaterSnellCheckBox.SetPos(XMFLOAT2(underwaterSnellStrengthSlider.GetPos().x - underwaterSnellCheckBox.GetSize().x - 80, underwaterSnellStrengthSlider.GetPos().y));
 	layout.add_right(underwaterSnellFadeSlider);
 	layout.add_right(underwaterSnellRTCheckBox);
+	layout.add_right(waterRefractionRTCheckBox);
 	layout.add_right(underwaterGodRaysProceduralCheckBox);
 	layout.add_right(waterSunShaftsCheckBox);
 	layout.add_right(waterSegmentModelCheckBox);

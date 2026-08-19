@@ -331,7 +331,8 @@ namespace wi
 				(hw_raytrace && getAO() == AO_RTAO) ||
 				(hw_raytrace && getRaytracedReflectionEnabled()) ||
 				(hw_raytrace && getRaytracedDiffuseEnabled()) ||
-				(hw_raytrace && getUnderwaterSnellEnabled() && getUnderwaterSnellRTEnabled())
+				(hw_raytrace && getUnderwaterSnellEnabled() && getUnderwaterSnellRTEnabled()) ||
+				(hw_raytrace && getWaterRefractionRTEnabled() && scene->weather.IsOceanEnabled())
 				)
 			{
 				scene->SetAccelerationStructureUpdateRequested(true);
@@ -789,6 +790,13 @@ namespace wi
 			if (getWaterSegmentModelEnabled())
 			{
 				camera->shadercamera_options |= SHADERCAMERA_OPTION_WATER_SEGMENT_MODEL;
+			}
+			// Gated on the capability here rather than in the shader, so the
+			// ocean can pick its pipeline from the same bit.
+			if (getWaterRefractionRTEnabled() &&
+				device->CheckCapability(GraphicsDeviceCapability::RAYTRACING))
+			{
+				camera->shadercamera_options |= SHADERCAMERA_OPTION_WATER_REFRACTION_RT;
 			}
 		}
 
