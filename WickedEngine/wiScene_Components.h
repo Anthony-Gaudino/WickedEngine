@@ -1838,6 +1838,8 @@ namespace wi::scene
 			OCEAN_WIND_DRIFT = 1 << 12,
 			OCEAN_SUBSURFACE_SCATTERING = 1 << 13,
 			OCEAN_SHORE_FOAM = 1 << 14,
+			OCEAN_REFLECTION_PROBE_ABOVE = 1 << 15,
+			OCEAN_REFLECTION_PROBE_BELOW = 1 << 16,
 		};
 		// Subsurface scattering and shoreline foam are on by default, each
 		// having existed before it was given a switch.
@@ -1869,6 +1871,19 @@ namespace wi::scene
 		// that is lit from behind.
 		constexpr bool IsOceanSubsurfaceScattering() const { return _flags & OCEAN_SUBSURFACE_SCATTERING; }
 		constexpr bool IsOceanShoreFoam() const { return _flags & OCEAN_SHORE_FOAM; }
+		// When enabled, the water reflects the environment probe wherever the
+		// planar reflection cannot be used - which is most of a real sea, since
+		// that pass is only right for a surface lying in the flat plane.
+		//
+		// Off is not "no reflection": the sky is read directly instead. The
+		// switch is over consulting the probe, which a scene has to author and
+		// pay for, not over whether the water reflects at all.
+		constexpr bool IsOceanReflectionProbeAbove() const { return _flags & OCEAN_REFLECTION_PROBE_ABOVE; }
+		// The same for an eye under the surface, kept apart because past the
+		// critical angle the underside is a total mirror - what stands in for
+		// the planar reflection there is most of the pixel rather than a
+		// highlight on it.
+		constexpr bool IsOceanReflectionProbeBelow() const { return _flags & OCEAN_REFLECTION_PROBE_BELOW; }
 
 		constexpr void SetOceanEnabled(bool value = true) { set_flag(_flags, OCEAN_ENABLED, value); }
 		constexpr void SetRealisticSky(bool value = true) { set_flag(_flags, REALISTIC_SKY, value); }
@@ -1884,6 +1899,8 @@ namespace wi::scene
 		constexpr void SetOceanWindDrift(bool value = true) { set_flag(_flags, OCEAN_WIND_DRIFT, value); }
 		constexpr void SetOceanSubsurfaceScattering(bool value = true) { set_flag(_flags, OCEAN_SUBSURFACE_SCATTERING, value); }
 		constexpr void SetOceanShoreFoam(bool value = true) { set_flag(_flags, OCEAN_SHORE_FOAM, value); }
+		constexpr void SetOceanReflectionProbeAbove(bool value = true) { set_flag(_flags, OCEAN_REFLECTION_PROBE_ABOVE, value); }
+		constexpr void SetOceanReflectionProbeBelow(bool value = true) { set_flag(_flags, OCEAN_REFLECTION_PROBE_BELOW, value); }
 
 		XMFLOAT3 sunColor = XMFLOAT3(0, 0, 0);
 		XMFLOAT3 sunDirection = XMFLOAT3(0, 1, 0);

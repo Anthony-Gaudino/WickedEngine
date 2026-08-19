@@ -981,6 +981,24 @@ void WeatherWindow::Create(EditorComponent* _editor)
 		});
 	AddWidget(&ocean_shoreFoamStrengthSlider);
 
+	ocean_reflectionProbeAboveCheckBox.Create("Probe reflection (above): ");
+	ocean_reflectionProbeAboveCheckBox.SetSize(XMFLOAT2(hei, hei));
+	ocean_reflectionProbeAboveCheckBox.SetPos(XMFLOAT2(x, y += step));
+	ocean_reflectionProbeAboveCheckBox.SetTooltip("Reflect the environment probe off the water where the planar reflection cannot be used, which is most of a real sea - that pass is only right for a surface lying flat, so it is withdrawn wherever the waves tilt away from it. Off does not mean no reflection: the sky is read directly instead, which is most of what open water reflects and needs no probe. Turn this on for water that should mirror the world around it rather than the sky alone.");
+	ocean_reflectionProbeAboveCheckBox.OnClick([this](wi::gui::EventArgs args) {
+		GetWeather().SetOceanReflectionProbeAbove(args.bValue);
+		});
+	AddWidget(&ocean_reflectionProbeAboveCheckBox);
+
+	ocean_reflectionProbeBelowCheckBox.Create("Probe reflection (below): ");
+	ocean_reflectionProbeBelowCheckBox.SetSize(XMFLOAT2(hei, hei));
+	ocean_reflectionProbeBelowCheckBox.SetPos(XMFLOAT2(x, y += step));
+	ocean_reflectionProbeBelowCheckBox.SetTooltip("The same, for an eye under the surface. Kept separate because it is a far larger share of the picture there: past the critical angle the underside is a total mirror, so whatever stands in for the planar reflection is most of the pixel rather than a highlight on it.");
+	ocean_reflectionProbeBelowCheckBox.OnClick([this](wi::gui::EventArgs args) {
+		GetWeather().SetOceanReflectionProbeBelow(args.bValue);
+		});
+	AddWidget(&ocean_reflectionProbeBelowCheckBox);
+
 	// Water optics: the inherent optical properties of the water, which decide
 	// turbidity, hue and how far one can see through it.
 	ocean_waterTypeComboBox.Create("Water type: ");
@@ -1292,6 +1310,8 @@ void WeatherWindow::UpdateData()
 		ocean_shoreFoamCheckBox.SetCheck(weather.IsOceanShoreFoam());
 		ocean_shoreFoamWidthSlider.SetValue(weather.oceanShoreFoamWidth);
 		ocean_shoreFoamStrengthSlider.SetValue(weather.oceanShoreFoamStrength);
+		ocean_reflectionProbeAboveCheckBox.SetCheck(weather.IsOceanReflectionProbeAbove());
+		ocean_reflectionProbeBelowCheckBox.SetCheck(weather.IsOceanReflectionProbeBelow());
 		UpdateWaterMedium();
 
 		volumetricCloudsCheckBox.SetCheck(weather.IsVolumetricClouds());
@@ -1544,6 +1564,8 @@ void WeatherWindow::ResizeLayout()
 	layout.add_right(ocean_shoreFoamCheckBox);
 	layout.add(ocean_shoreFoamWidthSlider);
 	layout.add(ocean_shoreFoamStrengthSlider);
+	layout.add_right(ocean_reflectionProbeAboveCheckBox);
+	layout.add_right(ocean_reflectionProbeBelowCheckBox);
 	layout.add(ocean_waterTypeComboBox);
 	layout.add(ocean_algaeSlider);
 	layout.add(ocean_siltSlider);

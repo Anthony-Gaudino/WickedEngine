@@ -12,6 +12,55 @@ Texture2D<float4> texture_ocean_displacementmap : register(t0);
 Texture2D<float4> texture_gradientmap : register(t1);
 Texture2D<float4> texture_perlin : register(t2);
 
+/**
+ * What the surface reflects where the planar pass cannot be believed.
+ *
+ * The planar reflection is rendered about the flat plane, so it is only right
+ * for a surface lying in that plane. A crest reflects somewhere that pass never
+ * rendered, and `planar_factor` withdraws it there - over most of a real sea,
+ * since almost none of it is flat. Whatever is withdrawn has to be replaced: on
+ * its own the water keeps only its refraction, and where total internal
+ * reflection has taken that away as well the surface is left with nothing at
+ * all to draw, which reads as crests going dark.
+ *
+ * The sky in the reflected direction is the default answer, being most of what
+ * an open sea reflects and available whether or not a scene has authored
+ * anything. The global probe carries the whole world instead, and is asked for
+ * only where the weather says so - separately for each side of the surface,
+ * since past the critical angle the underside is a total mirror and what stands
+ * in there is most of the pixel rather than a highlight on it.
+ *
+ * A probe that was asked for but never authored falls back to the sky as well.
+ * `EnvironmentReflection_Global` returns nothing at all in that case, which is
+ * silent and looks exactly like water that reflects nothing.
+ *
+ * @param[in] surface - The shaded surface, supplying the reflection vector,
+ *                      roughness and Fresnel.
+ * @param[in] cameraBelowWater - Whether the eye is under the surface, which
+ *                               selects which of the two switches applies.
+ *
+ * @return Reflected radiance, already weighted by Fresnel as the probe path
+ *         weights its own.
+ */
+half3 OceanFallbackReflection(in Surface surface, in bool cameraBelowWater)
+{
+	const bool useProbe = cameraBelowWater
+		? GetWeather().ocean.IsReflectionProbeBelow()
+		: GetWeather().ocean.IsReflectionProbeAbove();
+
+	[branch]
+	if (useProbe && GetScene().globalprobe >= 0)
+	{
+		return EnvironmentReflection_Global(surface);
+	}
+
+	const half3 sky = IsStaticSky()
+		? (half3)GetStaticSkyColor(surface.R)
+		: (half3)GetDynamicSkyColor(surface.R);
+
+	return sky * surface.F;
+}
+
 float4 main(PSIn input) : SV_TARGET
 {
 #ifdef SHADOWMAPRENDERING
@@ -241,11 +290,21 @@ float4 main(PSIn input) : SV_TARGET
 		const float planar_factor = smoothstep(camera_below_water ? 0.9 : 0.95,1.0,abs(dot(planar_reflection_vector_flat, planar_reflection_vector)));
 		//return float4(planar_factor.xxx,1);
 
-		lighting.indirect.specular += reflectiveColor.rgb * surface.F * saturate(dist * 0.1) * planar_factor; // fade out very close to camera, doesn't look good
+		// How much of the planar pass is worth believing here: it reflects
+		// about the flat plane, so a crest reflects somewhere it never
+		// rendered, and very close to the eye its projection is too coarse.
+		const float planar_weight = planar_factor * saturate(dist * 0.1);
+
+		// Faded TO a reflection that is right everywhere rather than faded out.
+		// What is withdrawn here is the surface's only reflection.
+		lighting.indirect.specular += lerp(
+			OceanFallbackReflection(surface, camera_below_water),
+			(half3)(reflectiveColor.rgb * surface.F),
+			planar_weight);
 	}
 	else
 	{
-		lighting.indirect.specular += EnvironmentReflection_Global(surface);
+		lighting.indirect.specular += OceanFallbackReflection(surface, camera_below_water);
 	}
 
 	float water_depth = FLT_MAX;

@@ -975,6 +975,14 @@ namespace wi::scene
 		{
 			shaderscene.weather.ocean.flags |= OCEAN_FLAG_SHORE_FOAM;
 		}
+		if (weather.IsOceanReflectionProbeAbove())
+		{
+			shaderscene.weather.ocean.flags |= OCEAN_FLAG_REFLECTION_PROBE_ABOVE;
+		}
+		if (weather.IsOceanReflectionProbeBelow())
+		{
+			shaderscene.weather.ocean.flags |= OCEAN_FLAG_REFLECTION_PROBE_BELOW;
+		}
 		shaderscene.weather.ocean.subsurface_strength = weather.oceanSubsurfaceStrength;
 		shaderscene.weather.ocean.shore_foam_width = weather.oceanShoreFoamWidth;
 		shaderscene.weather.ocean.shore_foam_strength = weather.oceanShoreFoamStrength;

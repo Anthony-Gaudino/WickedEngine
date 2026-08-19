@@ -65,6 +65,8 @@ public:
 	wi::gui::CheckBox ocean_shoreFoamCheckBox;
 	wi::gui::Slider ocean_shoreFoamWidthSlider;
 	wi::gui::Slider ocean_shoreFoamStrengthSlider;
+	wi::gui::CheckBox ocean_reflectionProbeAboveCheckBox;
+	wi::gui::CheckBox ocean_reflectionProbeBelowCheckBox;
 	wi::gui::ComboBox ocean_waterTypeComboBox;
 	wi::gui::Slider ocean_algaeSlider;
 	wi::gui::Slider ocean_siltSlider;

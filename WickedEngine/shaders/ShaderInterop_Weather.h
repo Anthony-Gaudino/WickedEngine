@@ -353,6 +353,29 @@ static const uint OCEAN_FLAG_SUBSURFACE_SCATTERING = 1u << 0u;
 static const uint OCEAN_FLAG_SHORE_FOAM = 1u << 1u;
 
 /**
+ * Reflect the environment probe off the surface, seen from above the water.
+ *
+ * The planar reflection is rendered about the flat plane and is withdrawn
+ * wherever the waves tilt away from it, which is most of a real sea. Something
+ * has to stand in its place or the surface reflects nothing at all there; this
+ * chooses the global probe, which carries the whole world.
+ *
+ * Off by default, and off is not "no reflection": the sky is read directly
+ * instead, which is most of what an open sea reflects and costs no probe.
+ */
+static const uint OCEAN_FLAG_REFLECTION_PROBE_ABOVE = 1u << 2u;
+
+/**
+ * The same, seen from beneath the surface.
+ *
+ * Separate because it is a different picture and a different share of the
+ * frame: past the critical angle the underside is a total mirror, so whatever
+ * stands in for the planar reflection there is most of the pixel rather than a
+ * highlight on it.
+ */
+static const uint OCEAN_FLAG_REFLECTION_PROBE_BELOW = 1u << 3u;
+
+/**
  * Refractive index of water for visible light, relative to air.
  *
  * Fresh water at green wavelengths. Sea water is nearer 1.34 and the index
@@ -469,6 +492,8 @@ struct alignas(16) ShaderOcean
 	bool IsValid() { return texture_displacementmap >= 0; }
 	bool IsSubsurfaceScattering() { return flags & OCEAN_FLAG_SUBSURFACE_SCATTERING; }
 	bool IsShoreFoam() { return flags & OCEAN_FLAG_SHORE_FOAM; }
+	bool IsReflectionProbeAbove() { return flags & OCEAN_FLAG_REFLECTION_PROBE_ABOVE; }
+	bool IsReflectionProbeBelow() { return flags & OCEAN_FLAG_REFLECTION_PROBE_BELOW; }
 };
 
 struct alignas(16) ShaderWeather
