@@ -18,23 +18,6 @@
  */
 #define OCEAN_VOLUMETRIC_DEBUG 0
 
-/**
- * How far the point answering the shore depth may lie from the fragment using
- * it, in metres.
- *
- * `shore_depth` is read from the depth buffer along this pixel's VIEW RAY, so
- * it describes whatever that ray struck rather than what lies beneath the
- * fragment. Looking steeply down the two coincide. At a grazing angle the ray
- * runs on and is answered by a shore a hundred metres off, and open water
- * reports itself shallow and grows foam from a beach it is nowhere near.
- *
- * Nothing here can find the bed beneath the fragment - the depth buffer holds
- * only what the eye can see - so an answer from too far off is refused instead.
- * Sized as the distance over which a sea bed is assumed not to change: well
- * inside a wavelength, and far outside the offset a steep view produces.
- */
-static const float OCEAN_SHORE_FOAM_LOCALITY = 8.0F;
-
 #define DISABLE_DECALS
 #define DISABLE_ENVMAPS
 #define DISABLE_TRANSPARENT_SHADOWMAP
@@ -602,17 +585,9 @@ float4 main(PSIn input) : SV_TARGET
 		const float shore_depth = max(
 			shore_water_column, surface.P.y - shore_position.y);
 
-		// Refused where the answer came from too far away to be about this
-		// fragment. Faded rather than cut, so a shoreline seen at a slant
-		// loses its foam gradually instead of along a line across the water.
-		const float shore_locality = 1 - smoothstep(
-			OCEAN_SHORE_FOAM_LOCALITY,
-			OCEAN_SHORE_FOAM_LOCALITY * 2,
-			distance(surface.P.xz, shore_position.xz));
-
 		float foam_shore = shore_foam_present
 			? saturate(exp(-shore_depth * shore_foam_falloff))
-				* GetWeather().ocean.shore_foam_strength * shore_locality
+				* GetWeather().ocean.shore_foam_strength
 			: 0;
 		float foam_wave = pow(saturate(gradient.a), 4) * saturate(exp(-water_depth * 0.1));
 		float foam_combined = saturate(foam_shore + foam_wave);
@@ -667,7 +642,28 @@ float4 main(PSIn input) : SV_TARGET
 		}
 		foam *= 2;
 		foam = saturate(foam);
-		surface.albedo = lerp(surface.albedo, (half3)xOceanFoamColor.rgb, foam);
+		// The foam is at the point the ray struck the bed, not at this
+		// fragment, so what is seen of it crossed the water between the
+		// two - and that water fogs it exactly as it fogs anything else at
+		// that range. Foam close by is untouched; foam answered from far
+		// across the sea arrives water-coloured, which is why open water
+		// stops wearing a distant shore's foam without any of it being
+		// refused or faded out by hand.
+		const WaterFog foamFog = MakeWaterFog(
+			MakeWaterVolumetrics(1),
+			distance(surface.P, shore_position),
+			V,
+			0,
+			ScreenCoord,
+			uv_to_clipspace(ScreenCoord),
+			false,
+			1
+		);
+
+		const half3 foamColor = (half3)(
+			xOceanFoamColor.rgb * foamFog.transmittance + foamFog.inscatter);
+
+		surface.albedo = lerp(surface.albedo, foamColor, foam);
 		surface.refraction.a *= 1 - foam * (half)xOceanFoamColor.a;
 		// Same guard: with no sea bed under water there is no shoreline to
 		// restore the refraction over.
@@ -678,7 +674,7 @@ float4 main(PSIn input) : SV_TARGET
 		surface.refraction.a = saturate(surface.refraction.a +
 			(shore_foam_present
 				? saturate(exp(-shore_depth * shore_foam_falloff * 2))
-					* GetWeather().ocean.shore_foam_strength * shore_locality
+					* GetWeather().ocean.shore_foam_strength
 				: 0));
 	}
 #endif
