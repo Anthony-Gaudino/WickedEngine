@@ -1,3 +1,23 @@
+/**
+ * Paints the volumetric light's own contribution, or the test that decides
+ * which medium fills its froxels.
+ *
+ * For a lightening under the waterline on a crest that goes away when the sun's
+ * volumetric light is switched off.
+ *
+ * - `1` - what `ApplyVolumetricLight` added, on its own. A boundary visible
+ *   here is drawn by the volumetric light; one that is not is drawn by
+ *   something the volumetric light merely scales.
+ * - `2` - `ocean_underwater_factor` at this pixel, which is what
+ *   `VolumetricFroxelMediumAt` uses to fill a froxel column with water instead
+ *   of air. **Asked at every camera height** - unlike the water fog's copy of
+ *   the same test it carries no submersion margin - so this says whether the
+ *   eye-submersion sweep is firing here at all.
+ *
+ * 0 in anything but a diagnosis.
+ */
+#define OCEAN_VOLUMETRIC_DEBUG 0
+
 #define DISABLE_DECALS
 #define DISABLE_ENVMAPS
 #define DISABLE_TRANSPARENT_SHADOWMAP
@@ -172,21 +192,44 @@ float4 main(PSIn input) : SV_TARGET
 	const float bump_strength = 0.1;
 	
 	float4 water_plane = camera.reflection_plane;
-	// Which side of the water the eye is on, and everything about how this
-	// surface is shaded turns on it: the normal faces the medium the viewer is
-	// in, the Fresnel switches to the dense-side curve, and past the critical
-	// angle the underside becomes a mirror.
+	// How submerged the EYE is AT THIS PIXEL, graded over [0, 1].
 	//
-	// **Measured against the DRAWN surface over the camera, never the still
-	// plane.** Everything else about this surface is measured against the drawn
-	// one, and the two disagree by the whole wave height: an eye sitting in a
-	// trough is below the plane while plainly in the air, and a plane test
-	// hands it the entire submerged treatment - flipped normal, dense-side
-	// Fresnel, total internal reflection - which is what shades crests
-	// differently for a camera that never got wet. An eye inside a crest is the
-	// same disagreement the other way up.
-	const bool camera_below_water =
-		camera.position.y < ocean_drawn_surface_height(camera.position);
+	// Everything about how this surface is shaded turns on which side of the
+	// water the eye is on: the normal faces the medium the viewer is in, the
+	// Fresnel switches to the dense-side curve, and past the critical angle the
+	// underside becomes a mirror.
+	//
+	// **Measured against the DRAWN surface, never the still plane.** The two
+	// disagree by the whole wave height: an eye sitting in a trough is below
+	// the plane while plainly in the air, and a plane test hands it the entire
+	// submerged treatment. An eye inside a crest is the same disagreement the
+	// other way up.
+	//
+	// **And asked per PIXEL, not once per draw.** The camera's own height
+	// settles which side its CENTRE is on and nothing more: an eye straddling a
+	// crest looks through the wave it is sitting in over part of the screen and
+	// clean over the top of it elsewhere, so one answer for the whole draw is
+	// wrong for half of it however it is chosen - which is what shades another
+	// crest as though the eye were dry.
+	//
+	// The same graded test the water fog and the underwater pass sweep their
+	// waterline with, so all three agree about where it falls. Asked only near
+	// the surface, on the same margin they use: further above it the answer is
+	// zero over the whole screen and the unproject it costs buys nothing.
+	const float eye_height =
+		camera.position.y - ocean_drawn_surface_height(camera.position);
+	const float eye_submersion = eye_height < WATER_EYE_SUBMERSION_MARGIN
+		? ocean_underwater_factor(ScreenCoord)
+		: 0;
+
+	// Which side this pixel is shaded from.
+	//
+	// Three of the things that turn on it cannot be graded at all: a normal
+	// cannot be faded through zero to its opposite, and a sign cannot be half
+	// flipped. Those take the side; everything that CAN be faded takes
+	// eye_submersion directly, so the surface crosses over pixel by pixel
+	// instead of snapping the moment the camera's centre does.
+	const bool camera_below_water = eye_submersion > 0.5;
 
 	Surface surface;
 	surface.init();
@@ -260,7 +303,11 @@ float4 main(PSIn input) : SV_TARGET
 
 	TiledLighting(surface, lighting, GetFlatTileIndex(pixel, camera), camera);
 
-	if (camera_below_water)
+	// Faded in on the eye's submersion rather than switched, so the mirror
+	// arrives as the waterline sweeps the screen instead of the whole
+	// surface changing character the instant the camera's centre crosses.
+	[branch]
+	if (eye_submersion > 0)
 	{
 		// Total internal reflection (Snell's window): light from above only
 		// refracts through the surface within the critical angle for water
@@ -270,7 +317,8 @@ float4 main(PSIn input) : SV_TARGET
 		// scene below. The soft band around the critical angle plus the wavy
 		// normal gives the shimmering window edge rather than a hard circle:
 		const float VdotN = abs(dot(surface.V, surface.N));
-		surface.F = 1.0 - smoothstep(0.611, 0.711, VdotN);
+		const half mirrored = (half)(1.0 - smoothstep(0.611, 0.711, VdotN));
+		surface.F = lerp(surface.F, (half3)mirrored, (half)eye_submersion);
 	}
 	
 	[branch]
@@ -287,7 +335,7 @@ float4 main(PSIn input) : SV_TARGET
 		// remove planar reflection at high perturbation where it gets too inaccurate
 		const float3 planar_reflection_vector_flat = reflect(V, float3(0, 1, 0));
 		const float3 planar_reflection_vector = reflect(V, surface.N);
-		const float planar_factor = smoothstep(camera_below_water ? 0.9 : 0.95,1.0,abs(dot(planar_reflection_vector_flat, planar_reflection_vector)));
+		const float planar_factor = smoothstep(lerp(0.95, 0.9, eye_submersion),1.0,abs(dot(planar_reflection_vector_flat, planar_reflection_vector)));
 		//return float4(planar_factor.xxx,1);
 
 		// How much of the planar pass is worth believing here: it reflects
@@ -636,12 +684,24 @@ float4 main(PSIn input) : SV_TARGET
 	// displaced surface dips below the still plane.
 	ApplyWaterFogAtSurface(ScreenCoord, surface.P, background, color);
 
+#if OCEAN_VOLUMETRIC_DEBUG == 2
+	return float4(ocean_underwater_factor(ScreenCoord).xxx, 1);
+#endif // OCEAN_VOLUMETRIC_DEBUG == 2
+
+#if OCEAN_VOLUMETRIC_DEBUG == 1
+	const half4 beforeVolumetricLight = color;
+#endif // OCEAN_VOLUMETRIC_DEBUG == 1
+
 	ApplyVolumetricLight(
 		ScreenCoord,
 		surface.P,
 		(half3)((1 - surface.F) * surface.refraction.a),
 		color
 	);
+
+#if OCEAN_VOLUMETRIC_DEBUG == 1
+	return float4((float3)abs(color.rgb - beforeVolumetricLight.rgb), 1);
+#endif // OCEAN_VOLUMETRIC_DEBUG == 1
 
 	return saturateMediump(color);
 
