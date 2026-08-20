@@ -6264,11 +6264,32 @@ void DrawSpritesAndFonts(
 	// rather than per entry here. A billboard is not a point: one crossing the
 	// waterline is partly reflected and partly not, and classifying it by its
 	// origin would snap the whole thing in or out as its centre crossed.
-	auto applyWorldClipping = [&](auto& params) {
+	//
+	// Returns false where the draw belongs to the other pass entirely and is to
+	// be skipped here rather than clipped.
+	auto applyWorldClipping = [&](auto& params) -> bool {
 		if (clipping)
 		{
 			params.enableClipPlane();
 		}
+
+		// A draw that does not depth test is occluded by nothing anywhere else
+		// in the engine, terrain included, and the water must not be the one
+		// exception to that. Sorting it to a side is exactly what would make it
+		// one: the far side goes down before the ocean and the ocean is then
+		// drawn over it, which is occlusion by DRAW ORDER - something the
+		// setting has no way to opt out of.
+		//
+		// So keep it out of the far pass and let the near pass draw it
+		// unclipped, whichever side of the water it is on. It then lands over
+		// everything, the way it does against every other surface, and it is
+		// drawn ONCE - which simply leaving it unsided would not manage, since
+		// both passes would take it.
+		if (!params.isDepthTestEnabled())
+		{
+			return waterSide != WATERSIDE_BEYOND;
+		}
+
 		if (waterSide == WATERSIDE_BEYOND)
 		{
 			params.enableWaterSideBeyond();
@@ -6277,6 +6298,8 @@ void DrawSpritesAndFonts(
 		{
 			params.enableWaterSideNear();
 		}
+
+		return true;
 	};
 	static thread_local wi::vector<uint64_t> distance_sorter;
 	distance_sorter.clear();
@@ -6377,8 +6400,18 @@ void DrawSpritesAndFonts(
 				// A scene sprite is in the world, so the water fogs it like
 				// anything else. Never on the distortion pass, which targets the
 				// distortion buffer rather than the scene.
-				params.enableUnderwaterFog();
-				applyWorldClipping(params);
+				//
+				// And never for a draw that does not depth test: it is drawn in
+				// front of the water precisely because it has opted out of
+				// being occluded, so the column it was put in front of is not
+				// there to dim it either. Fogging it anyway applies half the
+				// water to something the other half was told to ignore.
+				if (params.isDepthTestEnabled())
+				{
+					params.enableUnderwaterFog();
+				}
+				if (!applyWorldClipping(params))
+					continue;
 			}
 			if (sprite.maskResource.IsValid())
 			{
@@ -6413,9 +6446,16 @@ void DrawSpritesAndFonts(
 			params.customProjection = &M;
 			if (!distortion)
 			{
-				// Scene text is in the world, so the water fogs it too.
-				params.enableUnderwaterFog();
-				applyWorldClipping(params);
+				// Scene text is in the world, so the water fogs it too - but
+				// not where it does not depth test, for the reason given over
+				// the sprite above: it is drawn in front of the water, so the
+				// water in front of it is not there to dim it.
+				if (params.isDepthTestEnabled())
+				{
+					params.enableUnderwaterFog();
+				}
+				if (!applyWorldClipping(params))
+					continue;
 			}
 			wi::font::Draw(font.GetText().c_str(), font.GetCurrentTextLength(), params, cmd);
 		}
