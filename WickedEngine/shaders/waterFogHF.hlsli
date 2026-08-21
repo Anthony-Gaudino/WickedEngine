@@ -521,12 +521,29 @@ WaterFog GetWaterFog(
 	// of actual water. Using the segment would extinguish water you can plainly
 	// see through.
 	//
+	// **Measured down from where the ray ENTERED the water**, which the trace
+	// already found, rather than from the surface standing over the far end.
+	// Those are two different heights whenever a wave is involved: a ray
+	// entering through a crest begins its descent metres higher than the
+	// surface over what it ends on, and the water in between belongs to this
+	// leg. Anchoring at the entry counts it here, once, with the depth the ray
+	// actually fell through.
+	//
+	// The alternative is to anchor over the far end and have whatever drew the
+	// surface add the difference back - which cannot be done without a floor,
+	// since the fragment is already fogged and cannot be un-fogged, and that
+	// floor lands on the still plane and draws a line across the sea.
+	//
 	// Only where the far end is submerged, which is what that bound describes.
 	// A dry fragment seen through a crest is a chord across the wave, short by
 	// construction and already measured, and there is no depth below a surface
 	// to hand this instead.
+	const float entryDepth = water.crosses
+		? water.entryPoint.y - fragmentPosition.y
+		: -fragmentHeight;
+
 	const float airPath = fragmentHeight < 0
-		? SubmergedViewPath(-fragmentHeight, toEye)
+		? SubmergedViewPath(max(0, entryDepth), toEye)
 		: water.submerged;
 
 	// Blend on the EYE's submersion, not the medium's: the medium is fully

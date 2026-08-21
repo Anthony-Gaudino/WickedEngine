@@ -449,57 +449,6 @@ float4 main(PSIn input) : SV_TARGET
 		surface.refraction.a = 1;
 		color.a = 1;
 
-		// The stretch of water between this fragment and what it refracted that
-		// nothing in the frame has accounted for.
-		//
-		// Every fragment carries the absorption of its own path, so a submerged
-		// target arrives already fogged - but over the column standing over
-		// ITSELF, from the surface above it down to where it is. **This ray
-		// entered the water here**, at this fragment, which is somewhere else
-		// entirely and, on a crest, several metres higher. The drop between the
-		// two is water the ray crossed and no one measured.
-		//
-		// Added to what the target already charged, this comes to the whole
-		// descending leg and no more: the surface height over the target
-		// appears in both with opposite signs and cancels, leaving this
-		// fragment's height above the target at the refracted angle. That
-		// cancellation is also why the target's own side needs no test here. A
-		// target ABOVE the water charged nothing, and measuring from the
-		// surface over it gives the column standing above the still plane,
-		// which is what a crest seen against the sky is owed.
-		//
-		// Zero on a flat sea, where both are the still plane, and zero looking
-		// straight down a crest, where the target's own surface is that same
-		// crest - which is why a crest only leaks where it has a far side to
-		// see past.
-		//
-		// Floored at zero rather than allowed to go negative: a target lying
-		// under a crest of its own counted more water than this ray crossed,
-		// and a sample that has already been fogged cannot be un-fogged.
-		const float uncounted_depth = max(0, surface.P.y
-			- ocean_drawn_surface_height(refraction_position));
-
-		[branch]
-		if (!camera_below_water && uncounted_depth > 0)
-		{
-			const WaterFog waterBehind = MakeWaterFog(
-				MakeWaterVolumetrics(1),
-				SubmergedViewPath(uncounted_depth, V),
-				V,
-				0,
-				ScreenCoord,
-				uv_to_clipspace(ScreenCoord),
-				false,
-				// This branch is only taken with the camera above the surface,
-				// so no froxel column holds water here: this is the only
-				// description of the sun in that column, and it keeps all of it.
-				1
-			);
-
-			surface.refraction.rgb = (half3)(
-				surface.refraction.rgb * waterBehind.transmittance
-				+ waterBehind.inscatter);
-		}
 	}
 	
 #if 1
