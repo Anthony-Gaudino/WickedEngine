@@ -1506,6 +1506,14 @@ struct alignas(16) ShaderCamera
 	int texture_reprojected_depth_index;
 	uint options;
 
+	// Where the ocean surface stands in front of the scene, written by the
+	// ocean's depth prepass. The refraction march reads it so that geometry the
+	// water is behind cannot stop a ray that runs inside the water.
+	int texture_oceanmask_index;
+	int padding0;
+	int padding1;
+	int padding2;
+
 #ifdef __cplusplus
 	inline void init()
 	{
@@ -1565,6 +1573,7 @@ struct alignas(16) ShaderCamera
 		buffer_entitytiles_index = -1;
 		texture_reflection_index = -1;
 		texture_refraction_index = -1;
+		texture_oceanmask_index = -1;
 		texture_waterriples_index = -1;
 		texture_ao_index = -1;
 		texture_ssr_index = -1;

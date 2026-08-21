@@ -18,6 +18,21 @@
  */
 #define OCEAN_VOLUMETRIC_DEBUG 0
 
+/**
+ * Paints where the refraction lookup could be answered and where it could not.
+ *
+ * - `1` - green where the bent ray reached a point this screen describes, red
+ *   where it did not and the straight-through coordinate stood in for it. A
+ *   band that comes out red is the frame running out of scene, not the
+ *   refraction being computed wrongly.
+ * - `2` - how far the lookup moved, as a fraction of the screen: red across,
+ *   green down. Flat colour is a lookup that is not moving; a jump between
+ *   neighbouring fragments is where one object gets drawn twice.
+ *
+ * 0 in anything but a diagnosis.
+ */
+#define OCEAN_REFRACTION_DEBUG 0
+
 #define DISABLE_DECALS
 #define DISABLE_ENVMAPS
 #define DISABLE_TRANSPARENT_SHADOWMAP
@@ -362,8 +377,14 @@ float4 main(PSIn input) : SV_TARGET
 	{
 		// Water refraction:
 		Texture2D texture_refraction = bindless_textures[descriptor_index(camera.texture_refraction_index)];
-		// First sample using full perturbation:
-		float2 refraction_uv = ScreenCoord.xy + surface.N.xz * bump_strength;
+		// Where the ray would land with no water in the way, which is both the
+		// starting aim for the refraction below and the answer wherever the
+		// bent ray reaches nothing this screen can describe.
+		//
+		// Asked at THIS fragment's own coordinate: what lies behind this piece
+		// of water is along its own ray, and a coordinate chosen anywhere else
+		// answers about a different column of water than the one being shaded.
+		float2 refraction_uv = ScreenCoord.xy;
 
 		// Reject against the neighbourhood the SCENE COPY resolves, not the one
 		// the depth buffer does. The copy is a fraction of the screen
@@ -382,40 +403,100 @@ float4 main(PSIn input) : SV_TARGET
 		water_depth += texture_ocean_displacementmap.SampleLevel(sampler_linear_wrap, refraction_position.xz * xOceanPatchSizeRecip, 0).z; // texture contains xzy!
 		if (camera_below_water && V.y < 0)
 			water_depth = -water_depth;
-		// How much water this ray crossed to reach what it refracted, which is
-		// what the surface is entitled to bend.
+		// Where the bent ray actually goes, followed in the world and projected
+		// back to the screen.
 		//
-		// **Walked along the segment, never tested against the still plane.**
-		// Which side of a plane the target lies on is a different question and
-		// gives the wrong answer to this one in both directions: a crest stands
-		// in front of things that are perfectly dry, so a target above the
-		// plane is not owed zero bending; and a target below the plane can have
-		// nothing but air in front of it once the wave over it has moved on.
-		// Answering with the plane abandoned the refraction outright wherever
-		// it read zero - a shore, a bed rising out of the water, anything
-		// standing in it - and that is a whole class of surface that simply did
-		// not refract.
+		// The ray refracts at THIS fragment's own normal, descends until it has
+		// dropped as far as whatever is drawn behind the water, and the world
+		// point it reaches is the thing to read. Every term is a length the
+		// scene already carries - the drop to the target, the descent rate
+		// Snell permits - so the displacement is metres of travel expressed in
+		// pixels by the same projection everything else is drawn with, and it
+		// shrinks to nothing on its own as the target rises to meet the
+		// surface.
 		//
-		// Zero is now a real answer rather than an artefact of the test: no
-		// water was crossed, so there is nothing to bend, and the unperturbed
-		// sample below is right.
-		float refracted_water = TraceWaterSegment(
-			GetCamera().position,
-			refraction_position,
-			WATER_SEGMENT_STABLE_PHASE
-		).submerged;
+		// The wave's own normal is what makes this bend visibly: a flat
+		// interface would displace the whole surface uniformly and read as a
+		// shifted picture rather than a rippled one.
+		const float3 into_water =
+			refract(-V, surface.N, 1.0 / WATER_REFRACTIVE_INDEX);
 
-		if (refracted_water <= 0)
+		// A steep wave face can turn the refracted ray towards the horizontal,
+		// where the drop divided by the descent rate runs away. The critical
+		// angle is the bound Snell puts on a flat interface and the same one
+		// `SubmergedViewPath` holds the view path to, so the travel here is
+		// held to it rather than to a length picked to look right.
+		const float descent = max(-into_water.y, WATER_CRITICAL_ANGLE_COSINE);
+
+		// Held to what the water lets through.
+		//
+		// Past three optical depths nothing of what the ray reaches survives to
+		// be seen, so a lookup that has travelled further is fetching a picture
+		// the water would already have swallowed - and paying for it with every
+		// way a long displacement fails: leaving the frame, crossing an
+		// occluder, landing on something the water is behind. Over open water
+		// the depth behind the surface is the far plane, so without this the
+		// aim slides a tenth of the screen away for an image that cannot
+		// arrive.
+		//
+		// Clear water still displaces a long way, which is correct - that is
+		// where refraction is genuinely visible.
+		const float visible_reach = MakeWaterVolumetrics(1).VisibleRange();
+
+		float travel = min(
+			max(0, surface.P.y - refraction_position.y) / descent,
+			visible_reach
+		);
+		const float3 target = surface.P + into_water * travel;
+		const float3 aim = OceanRefractionAim(
+			surface.P, into_water, travel, ScreenCoord.xy);
+
+		// Off this screen, or on a pixel the water is not in front of, the copy
+		// has nothing to say about the target either.
+		bool answered = aim.z > 0 && OceanCoversPixel(camera, aim.xy);
+
+		[branch]
+		if (answered)
 		{
-			// Nothing in front of it to bend the ray, so fill holes by taking
-			// the unperturbed sample:
-			refraction_uv = ScreenCoord.xy;
+			const float3 drawn = reconstruct_position(
+				aim.xy,
+				texture_depth.SampleLevel(sampler_point_clamp, aim.xy, 0)
+			);
+
+			// Both points lie on one ray out of the eye, so which is nearer to
+			// it is which stands in front, and the copy at that coordinate is
+			// then holding the occluder rather than the target.
+			//
+			// **Only an occluder is caught here.** A target that ends in open
+			// water passes, and the copy there is showing whatever lies BEYOND
+			// it. Telling those apart needs the ray walked against a scene that
+			// has thickness, which a single depth per pixel does not describe.
+			//
+			// The slack is for the float disagreement between a position
+			// reconstructed from a depth sample and the one that wrote it. It
+			// is not a thickness and nothing about how this looks depends on
+			// its value.
+			answered =
+				distance(drawn, camera.position) >=
+				distance(target, camera.position) * 0.999;
 		}
-		else
-		{
-			// Perturbation according to the water the first sample is behind:
-			refraction_uv = ScreenCoord.xy + surface.N.xz * bump_strength * saturate(1 - exp(-refracted_water));
-		}
+
+		// Unanswered, so this fragment does not displace. Reading the aim
+		// anyway paints the occluder; reading nothing leaves the straight-down
+		// sample, which is the same column of water this fragment sits over and
+		// carries the same fog, so it is dimmed exactly as the target would
+		// have been - only undisplaced.
+		refraction_uv = answered ? aim.xy : ScreenCoord.xy;
+
+#if OCEAN_REFRACTION_DEBUG == 1
+		// Red where the frame could not answer for the point the ray reached,
+		// so this fragment did not displace.
+		return float4(answered ? float3(0, 1, 0) : float3(1, 0, 0), 1);
+#elif OCEAN_REFRACTION_DEBUG == 2
+		// How far the lookup moved from this fragment's own coordinate.
+		return float4(abs(refraction_uv - ScreenCoord.xy) * 8, 0, 1);
+#endif // OCEAN_REFRACTION_DEBUG
+
 		surface.refraction.rgb = texture_refraction.SampleLevel(sampler_linear_mirror, refraction_uv, 0).rgb;
 		// Recompute depth params again with actual perturbation:
 		refraction_depth = texture_depth.SampleLevel(sampler_point_clamp, refraction_uv, 0);

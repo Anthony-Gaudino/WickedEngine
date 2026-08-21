@@ -1459,6 +1459,7 @@ namespace wi::scene
 		int texture_reflection_index = -1;
 		int texture_reflection_depth_index = -1;
 		int texture_refraction_index = -1;
+		int texture_oceanmask_index = -1;
 		int texture_waterriples_index = -1;
 		int texture_ao_index = -1;
 		int texture_ssr_index = -1;

@@ -851,6 +851,7 @@ namespace wi
 		camera->texture_reflection_index = device->GetDescriptorIndex(&rtReflection, SubresourceType::SRV);
 		camera->texture_reflection_depth_index = device->GetDescriptorIndex(&depthBuffer_Reflection, SubresourceType::SRV);
 		camera->texture_refraction_index = device->GetDescriptorIndex(&rtSceneCopy, SubresourceType::SRV);
+		camera->texture_oceanmask_index = device->GetDescriptorIndex(&rtOceanMask, SubresourceType::SRV);
 		camera->texture_waterriples_index = device->GetDescriptorIndex(&rtWaterRipple, SubresourceType::SRV);
 		camera->texture_ao_index = device->GetDescriptorIndex(&rtAO, SubresourceType::SRV);
 		camera->texture_ssr_index = device->GetDescriptorIndex(&rtSSR, SubresourceType::SRV);

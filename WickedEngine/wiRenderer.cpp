@@ -11780,6 +11780,7 @@ void BindCameraCB(
 	shadercam.texture_reflection_index = camera.texture_reflection_index;
 	shadercam.texture_reflection_depth_index = camera.texture_reflection_depth_index;
 	shadercam.texture_refraction_index = camera.texture_refraction_index;
+	shadercam.texture_oceanmask_index = camera.texture_oceanmask_index;
 	shadercam.texture_waterriples_index = camera.texture_waterriples_index;
 	shadercam.texture_ao_index = camera.texture_ao_index;
 	shadercam.texture_ssr_index = camera.texture_ssr_index;
