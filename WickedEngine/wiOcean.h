@@ -109,6 +109,14 @@ namespace wi
 		void RenderForShadowmap(const XMFLOAT3& viewerPosition, wi::graphics::CommandList cmd) const;
 		void Render(const wi::scene::CameraComponent& camera, wi::graphics::CommandList cmd) const;
 
+		// Draws the surface into depth alone, writing no colour.
+		//
+		// Run before the scene copy the surface refracts from is taken, so that
+		// copy can tell what stands behind the water from what stands in front
+		// of it. The colour pass that follows tests EQUAL against what this
+		// leaves, so only the nearest water is ever shaded.
+		void RenderDepthPrepass(const wi::scene::CameraComponent& camera, wi::graphics::CommandList cmd) const;
+
 		void CopyDisplacementMapReadback(wi::graphics::CommandList cmd) const;
 
 		const wi::graphics::Texture* getDisplacementMap() const;

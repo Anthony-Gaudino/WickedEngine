@@ -41,7 +41,10 @@ namespace wi::renderer
 
 	constexpr uint32_t CombineStencilrefs(wi::enums::STENCILREF engineStencilRef, uint8_t userStencilRef)
 	{
-		return (userStencilRef << 4) | static_cast<uint8_t>(engineStencilRef);
+		// The user ref is held to three bits so it cannot reach the top one,
+		// which belongs to the ocean (wi::enums::STENCILREF_MASK_OCEAN).
+		return ((userStencilRef << 4) & wi::enums::STENCILREF_MASK_USER) |
+			static_cast<uint8_t>(engineStencilRef);
 	}
 	constexpr XMUINT2 GetEntityCullingTileCount(XMUINT2 internalResolution)
 	{
@@ -284,6 +287,14 @@ namespace wi::renderer
 		DRAWSCENE_FOREGROUND_ONLY = 1 << 8, // only include objects that are tagged as foreground
 		DRAWSCENE_MAINCAMERA = 1 << 9, // If this is active, then ObjectComponent with SetNotVisibleInMainCamera(true) won't be drawn
 		DRAWSCENE_WIREFRAME_OVERLAY = 1 << 10, // draw wireframe overlay
+		// Draw the ocean surface into depth only, writing no colour.
+		//
+		// The scene copy the surface refracts from is taken before it draws, so
+		// nothing knows where the water is when that copy is made - and the copy
+		// therefore holds whatever stands in FRONT of the water as readily as
+		// what stands behind it. Settling the water's depth first is what lets
+		// the copy tell the two apart.
+		DRAWSCENE_OCEAN_DEPTHONLY = 1 << 11,
 	};
 
 	// Which side of the ocean surface a transparent draw belongs to. The ocean
@@ -1125,11 +1136,25 @@ namespace wi::renderer
 		bool is_pixelshader = false,
 		float threshold = 1.0f
 	);
+	// reject_mask : when given, source texels the mask leaves black are dropped
+	//	from the average and the marked ones alone are gathered; a destination
+	//	texel whose whole footprint is unmarked keeps the plain average
 	void Postprocess_Downsample4x(
 		const wi::graphics::Texture& input,
 		const wi::graphics::Texture& output,
 		wi::graphics::CommandList cmd,
+		const wi::graphics::Texture* reject_mask = nullptr,
 		bool hdrToSRGB = false
+	);
+	// Fills every texel that is exactly black out of the content around it,
+	//	by gathering up the texture's mip chain and pushing back down into
+	//	whatever was empty. Pairs with the reject_mask above, which leaves a
+	//	hole wherever it had nothing to gather from.
+	//	Scribbles over mips 1 and up, so regenerate them afterwards if they are
+	//	wanted for anything else.
+	void Postprocess_FillHoles(
+		const wi::graphics::Texture& texture,
+		wi::graphics::CommandList cmd
 	);
 	void Postprocess_Lineardepth(
 		const wi::graphics::Texture& input,

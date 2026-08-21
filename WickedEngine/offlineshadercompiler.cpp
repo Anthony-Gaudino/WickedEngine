@@ -152,6 +152,7 @@ wi::vector<ShaderEntry> shaders = {
 	{"emittedparticle_emitCS_volume", wi::graphics::ShaderStage::CS},
 	{"emittedparticle_finishUpdateCS", wi::graphics::ShaderStage::CS},
 	{"downsample4xCS", wi::graphics::ShaderStage::CS},
+	{"fillholesCS", wi::graphics::ShaderStage::CS},
 	{"lineardepthCS", wi::graphics::ShaderStage::CS},
 	{"depthoffield_prepassCS_earlyexit", wi::graphics::ShaderStage::CS},
 	{"depthoffield_mainCS_cheap", wi::graphics::ShaderStage::CS},
@@ -592,6 +593,14 @@ int main(int argc, char* argv[])
 	// permutations for ssgi_upsampleCS:
 	shaders.push_back({ "ssgi_upsampleCS", wi::graphics::ShaderStage::CS });
 	shaders.back().permutations.emplace_back().defines = { "WIDE" };
+
+	// permutations for downsample4xCS:
+	shaders.push_back({ "downsample4xCS", wi::graphics::ShaderStage::CS });
+	shaders.back().permutations.emplace_back().defines = { "REJECT_MASKED" };
+
+	// permutations for fillholesCS:
+	shaders.push_back({ "fillholesCS", wi::graphics::ShaderStage::CS });
+	shaders.back().permutations.emplace_back().defines = { "PUSH" };
 
 	// permutations for copyStencilBitPS:
 	shaders.push_back({ "copyStencilBitPS", wi::graphics::ShaderStage::PS });

@@ -1094,6 +1094,9 @@ void LoadShaders()
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_UPSAMPLE_BILATERAL_FLOAT1], "upsample_bilateral_float1CS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_UPSAMPLE_BILATERAL_FLOAT4], "upsample_bilateral_float4CS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_DOWNSAMPLE4X], "downsample4xCS.cso"); });
+	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_DOWNSAMPLE4X_REJECT_MASKED], "downsample4xCS_REJECT_MASKED.cso"); });
+	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_FILLHOLES_PULL], "fillholesCS.cso"); });
+	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_FILLHOLES_PUSH], "fillholesCS_PUSH.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_LINEARDEPTH], "lineardepthCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_NORMALSFROMDEPTH], "normalsfromdepthCS.cso"); });
 	wi::jobsystem::Execute(ctx, [](wi::jobsystem::JobArgs args) { LoadShader(ShaderStage::CS, shaders[CSTYPE_POSTPROCESS_SCREENSPACESHADOW], "screenspaceshadowCS.cso"); });
@@ -7640,6 +7643,7 @@ void DrawScene(
 	const bool impostor = flags & DRAWSCENE_IMPOSTOR;
 	const bool occlusion = (flags & DRAWSCENE_OCCLUSIONCULLING) && (vis.flags & Visibility::ALLOW_OCCLUSION_CULLING) && GetOcclusionCullingEnabled();
 	const bool ocean = flags & DRAWSCENE_OCEAN;
+	const bool ocean_depthonly = flags & DRAWSCENE_OCEAN_DEPTHONLY;
 	const bool skip_planar_reflection_objects = flags & DRAWSCENE_SKIP_PLANAR_REFLECTION_OBJECTS;
 	const bool foreground = flags & DRAWSCENE_FOREGROUND_ONLY;
 	const bool maincamera = flags & DRAWSCENE_MAINCAMERA;
@@ -7653,7 +7657,14 @@ void DrawScene(
 	{
 		if (!occlusion || !vis.scene->ocean.IsOccluded())
 		{
-			vis.scene->ocean.Render(*vis.camera, cmd);
+			if (ocean_depthonly)
+			{
+				vis.scene->ocean.RenderDepthPrepass(*vis.camera, cmd);
+			}
+			else
+			{
+				vis.scene->ocean.Render(*vis.camera, cmd);
+			}
 		}
 	}
 
@@ -18804,12 +18815,18 @@ void Postprocess_Downsample4x(
 	const Texture& input,
 	const Texture& output,
 	CommandList cmd,
+	const Texture* reject_mask,
 	bool hdrToSRGB
 )
 {
 	device->EventBegin("Postprocess_Downsample4x", cmd);
 
-	device->BindComputeShader(&shaders[CSTYPE_POSTPROCESS_DOWNSAMPLE4X], cmd);
+	device->BindComputeShader(
+		reject_mask == nullptr ?
+			&shaders[CSTYPE_POSTPROCESS_DOWNSAMPLE4X] :
+			&shaders[CSTYPE_POSTPROCESS_DOWNSAMPLE4X_REJECT_MASKED],
+		cmd
+	);
 
 	const TextureDesc& desc = output.GetDesc();
 
@@ -18822,6 +18839,10 @@ void Postprocess_Downsample4x(
 	device->PushConstants(&postprocess, sizeof(postprocess), cmd);
 
 	device->BindResource(&input, 0, cmd);
+	if (reject_mask != nullptr)
+	{
+		device->BindResource(reject_mask, 1, cmd);
+	}
 
 	const GPUResource* uavs[] = {
 		&output,
@@ -18841,6 +18862,86 @@ void Postprocess_Downsample4x(
 	);
 
 	device->Barrier(GPUBarrier::Image(&output, ResourceState::UNORDERED_ACCESS, output.desc.layout), cmd);
+
+	device->EventEnd(cmd);
+}
+void Postprocess_FillHoles(
+	const Texture& texture,
+	CommandList cmd
+)
+{
+	const TextureDesc& desc = texture.GetDesc();
+	if (desc.mip_levels < 2)
+	{
+		assert(0 && "Postprocess_FillHoles needs a mip chain to spread through");
+		return;
+	}
+
+	device->EventBegin("Postprocess_FillHoles", cmd);
+
+	// Level i's size, halved per step and never below one texel, matching how
+	// the mip chain was laid out.
+	XMUINT2 levels[32] = {};
+	const uint32_t level_count = std::min(desc.mip_levels, uint32_t(arraysize(levels)));
+	levels[0] = XMUINT2(desc.width, desc.height);
+	for (uint32_t i = 1; i < level_count; ++i)
+	{
+		levels[i].x = std::max(1u, levels[i - 1].x / 2);
+		levels[i].y = std::max(1u, levels[i - 1].y / 2);
+	}
+
+	// One dispatch per step, in both directions. `write` is the level being
+	// produced and `read` the one it is produced from.
+	const auto step = [&](uint32_t write, uint32_t read)
+	{
+		device->Barrier(
+			GPUBarrier::Image(
+				&texture, texture.desc.layout,
+				ResourceState::UNORDERED_ACCESS, write, 0),
+			cmd
+		);
+
+		PostProcess postprocess;
+		postprocess.resolution.x = levels[write].x;
+		postprocess.resolution.y = levels[write].y;
+		postprocess.resolution_rcp.x = 1.0f / postprocess.resolution.x;
+		postprocess.resolution_rcp.y = 1.0f / postprocess.resolution.y;
+		postprocess.params0.x = (float)levels[read].x;
+		postprocess.params0.y = (float)levels[read].y;
+		device->PushConstants(&postprocess, sizeof(postprocess), cmd);
+
+		device->BindResource(&texture, 0, cmd, (int)read);
+		device->BindUAV(&texture, 0, cmd, (int)write);
+
+		device->Dispatch(
+			(levels[write].x + POSTPROCESS_BLOCKSIZE - 1) / POSTPROCESS_BLOCKSIZE,
+			(levels[write].y + POSTPROCESS_BLOCKSIZE - 1) / POSTPROCESS_BLOCKSIZE,
+			1,
+			cmd
+		);
+
+		device->Barrier(
+			GPUBarrier::Image(
+				&texture, ResourceState::UNORDERED_ACCESS,
+				texture.desc.layout, write, 0),
+			cmd
+		);
+	};
+
+	// Up: every level gathers whatever its children hold, so a hole is covered
+	// once some level is coarse enough to see past it.
+	device->BindComputeShader(&shaders[CSTYPE_POSTPROCESS_FILLHOLES_PULL], cmd);
+	for (uint32_t i = 0; i + 1 < level_count; ++i)
+	{
+		step(i + 1, i);
+	}
+
+	// ...and back down, writing only where nothing was there to begin with.
+	device->BindComputeShader(&shaders[CSTYPE_POSTPROCESS_FILLHOLES_PUSH], cmd);
+	for (uint32_t i = level_count - 1; i > 0; --i)
+	{
+		step(i - 1, i);
+	}
 
 	device->EventEnd(cmd);
 }

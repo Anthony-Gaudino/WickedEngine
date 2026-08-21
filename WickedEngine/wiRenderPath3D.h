@@ -150,6 +150,8 @@ namespace wi
 		wi::graphics::Texture rtSSGI; // standard screen-space GI results
 		wi::graphics::Texture rtSceneCopy; // contains the rendered scene that can be fed into transparent pass for distortion effect
 		wi::graphics::Texture rtSceneCopy_tmp; // temporary for gaussian mipchain
+		wi::graphics::Texture rtOceanMask; // white where the ocean surface stands in front of the scene
+		wi::graphics::Texture rtOceanMask_MSAA; // white where the ocean surface stands in front of the scene
 		wi::graphics::Texture rtWaterRipple; // water ripple sprite normal maps are rendered into this
 		wi::graphics::Texture rtParticleDistortion_render; // contains distortive particles (can be MSAA)
 		wi::graphics::Texture rtParticleDistortion; // contains distortive particles

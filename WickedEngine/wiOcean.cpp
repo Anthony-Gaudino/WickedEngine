@@ -32,9 +32,13 @@ namespace wi
 		RasterizerState		rasterizerState;
 		RasterizerState		wireRS;
 		DepthStencilState	depthStencilState, depthStencilState_shadowmap;
+		DepthStencilState	depthStencilState_shade;
+		DepthStencilState	depthStencilState_prepass;
 		BlendState			blendState, blendState_shadowmap;
+		BlendState			blendState_prepass;
 
 		PipelineState PSO, PSO_rtapi, PSO_envmap, PSO_shadowmap, PSO_wire;
+		PipelineState PSO_prepass;
 		Texture perlinTex;
 
 		/*
@@ -388,7 +392,7 @@ namespace wi
 				desc.ps = &oceanSurfPS;
 				desc.bs = &blendState;
 				desc.rs = &rasterizerState;
-				desc.dss = &depthStencilState;
+				desc.dss = &depthStencilState_shade;
 				device->CreatePipelineState(&desc, &PSO);
 
 				if (oceanSurfPS_rtapi.IsValid())
@@ -397,6 +401,19 @@ namespace wi
 					device->CreatePipelineState(&desc, &PSO_rtapi);
 				}
 
+				// Depth only. Runs the surface's own pixel shader rather than a
+				// bare one because that shader DISCARDS the metre nearest the
+				// eye, where the analytic waterline draws instead. A prepass
+				// skipping the discard would lay depth across that band, and
+				// the colour pass - testing EQUAL - would then be the only
+				// thing that discarded it, leaving a hole nothing filled.
+				desc.ps = &oceanSurfPS;
+				desc.bs = &blendState_prepass;
+				desc.dss = &depthStencilState_prepass;
+				device->CreatePipelineState(&desc, &PSO_prepass);
+
+				desc.bs = &blendState;
+				desc.dss = &depthStencilState;
 				desc.ps = &oceanSurfPS_envmap;
 				device->CreatePipelineState(&desc, &PSO_envmap);
 
@@ -871,6 +888,25 @@ namespace wi
 		device->EventEnd(cmd);
 	}
 
+	void Ocean::RenderDepthPrepass(const CameraComponent& camera, CommandList cmd) const
+	{
+		GraphicsDevice* device = wi::graphics::GetDevice();
+
+		device->EventBegin("Ocean Depth Prepass", cmd);
+
+		device->BindPipelineState(&PSO_prepass, cmd);
+		device->BindStencilRef(wi::enums::STENCILREF_MASK_OCEAN, cmd);
+
+		device->BindResource(&displacementMap, 0, cmd);
+		device->BindResource(&gradientMap, 1, cmd);
+		device->BindResource(&perlinTex, 2, cmd);
+
+		OceanCB cb = GetOceanCB(params, camera.Eye, MESH_CELLS_PER_SIDE);
+		DrawClipmap(cb, false, 1, cmd);
+
+		device->EventEnd(cmd);
+	}
+
 	void Ocean::Render(const CameraComponent& camera, CommandList cmd) const
 	{
 		GraphicsDevice* device = wi::graphics::GetDevice();
@@ -936,7 +972,34 @@ namespace wi
 		depth_desc.stencil_enable = false;
 		depthStencilState = depth_desc;
 
+		// The prepass, which additionally stamps the ocean bit wherever the
+		// surface wins the depth test. That bit is the only record in the frame
+		// of which pixels have water in front of them: the depth buffer holds
+		// the nearer of the surface and the scene, and cannot afterwards say
+		// which of the two it came from.
+		//
+		// REPLACE runs on the depth pass alone, so a surface losing the test -
+		// standing behind whatever is drawn there - leaves the bit clear, which
+		// is exactly the answer wanted for it.
+		depth_desc.stencil_enable = true;
+		depth_desc.stencil_read_mask = 0;
+		depth_desc.stencil_write_mask = wi::enums::STENCILREF_MASK_OCEAN;
+		depth_desc.front_face.stencil_func = ComparisonFunc::ALWAYS;
+		depth_desc.front_face.stencil_pass_op = StencilOp::REPLACE;
+		depth_desc.front_face.stencil_fail_op = StencilOp::KEEP;
+		depth_desc.front_face.stencil_depth_fail_op = StencilOp::KEEP;
+		depth_desc.back_face = depth_desc.front_face;
+		depthStencilState_prepass = depth_desc;
+
+		// The colour pass, which runs after the prepass has settled which water
+		// is nearest at every pixel. Testing EQUAL admits that fragment and no
+		// other, and writes nothing further.
+		depth_desc.stencil_enable = false;
 		depth_desc.depth_write_mask = DepthWriteMask::ZERO;
+		depth_desc.depth_func = ComparisonFunc::EQUAL;
+		depthStencilState_shade = depth_desc;
+
+		depth_desc.depth_func = ComparisonFunc::GREATER;
 		depthStencilState_shadowmap = depth_desc;
 
 		BlendState blend_desc;
@@ -951,6 +1014,13 @@ namespace wi
 		blend_desc.render_target[0].blend_op_alpha = BlendOp::ADD;
 		blend_desc.render_target[0].render_target_write_mask = ColorWrite::ENABLE_ALL;
 		blendState = blend_desc;
+
+		// The prepass writes depth and nothing else.
+		blend_desc.render_target[0].render_target_write_mask =
+			ColorWrite::DISABLE;
+		blendState_prepass = blend_desc;
+		blend_desc.render_target[0].render_target_write_mask =
+			ColorWrite::ENABLE_ALL;
 
 		blend_desc.render_target[0].src_blend = Blend::ZERO;
 		blend_desc.render_target[0].dest_blend = Blend::SRC_COLOR;

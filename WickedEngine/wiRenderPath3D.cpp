@@ -28,6 +28,8 @@ namespace wi
 		rtSSR = {};
 		rtSceneCopy = {};
 		rtSceneCopy_tmp = {};
+		rtOceanMask = {};
+		rtOceanMask_MSAA = {};
 		rtWaterRipple = {};
 		rtParticleDistortion_render = {};
 		rtParticleDistortion = {};
@@ -565,6 +567,51 @@ namespace wi
 		else
 		{
 			depthBuffer_PreOcean = {};
+		}
+
+		// The ocean's coverage, lifted out of the main depth buffer's stencil
+		// so a compute shader can read it. The stencil itself cannot be
+		// sampled: the buffer holding it is bound for depth/stencil use alone,
+		// and its stencil plane has no shader resource view.
+		//
+		// Allocated only while there is an ocean, for the same reason as the
+		// depth copy above.
+		if (scene->weather.IsOceanEnabled() && depthBuffer_Main.IsValid())
+		{
+			if (rtOceanMask.desc.width != depthBuffer_Main.desc.width ||
+				rtOceanMask.desc.height != depthBuffer_Main.desc.height ||
+				rtOceanMask_MSAA.desc.sample_count !=
+					depthBuffer_Main.desc.sample_count)
+			{
+				TextureDesc desc;
+				desc.bind_flags =
+					BindFlag::RENDER_TARGET | BindFlag::SHADER_RESOURCE;
+				desc.format = Format::R8_UNORM;
+				desc.width = depthBuffer_Main.desc.width;
+				desc.height = depthBuffer_Main.desc.height;
+				device->CreateTexture(&desc, nullptr, &rtOceanMask);
+				device->SetName(&rtOceanMask, "renderpath3D.rtOceanMask");
+
+				if (depthBuffer_Main.desc.sample_count > 1)
+				{
+					desc.bind_flags = BindFlag::RENDER_TARGET;
+					desc.sample_count = depthBuffer_Main.desc.sample_count;
+					desc.misc_flags = ResourceMiscFlag::TRANSIENT_ATTACHMENT;
+					desc.layout = ResourceState::RENDERTARGET;
+					device->CreateTexture(&desc, nullptr, &rtOceanMask_MSAA);
+					device->SetName(
+						&rtOceanMask_MSAA, "renderpath3D.rtOceanMask_MSAA");
+				}
+				else
+				{
+					rtOceanMask_MSAA = {};
+				}
+			}
+		}
+		else
+		{
+			rtOceanMask = {};
+			rtOceanMask_MSAA = {};
 		}
 
 		if (wi::renderer::GetSurfelGIEnabled())
@@ -2596,8 +2643,100 @@ namespace wi
 				device->EventEnd(cmd);
 			}
 
+			// The surface's own depth, settled before the copy below is taken.
+			//
+			// That copy is what the water refracts from, and it is made from
+			// the frame as drawn - which holds whatever stands in FRONT of the
+			// water as readily as what stands behind it. Nothing can tell the
+			// two apart without knowing where the water is, and until this runs
+			// nothing does: the ocean has not drawn yet.
+			//
+			// Depth only, so no colour is disturbed. The colour pass below then
+			// tests EQUAL against it and shades the nearest water alone. It
+			// also stamps STENCILREF_MASK_OCEAN wherever the surface wins that
+			// test, which is what the mask pass below reads.
+			{
+				device->EventBegin("Ocean depth prepass", cmd);
+				const RenderPassImage rp_ocean_depth[] = {
+					RenderPassImage::DepthStencil(
+						&depthBuffer_Main,
+						RenderPassImage::LoadOp::LOAD,
+						RenderPassImage::StoreOp::STORE,
+						ResourceState::DEPTHSTENCIL,
+						ResourceState::DEPTHSTENCIL,
+						ResourceState::DEPTHSTENCIL
+					),
+				};
+				device->RenderPassBegin(
+					rp_ocean_depth, arraysize(rp_ocean_depth), cmd);
+
+				wi::renderer::DrawScene(
+					visibility_main,
+					RENDERPASS_MAIN,
+					cmd,
+					wi::renderer::DRAWSCENE_OCEAN |
+					wi::renderer::DRAWSCENE_OCEAN_DEPTHONLY
+				);
+
+				device->RenderPassEnd(cmd);
+				device->EventEnd(cmd);
+			}
+
+			// Lift the ocean's coverage out of the stencil into a texture the
+			// downsample below can sample. White stands for "the water is in
+			// front of this pixel"; black is left by the clear.
+			{
+				device->EventBegin("Ocean coverage mask", cmd);
+				RenderPassImage rp_mask[3];
+				uint32_t rp_mask_count = 0;
+				if (rtOceanMask_MSAA.IsValid())
+				{
+					rp_mask[rp_mask_count++] = RenderPassImage::RenderTarget(
+						&rtOceanMask_MSAA,
+						RenderPassImage::LoadOp::CLEAR,
+						RenderPassImage::StoreOp::DONTCARE,
+						ResourceState::RENDERTARGET,
+						ResourceState::RENDERTARGET
+					);
+					rp_mask[rp_mask_count++] =
+						RenderPassImage::Resolve(&rtOceanMask);
+				}
+				else
+				{
+					rp_mask[rp_mask_count++] = RenderPassImage::RenderTarget(
+						&rtOceanMask, RenderPassImage::LoadOp::CLEAR);
+				}
+				rp_mask[rp_mask_count++] = RenderPassImage::DepthStencil(
+					&depthBuffer_Main, RenderPassImage::LoadOp::LOAD);
+				device->RenderPassBegin(rp_mask, rp_mask_count, cmd);
+
+				Viewport vp_mask;
+				vp_mask.width = (float)rtOceanMask.GetDesc().width;
+				vp_mask.height = (float)rtOceanMask.GetDesc().height;
+				device->BindViewports(1, &vp_mask, cmd);
+
+				wi::image::Params params;
+				params.enableFullScreen();
+				params.color = XMFLOAT4(1, 1, 1, 1);
+				params.blendFlag = wi::enums::BLENDMODE_OPAQUE;
+				params.stencilRefMode = wi::image::STENCILREFMODE_OCEAN;
+				params.stencilComp = wi::image::STENCILMODE_EQUAL;
+				params.stencilRef = wi::enums::STENCILREF_MASK_OCEAN;
+				wi::image::Draw(nullptr, params, cmd);
+
+				device->RenderPassEnd(cmd);
+				device->EventEnd(cmd);
+			}
+
 			device->EventBegin("Copy scene tex only mip0 for ocean", cmd);
-			wi::renderer::Postprocess_Downsample4x(rtMain, rtSceneCopy, cmd);
+			wi::renderer::Postprocess_Downsample4x(
+				rtMain, rtSceneCopy, cmd, &rtOceanMask);
+			// The rejection leaves a hole wherever a whole footprint stood in
+			// front of the water. Something has to stand there, and the only
+			// honest candidate is the water around it: that content is already
+			// the bed seen through this same medium, which is what the hole
+			// would have shown had the frame drawn it.
+			wi::renderer::Postprocess_FillHoles(rtSceneCopy, cmd);
 			device->EventEnd(cmd);
 
 			// Keep the depth without the water in it for the overlays that come
@@ -3151,7 +3290,7 @@ namespace wi
 				auto range = wi::profiler::BeginRangeGPU("GUI Background Blur", cmd);
 				device->EventBegin("GUI Background Blur", cmd);
 				bool hdrToSRGB = colorspace != ColorSpace::SRGB;
-				wi::renderer::Postprocess_Downsample4x(*rt_read, rtGUIBlurredBackground[0], cmd, hdrToSRGB);
+				wi::renderer::Postprocess_Downsample4x(*rt_read, rtGUIBlurredBackground[0], cmd, nullptr, hdrToSRGB);
 				wi::renderer::Postprocess_Downsample4x(rtGUIBlurredBackground[0], rtGUIBlurredBackground[2], cmd);
 				wi::renderer::Postprocess_Blur_Gaussian(rtGUIBlurredBackground[2], rtGUIBlurredBackground[1], rtGUIBlurredBackground[2], cmd, -1, -1, true);
 				device->EventEnd(cmd);

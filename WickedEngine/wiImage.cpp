@@ -544,6 +544,9 @@ namespace wi::image
 				case STENCILREFMODE_USER:
 					dsd.stencil_read_mask = STENCILREF_MASK_USER;
 					break;
+				case STENCILREFMODE_OCEAN:
+					dsd.stencil_read_mask = STENCILREF_MASK_OCEAN;
+					break;
 				default:
 					dsd.stencil_read_mask = STENCILREF_MASK_ALL;
 					break;

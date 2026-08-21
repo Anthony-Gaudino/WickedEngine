@@ -59,11 +59,29 @@ namespace wi::enums
 
 	// There are two different kinds of stencil refs:
 	//	ENGINE	: managed by the engine systems (STENCILREF enum values between 0-15)
-	//	USER	: managed by the user (raw numbers between 0-15)
+	//	USER	: managed by the user (raw numbers between 0-7)
+	//	OCEAN	: the ocean depth prepass owns the top bit, see below
 	enum STENCILREF_MASK
 	{
 		STENCILREF_MASK_ENGINE = 0x0F,
-		STENCILREF_MASK_USER = 0xF0,
+		STENCILREF_MASK_USER = 0x70,
+
+		// Marks the pixels the ocean surface is nearer than, written by the
+		// ocean's depth prepass and read by the downsample that builds the
+		// scene copy the water refracts from. A pixel without it either has no
+		// water over it or stands in front of the water, and in both cases the
+		// water must not refract it.
+		//
+		// It costs the user stencil ref its top bit, so that ref spans [0, 7]
+		// rather than [0, 15]. The main depth buffer's stencil is read only by
+		// the outline source pass, which runs before the transparents, so the
+		// refs the engine itself compares are all settled before the prepass
+		// overwrites this bit.
+		STENCILREF_MASK_OCEAN = 0x80,
+
+		// Both ref fields, and deliberately not the ocean bit: a comparison
+		// against a stencil ref is asking about the refs, and would otherwise
+		// answer differently wherever water happens to stand.
 		STENCILREF_MASK_ALL = STENCILREF_MASK_ENGINE | STENCILREF_MASK_USER,
 	};
 
@@ -339,6 +357,9 @@ namespace wi::enums
 		CSTYPE_POSTPROCESS_UPSAMPLE_BILATERAL_FLOAT1,
 		CSTYPE_POSTPROCESS_UPSAMPLE_BILATERAL_FLOAT4,
 		CSTYPE_POSTPROCESS_DOWNSAMPLE4X,
+		CSTYPE_POSTPROCESS_DOWNSAMPLE4X_REJECT_MASKED,
+		CSTYPE_POSTPROCESS_FILLHOLES_PULL,
+		CSTYPE_POSTPROCESS_FILLHOLES_PUSH,
 		CSTYPE_POSTPROCESS_LINEARDEPTH,
 		CSTYPE_POSTPROCESS_NORMALSFROMDEPTH,
 		CSTYPE_POSTPROCESS_SCREENSPACESHADOW,
