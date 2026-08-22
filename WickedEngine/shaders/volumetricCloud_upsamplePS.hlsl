@@ -96,18 +96,22 @@ float4 main(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
 
 	// The water between the clouds and the eye. They are blended over the scene
 	// after the sky, so without this they overwrite the sky's fog and leave a
-	// bright unfogged band at the horizon when seen from under water.
+	// bright unfogged band at the horizon.
 	//
-	// **A cloud is not under the water**, which is what the zero height says.
-	// With the eye above the water there is nothing in front of it and this is a
-	// no-op; with the eye below, the segment is fogged over its whole length,
-	// which is right in the only case it is visible at all.
+	// **Measured to the far plane, never to the depth buffer's position.** A
+	// cloud is kilometres off and the depth buffer holds whatever opaque thing
+	// stands in front of it, so measuring to that puts the cloud wherever the
+	// sea bed is - and flying over the ocean then absorbs every cloud in front
+	// of the water away to nothing.
 	//
-	// It must be said explicitly, because the position handed over is the DEPTH
-	// BUFFER's, not the cloud's. Letting that be measured against the surface
-	// puts the cloud wherever the sea bed is, and flying over the ocean absorbed
-	// every cloud in front of the water away to nothing.
-	ApplyWaterFogPremultiplied(GetWaterFog(uv, depthWorldPosition, 0), result);
+	// **Traced, not solved between the ends.** The cheap form takes the surface
+	// between eye and cloud to be the straight line joining their heights, and
+	// with both above the water that is no water at all - so a wave standing
+	// between the two is not there and the cloud arrives at full brightness
+	// through the crest in front of it. Only a trace can find a crest that the
+	// ends know nothing about.
+	ApplyWaterFogPremultiplied(
+		GetWaterFog(uv, reconstruct_position(uv, 0)), result);
 
 	// Sampled on the far plane, not at the depth buffer's position. A cloud is
 	// kilometres away and the volume ends long before it, so the far plane and
