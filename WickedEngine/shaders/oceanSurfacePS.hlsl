@@ -289,13 +289,50 @@ float4 main(PSIn input) : SV_TARGET
 	surface.sss = 1;
 	surface.sss_inv = 1.0f / ((1 + surface.sss) * (1 + surface.sss));
 
-	// How much water this wave puts between the sun behind it and the eye. The
-	// Jacobian fold runs high where the surface compresses into a crest - a
-	// thin sheet - and to zero on the flat, so it inverts into a thickness.
+	// How much water this wave puts between the sun behind it and the eye,
+	// **walked towards the sun rather than guessed from the surface's shape**.
+	// A wave's thickness is a length through it, and only a trace along the
+	// direction the light comes from can measure one.
+	//
+	// The Jacobian fold reads how hard the surface is compressing here, which
+	// is a property of one point and carries no length at all. Scaled into
+	// metres it holds whatever the scale says: a crest a hundred metres through
+	// is charged the same few metres as a ripple, and the sun comes out the far
+	// side of it. Worse, the fold saturates - a big patch drives it past its
+	// range over whole regions of a crest, where it pins to a single value and
+	// draws its own contour across the wave as a band.
+	//
+	// Bounded by `VisibleRange`, past which no light gets through whatever the
+	// wave is doing, so the trace stops where the answer stops mattering.
+	//
+	// Measured along the SUN, and every light reads the same length. A lamp
+	// behind a wave is lit through a thickness taken in another direction,
+	// which is wrong by however far the two disagree - but it is a length the
+	// wave really has, and it grows with the wave.
+	const WaterVolumetrics subsurfaceMedium = MakeWaterVolumetrics(1);
+
+	const float sunwardWater = TraceWaterSegment(
+		surface.P,
+		mad(subsurfaceMedium.VisibleRange(), GetSunDirection(), surface.P),
+		blue_noise(pixel).x
+	).submerged;
+
+	// **From under the water there is no wave being lit through.** The light
+	// crosses the surface once and travels on to the eye, which is refraction,
+	// and the water fog carries it already. A trace from a surface point
+	// towards the sun leaves the water on its first step, so it reports no
+	// thickness and the transmission term hands that same light over a second
+	// time at full strength - the phase's own shape drawn around the sun.
+	//
+	// Charged the whole column instead, which is the depth the light really
+	// crossed to reach an eye down here, and leaves exactly one copy of it.
+	//
+	// Faded on the eye's submersion for the reason the mirror below is, so the
+	// term withdraws as the waterline sweeps the screen.
 	surface.water_thickness = (half)lerp(
-		OCEAN_SUBSURFACE_THICKNESS.x,
-		OCEAN_SUBSURFACE_THICKNESS.y,
-		saturate(gradient.a));
+		sunwardWater,
+		subsurfaceMedium.VisibleRange(),
+		eye_submersion);
 	surface.update();
 
 	Lighting lighting;

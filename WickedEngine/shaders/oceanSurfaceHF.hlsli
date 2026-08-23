@@ -5,27 +5,6 @@
 #include "ShaderInterop_Ocean.h"
 
 /**
- * Water a wave presents to light coming from behind it, in metres.
- *
- * `x` is flat water, `y` a fully folding crest. The medium extinguishes over
- * roughly a metre at the default turbidity, so the first number has to be deep
- * enough that open water stays dark and only the crests light up - otherwise
- * the whole sea glows and the effect reads as a wash rather than as thin water.
- *
- * **This mapping is calibrated, not derived**, and it is the only part of the
- * transmission that is. Everything else - the colour, the falloff, the phase,
- * both Fresnel interfaces - comes from the water medium, which is why the
- * strength control defaults to 1: that is the unmodified physical result.
- *
- * A derived thickness is not available. The Jacobian fold is a dimensionless
- * measure of how far the surface has compressed, with no length in it, and on
- * a deep ocean there is no thin slab to measure anyway - the glow comes from
- * the lip of a steep or folding crest, which is exactly what the fold detects
- * and exactly what a wave height would miss.
- */
-static const float2 OCEAN_SUBSURFACE_THICKNESS = float2(4.0, 0.2);
-
-/**
  * Distance band over which the FFT gradient gives way to the perlin
  * substitute, in metres.
  *
