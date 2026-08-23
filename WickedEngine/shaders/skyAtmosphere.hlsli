@@ -381,15 +381,6 @@ half3 GetAtmosphereTransmittance(float3 worldPosition, float3 worldDirection, At
 	return TransmittanceToSun;
 }
 
-half3 GetAtmosphericLightTransmittance(AtmosphereParameters atmosphere, float3 worldPosition, half3 worldDirection, Texture2D<half4> transmittanceLutTexture)
-{
-	const float3 planetCenterWorld = atmosphere.planetCenter * SKY_UNIT_TO_M;
-	const float3 planetCenterToWorldPos = (worldPosition - planetCenterWorld) * M_TO_SKY_UNIT;
-        
-	half3 atmosphereTransmittance = GetAtmosphereTransmittance(planetCenterToWorldPos, worldDirection, atmosphere, transmittanceLutTexture);
-	return atmosphereTransmittance;
-}
-
 float3 GetSkyWorldCameraOrigin(AtmosphereParameters atmosphere, float3 cameraPosition)
 {
 	const float planetRadiusOffset = 0.01; // Always force to be 10 meters above the ground/sea level
@@ -407,6 +398,27 @@ float3 GetSkyWorldCameraOrigin(AtmosphereParameters atmosphere, float3 cameraPos
 	// This is to make sure the sky is always visible even if the camera is inside the virtual planet.
 	return distanceToPlanetCenterWorld < bottomRadiusWorldOffset ?
 	planetCenterWorld + bottomRadiusWorldOffset * planetCenterToCameraWorldNormalized : cameraPosition;
+}
+
+half3 GetAtmosphericLightTransmittance(AtmosphereParameters atmosphere, float3 worldPosition, half3 worldDirection, Texture2D<half4> transmittanceLutTexture)
+{
+	// Snapped onto the planet surface if it lies below it, the same way the
+	// camera is above and for the same reason. The atmosphere is defined from
+	// the ground upwards and has nothing to say about a point beneath it: asked
+	// where it stands, the ray towards the sun leaves the planet on its way
+	// out, the occlusion test in GetAtmosphereTransmittance reads that as the
+	// planet standing in front of the sun, and everything below sea level is
+	// handed no sunlight at all - a sea bed, a submerged object, the underside
+	// of a wave. Light arriving down there crossed the atmosphere as far as the
+	// ground, and what becomes of it below that belongs to whatever medium is
+	// down there to carry it.
+	const float3 groundedPosition = GetSkyWorldCameraOrigin(atmosphere, worldPosition);
+
+	const float3 planetCenterWorld = atmosphere.planetCenter * SKY_UNIT_TO_M;
+	const float3 planetCenterToWorldPos = (groundedPosition - planetCenterWorld) * M_TO_SKY_UNIT;
+
+	half3 atmosphereTransmittance = GetAtmosphereTransmittance(planetCenterToWorldPos, worldDirection, atmosphere, transmittanceLutTexture);
+	return atmosphereTransmittance;
 }
 
 float3 GetCameraPlanetPos(AtmosphereParameters atmosphere, float3 cameraPosition)
