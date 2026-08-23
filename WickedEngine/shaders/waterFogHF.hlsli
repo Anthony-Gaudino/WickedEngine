@@ -677,6 +677,39 @@ WaterFog GetWaterFog(float2 screenUV, float3 fragmentPosition)
 }
 
 /**
+ * The fog of a column of water that never ends.
+ *
+ * The answer to every ray that enters the water and meets nothing: its
+ * transmittance underflowed somewhere along `VisibleRange`, so none of whatever
+ * stood at the far end survives, and what comes back is only what the column
+ * itself scattered towards the eye.
+ *
+ * Stands in wherever a lookup returns something no refracted ray could have
+ * brought: the water answers for itself instead, over a depth that ends the
+ * question.
+ *
+ * @param[in] screenUV - Screen space UV coordinates (0-1) of the pixel.
+ * @param[in] toEye - Normalized direction from the far end towards the eye.
+ *
+ * @return The fog of an unbounded depth of water.
+ */
+WaterFog MakeDeepWaterFog(float2 screenUV, float3 toEye)
+{
+	const WaterVolumetrics medium = MakeWaterVolumetrics(1);
+
+	return MakeWaterFog(
+		medium,
+		medium.VisibleRange(),
+		toEye,
+		0,
+		screenUV,
+		uv_to_clipspace(screenUV),
+		false,
+		1
+	);
+}
+
+/**
  * Applies an already-built fog to a fragment, passing a background through.
  *
  * The background excludes radiance that was sampled from the scene behind this

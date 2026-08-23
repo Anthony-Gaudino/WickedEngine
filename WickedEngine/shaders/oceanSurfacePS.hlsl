@@ -420,29 +420,115 @@ float4 main(PSIn input) : SV_TARGET
 		// Recompute depth params again with actual perturbation:
 		refraction_depth = texture_depth.SampleLevel(sampler_point_clamp, refraction_uv, 0);
 		refraction_position = reconstruct_position(refraction_uv, refraction_depth);
+		// **What the copy hands back is dimmed by the water between it and this
+		// surface, and by nothing else.** A screen space lookup has no idea
+		// what lies along the way to whatever it landed on, and the copy is
+		// full of things nothing could have reached: the sky and the clouds sit
+		// at the far plane, and the horizon sits a hand's breadth under the
+		// water plane and ten kilometres out. Read back unweighted, each of
+		// them is drawn inside the crest that sampled it.
+		//
+		// **Measured from the surface, not from the eye.** This fragment IS the
+		// interface at this pixel, so whatever was sampled lies behind it and
+		// the light coming from there entered the water here; the leg in front
+		// is air and dims nothing. Begun at the eye, the march spends its whole
+		// budget on that air and on the slab crossing, and a thin crest between
+		// the two then falls between samples - so the trace reports NO water on
+		// a ray that plainly crossed some, since it ends on a water surface.
+		//
+		// **Water, not distance.** A crest is a sheet with two faces: light
+		// from beyond it refracts in, crosses, and refracts back out. Charging
+		// a dinghy just past a thin crest for the AIR in between would put it
+		// behind twenty metres of sea it never entered, and the crest would
+		// read opaque exactly where it is thinnest.
+		//
+		// Graded by the curve `VisibleRange` is defined from, so no length
+		// makes the answer jump, and what stands in for the share taken out is
+		// the column itself - what content behind that much water would have
+		// looked like once the water had finished with it.
+		const float refractionWater = TraceWaterSegment(
+			surface.P,
+			refraction_position,
+			WATER_SEGMENT_STABLE_PHASE
+		).submerged;
+
+		const WaterVolumetrics refractionMedium = MakeWaterVolumetrics(1);
+
+		// **Nothing arrives from there at all**, said three ways at once,
+		// because no two of them are enough on their own:
+		//
+		// - It stands ABOVE the water. A ray refracted into the surface from
+		//   outside is bent towards the vertical and goes down; it cannot climb
+		//   back into the air to fetch this.
+		// - The straight path to it crosses NO water. So it is not being seen
+		//   through the sea at all - it is off in the air on the eye's own side
+		//   of the interface, which is how sky above the horizon reaches this
+		//   lookup while every crest between them is missed entirely.
+		// - It lies beyond `VisibleRange`. Even granting a path, nothing
+		//   survives that far.
+		//
+		// Any two without the third condemns something real. A dinghy just past
+		// a thin crest is above the water and far off, but the path to it
+		// crosses the crest, and it is genuinely visible through it. A beach at
+		// the waterline is above the water and has no water in front of it, but
+		// it is right there, and refusing it paints a dark band along every
+		// shore.
+		const bool refractionUnreachable =
+			refraction_position.y >
+				ocean_drawn_surface_height(refraction_position)
+			&& refractionWater <= 0
+			&& distance(refraction_position, surface.P) >
+				refractionMedium.VisibleRange();
+
+		const half3 refractionReach = refractionUnreachable
+			? (half3)0
+			: (half3)exp(-refractionMedium.sigmaT * refractionWater);
+
+		[branch]
+		if (!camera_below_water)
+		{
+			// The water answering for itself, over a depth that ends the
+			// question.
+			half4 deepRefraction = half4(
+				(half3)MakeDeepWaterFog(ScreenCoord, V).inscatter, 1);
+
+			// Carried through the froxels exactly as the content being replaced
+			// was, over the same span and at the same pixel. The copy's own
+			// fragments were lit on their way to the eye before they were
+			// copied; a stand-in that skipped it would sit a whole shaft
+			// brighter or darker than the fragments beside it.
+			ApplyVolumetricLight(
+				refraction_uv, refraction_position, 0, deepRefraction);
+
+			surface.refraction.rgb = lerp(
+				deepRefraction.rgb,
+				(half3)surface.refraction.rgb,
+				refractionReach);
+		}
+
 		water_depth = max(water_depth, -dot(float4(refraction_position, 1), water_plane));
 		water_depth += texture_ocean_displacementmap.SampleLevel(sampler_linear_wrap, refraction_position.xz * xOceanPatchSizeRecip, 0).z; // texture contains xzy!
 		if (camera_below_water && V.y < 0)
 			water_depth = -water_depth;
-		// The refraction is handed on WHOLE - no absorption is applied to it
-		// here, and this is the point of the whole design.
+		// **The alpha stays at 1: no screen DEPTH attenuation, ever.** The
+		// share taken out above is measured by the trace, against the wave
+		// height field, and says nothing about what may be floating in that
+		// water. An attenuation derived from `texture_depth` is a different
+		// thing entirely and must not come back.
 		//
-		// It used to be attenuated by exp(-water_path * sigmaT), with
-		// water_path derived from texture_depth. That buffer is the opaque
-		// prepass: transparents are not in it, and neither is the sky. So a
-		// submerged particle, trail or sprite with nothing solid behind it was
-		// measured against the far plane, the transmittance underflowed, and it
-		// was extinguished - even though it WAS in the scene copy being sampled
-		// and would otherwise have shown through. A transmissive mesh went the
-		// same way, which is why it read as far too clear from above the water
-		// and correct from below.
+		// That buffer is the opaque prepass: transparents are not in it, and
+		// neither is the sky. A path drawn from it measures a submerged
+		// particle, trail or sprite with nothing solid behind it against the
+		// far plane, underflows the transmittance and extinguishes it - though
+		// it IS in the scene copy being sampled and would otherwise show
+		// through. A transmissive mesh goes the same way, reading far too clear
+		// from above the water and correct from below. One screen depth cannot
+		// describe what a stack of transparents is at.
 		//
-		// There is no fixing that from here: one screen depth cannot describe
-		// what a stack of transparents is at. So everything in the scene copy
-		// now carries its own absorption instead, applied over its own path as
-		// it was drawn - GetWaterFog does that for opaque geometry, for every
-		// transparent, and for the sky, which is what supplies the "infinitely
-		// deep water" backdrop that the far-plane depth used to fake.
+		// Everything in the scene copy carries its own absorption instead,
+		// applied over its own path as it was drawn - GetWaterFog does that for
+		// opaque geometry, for every transparent, and for the sky, which is
+		// what supplies the "infinitely deep water" backdrop.
 		//
 		// Fresnel still applies: ApplyLighting composites this as
 		// refraction * (1 - F), so the surface still reflects its share away.
@@ -677,4 +763,3 @@ float4 main(PSIn input) : SV_TARGET
 
 #endif // SHADOWMAPRENDERING
 }
-

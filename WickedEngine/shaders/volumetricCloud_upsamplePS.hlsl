@@ -110,15 +110,24 @@ float4 main(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
 	// between the two is not there and the cloud arrives at full brightness
 	// through the crest in front of it. Only a trace can find a crest that the
 	// ends know nothing about.
+	//
+	// **A cloud is not under the water**, which is what the zero height says,
+	// and it has to be said even though the position is now the cloud's own. A
+	// ray dipping towards the horizon puts that far plane point BELOW the
+	// surface, and the fog then describes the cloud as something submerged -
+	// taking the refracted leg, the path for light climbing out of the water,
+	// whose depth for a near horizontal ray is almost nothing, so the cloud
+	// arrives undimmed.
+	const float3 cloudPosition = reconstruct_position(uv, 0);
 	ApplyWaterFogPremultiplied(
-		GetWaterFog(uv, reconstruct_position(uv, 0)), result);
+		GetWaterFog(uv, cloudPosition, 0, true), result);
 
 	// Sampled on the far plane, not at the depth buffer's position. A cloud is
 	// kilometres away and the volume ends long before it, so the far plane and
 	// the cloud read the same texel - the whole column the volume holds - while
 	// the depth buffer's position would hand the cloud the light gathered as
 	// far as whatever opaque thing happens to stand in front of it.
-	ApplyVolumetricLightPremultiplied(uv, reconstruct_position(uv, 0), result);
+	ApplyVolumetricLightPremultiplied(uv, cloudPosition, result);
 
 	return result;
 }
