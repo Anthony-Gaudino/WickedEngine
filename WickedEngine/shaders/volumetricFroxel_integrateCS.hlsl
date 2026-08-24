@@ -93,25 +93,54 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		// it gains nothing from the temporal average the injection volume
 		// carries - and it would lose by it, smearing the waterline across the
 		// frames a camera takes to cross the surface.
-		const float3 sigmaT =
-			VolumetricFroxelMediumAt(uv, centreDepth).sigmaT;
+		const VolumetricFroxelMedium medium =
+			VolumetricFroxelMediumAt(uv, centreDepth);
+
+		// **The AIR is integrated across each half, not sampled at the middle
+		// of the whole.** Its density falls off exponentially with height, so
+		// over a far slice - metres deep, and spanning that much height on any
+		// ray that is not level - one sample is charged for a stretch across
+		// which the density moved several fold. Every slice is then wrong by
+		// its own amount, and since slices are shells of constant range about
+		// the eye, the error is drawn as arcs centred on the viewer.
+		//
+		// Divided back into an extinction so that everything below is untouched:
+		// the closed forms want a sigmaT, and an optical depth over a known
+		// length is one. Exact in the transmittance, which is what the arcs were
+		// in.
+		//
+		// The water needs none of this. Its extinction is a property of the
+		// medium rather than of where the sample stands, so it is the same
+		// everywhere in the column and a single value describes any stretch of
+		// it exactly.
+		// **The density has to be right in exactly one place.** What is added
+		// below is `scattered * weight`, and `scattered` is proportional to the
+		// density at the sample while `weight` divides by it - so the density
+		// cancels and the term is the albedo times `1 - transmittance`. That is
+		// the whole integral, exactly, PROVIDED the transmittance is the true
+		// one across the segment.
+		//
+		// So the analytic optical depth belongs in the transmittance and
+		// nowhere else. Putting it in the divisor as well corrects twice and
+		// overshoots by the same ratio it was meant to remove.
+		const float airShare = 1 - (float)medium.water.submersion;
+
+		const float3 frontOpticalDepth =
+			medium.water.sigmaT * frontThickness + airShare
+			* VolumetricFroxelAirOpticalDepth(uv, nearDepth, centreDepth);
+
+		const float3 backOpticalDepth =
+			medium.water.sigmaT * backThickness + airShare
+			* VolumetricFroxelAirOpticalDepth(uv, centreDepth, farDepth);
 
 		const float3 injected = input[uint3(DTid.xy, slice)];
 
-		// The exact integral of the transmittance across the segment, not the
-		// transmittance at one end times its length. Slices are deliberately far
-		// from uniform - the near ones are centimetres and the far ones metres -
-		// and the closed form is what keeps a thick one from being wrong by
-		// however much the beam decayed while crossing it.
-		//
-		// Reduces to the length as the medium thins, which is why the
-		// vanishing-extinction case needs no branch of its own: the floor is
-		// small enough that the ratio is the length to within a rounding error
-		// over any slice, and a medium that thin scatters nothing to weigh.
-		const float3 safeSigmaT = max(sigmaT, 0.00001);
-
-		const float3 frontTransmittance = exp(-frontThickness * safeSigmaT);
-		const float3 frontWeight = (1 - frontTransmittance) / safeSigmaT;
+		// **`injected` is radiance per unit of extinction**, so what a segment
+		// gathers is that times how much the segment extinguished - and the
+		// density enters once, through an exact integral, rather than being
+		// sampled at a point and divided back out.
+		const float3 frontTransmittance = exp(-frontOpticalDepth);
+		const float3 frontWeight = 1 - frontTransmittance;
 
 		accumulated += transmittance * injected * frontWeight;
 		transmittance *= frontTransmittance;
@@ -128,8 +157,8 @@ void main(uint3 DTid : SV_DispatchThreadID)
 			lastTexelDepth = centreDepth;
 		}
 
-		const float3 backTransmittance = exp(-backThickness * safeSigmaT);
-		const float3 backWeight = (1 - backTransmittance) / safeSigmaT;
+		const float3 backTransmittance = exp(-backOpticalDepth);
+		const float3 backWeight = 1 - backTransmittance;
 
 		accumulated += transmittance * injected * backWeight;
 		transmittance *= backTransmittance;
@@ -195,10 +224,31 @@ void main(uint3 DTid : SV_DispatchThreadID)
 					(min16uint2)DTid.xy);
 			}
 
-			const float3 safeSigmaT = max(medium.sigmaT, 0.00001);
+			// **Integrated across the step, not sampled at its middle.** The
+			// tail spans everything from the volume's range to the far plane in
+			// a handful of steps, so one step is hundreds of metres, and the
+			// air thins exponentially with height across every one of them. A
+			// density taken at the middle stands for none of it.
+			//
+			// The error is not noise. A step sits at a fixed range, so the
+			// place where it crosses the height the fog thins at is a cone
+			// about the eye - and a cone drawn on the screen is a circle. Eight
+			// steps put eight rings around the viewer, and raising the count
+			// only ever buys more of them, finer.
+			//
+			// In the transmittance alone, for the reason given at the slices:
+			// `scattered` carries the density and the divisor takes it back
+			// out, so this is the one place it has to be right.
+			const float stepNear = tailStart + (float)step * tailStep;
 
-			const float3 stepTransmittance = exp(-tailStep * safeSigmaT);
-			const float3 weight = (1 - stepTransmittance) / safeSigmaT;
+			const float3 stepOpticalDepth =
+				medium.water.sigmaT * tailStep
+				+ (1 - (float)medium.water.submersion)
+				* VolumetricFroxelAirOpticalDepth(
+					uv, stepNear, stepNear + tailStep);
+
+			const float3 stepTransmittance = exp(-stepOpticalDepth);
+			const float3 weight = 1 - stepTransmittance;
 
 			accumulatedTail += tailTransmittance * scattered * weight;
 			tailTransmittance *= stepTransmittance;

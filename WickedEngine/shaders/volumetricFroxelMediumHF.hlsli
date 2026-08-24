@@ -63,6 +63,42 @@ inline float VolumetricFroxelAirExtinction(
 }
 
 /**
+ * Optical depth of the air across one stretch of a froxel column.
+ *
+ * The extinction at a point cannot stand for a stretch of any length: height
+ * fog falls off exponentially, and a slice out at the far end of the volume
+ * spans enough height for the density to move several fold across it. Taken at
+ * the middle and held constant, that slice is charged the wrong amount, and
+ * because slices are shells of constant range about the eye the error is drawn
+ * as arcs centred on the viewer.
+ *
+ * Integrated instead, by the same closed form the fog's own transmittance is
+ * built from, so the two cannot disagree about how much air stands anywhere.
+ *
+ * @param[in] uv - Screen space position of the column (0-1).
+ * @param[in] nearDepth - Where the stretch begins, in metres from the eye.
+ * @param[in] farDepth - Where it ends, in metres from the eye.
+ *
+ * @return Optical depth of the air over that stretch, dimensionless.
+ */
+inline float VolumetricFroxelAirOpticalDepth(
+	in float2 uv, in float nearDepth, in float farDepth
+)
+{
+	const float3 direction = VolumetricFroxelRayDirection(uv);
+
+	// The near fade is authored against how far away a thing is, and it ramps
+	// over `fog.start` metres, so it cannot move steeply inside one slice the
+	// way the height term does. Asked at the stretch's middle rather than
+	// integrated.
+	return GetFogOpticalDepth(
+		farDepth - nearDepth,
+		mad(nearDepth, direction, GetCamera().position),
+		direction,
+		0.5 * (nearDepth + farDepth));
+}
+
+/**
  * The medium filling one cell, and what the lights do in it.
  *
  * Holds both rather than choosing between them, so that one expression covers
@@ -241,6 +277,51 @@ struct VolumetricFroxelMedium
 		}
 
 		return scattered;
+	}
+
+	/**
+	 * The same scattering with the medium's own density taken back out.
+	 *
+	 * What a segment gathers is \f$\int \sigma_s p L T\,ds\f$, and because
+	 * \f$\sigma_s\f$ and \f$\sigma_t\f$ differ only by the albedo, that
+	 * integral is the albedo-weighted phase times \f$1 - T\f$ over the whole
+	 * segment - an exact result, and one that says nothing about where inside
+	 * the segment anything was sampled.
+	 *
+	 * That is the point of asking for it this way. Handed the density at a
+	 * point, a caller has to divide it out again to get here, and the division
+	 * is where the artifacts come from: floored, it rescales every thin sample
+	 * by `density/floor`; unfloored, it is a small number over a small number.
+	 * Either way the sample's own position decides the brightness, and since a
+	 * sample sits at a fixed range from the eye, the place where the density
+	 * crosses anything is a cone - drawn on the screen as a ring.
+	 *
+	 * The ratio here is bounded in [0, 1] instead, and where one medium fills
+	 * the cell alone it is exactly 1, so nothing is lost to it.
+	 *
+	 * @param[in] samplePos - Where in the cell this is asked.
+	 * @param[in] toLight - Normalized direction towards the light.
+	 * @param[in] toLightBent - The same, refracted where the cell is submerged.
+	 * @param[in] toEye - Normalized direction towards the eye.
+	 * @param[in] distanceToLight - Distance to the light, `FLT_MAX` if
+	 *                              directional.
+	 * @param[in] cosThetaAbove - Cosine to the light taken above the surface.
+	 *
+	 * @return Scattered radiance per unit of extinction, to be multiplied by
+	 *         the segment's own `1 - transmittance`.
+	 */
+	float3 ScatterPerExtinction(
+		float3 samplePos,
+		float3 toLight,
+		float3 toLightBent,
+		float3 toEye,
+		float distanceToLight,
+		float cosThetaAbove
+	)
+	{
+		return Scatter(
+			samplePos, toLight, toLightBent, toEye, distanceToLight,
+			cosThetaAbove) / max(sigmaT, 1e-30);
 	}
 };
 

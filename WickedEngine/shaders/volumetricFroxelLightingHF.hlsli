@@ -143,6 +143,7 @@ inline float3 VolumetricFroxelScatteredLight(
 				}
 			}
 
+
 			if (GetFrame().options & OPTION_BIT_VOLUMETRICCLOUDS_CAST_SHADOW)
 			{
 				shadow *= shadow_2D_volumetricclouds(shadowSample);
@@ -176,7 +177,7 @@ inline float3 VolumetricFroxelScatteredLight(
 			// the surface is settled by the angle the light struck it at, above
 			// the water, before anything bent.
 			scattered += (float3)(lightColor * shadow)
-				* medium.Scatter(
+				* medium.ScatterPerExtinction(
 					mediumPosition, (float3)L, Lmedium, toEye, FLT_MAX, L.y)
 				* (1 + GetFrame().GetVolumetricBoost(index));
 		}
@@ -283,7 +284,7 @@ inline float3 VolumetricFroxelScatteredLight(
 				}
 
 				scattered += (float3)light.GetColor().rgb * attenuation
-					* medium.Scatter(
+					* medium.ScatterPerExtinction(
 						mediumPosition, L, L, toEye, distance, L.y)
 					* (1 + GetFrame().GetVolumetricBoost(index));
 			}
@@ -349,7 +350,7 @@ inline float3 VolumetricFroxelScatteredLight(
 				}
 
 				scattered += (float3)light.GetColor().rgb * attenuation
-					* medium.Scatter(
+					* medium.ScatterPerExtinction(
 						mediumPosition, L, L, toEye, distance, L.y)
 					* (1 + GetFrame().GetVolumetricBoost(index));
 			}
@@ -463,7 +464,7 @@ inline float3 VolumetricFroxelScatteredLight(
 				}
 
 				scattered += (float3)light.GetColor().rgb * attenuation
-					* medium.Scatter(
+					* medium.ScatterPerExtinction(
 						mediumPosition, L, L, toEye, distance, L.y)
 					* (1 + GetFrame().GetVolumetricBoost(index));
 			}

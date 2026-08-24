@@ -107,17 +107,31 @@ inline float2 GetFogAirSegment(float distance, float3 O, float3 V)
 
 // Exponential height fog based on: https://www.iquilezles.org/www/articles/fog/fog.htm
 // Non constant density function
-//	distance	: sample to point distance
-//	O			: sample position
-//	V			: sample to point vector
-inline half GetFogAmount(float distance, float3 O, float3 V)
+// Analytic optical depth of the air over a segment, which is the quantity the
+// closed form below is really built out of. Exposed on its own because a caller
+// integrating a column in pieces needs each piece's own optical depth: sampling
+// an extinction at one point and calling it constant over the piece is exactly
+// wrong for height fog, whose density falls off exponentially, and a piece
+// spanning any real height is then out by however far the density moved across
+// it.
+//
+//	distance			: length of the segment
+//	O					: segment start
+//	V					: segment direction, normalized
+//	nearFadeDistance	: distance the artistic near fade is judged at, which
+//						  for a piece of a column is the piece's own middle
+//						  rather than its length
+inline float GetFogOpticalDepth(
+	float distance, float3 O, float3 V, float nearFadeDistance
+)
 {
 	ShaderFog fog = GetWeather().fog;
 	
 	// The near fade keeps the fragment's own distance rather than the air's:
 	// it is authored against how far away a thing is, not against how much air
 	// stands in front of it.
-	float startDistanceFalloff = saturate((distance - fog.start) / fog.start);
+	float startDistanceFalloff =
+		saturate((nearFadeDistance - fog.start) / fog.start);
 
 	const float2 air = GetFogAirSegment(distance, O, V);
 
@@ -150,22 +164,22 @@ inline half GetFogAmount(float distance, float3 O, float3 V)
 		float exponentialFogDistance = airDistance - baseHeightFogDistance; // Exclude distance below base height
 		float exponentialHeightLineIntegral = exp(-heightLineFalloff * fogFalloff) * (1.0 - exp(-exponentialFogDistance * effectiveZ * fogFalloff)) / (effectiveZ * fogFalloff);
 		
-		float opticalDepthHeightFog = fog.density * startDistanceFalloff * (baseHeightFogDistance + exponentialHeightLineIntegral);
-		float transmittanceHeightFog = exp(-opticalDepthHeightFog);
-		
-		float fogAmount = transmittanceHeightFog;
-		return 1.0 - fogAmount;
+		return fog.density * startDistanceFalloff * (baseHeightFogDistance + exponentialHeightLineIntegral);
 	}
 	else
 	{
 		// Height fog algorithm (above) reduced with infinity start and end heights:
 		
-		float opticalDepthHeightFog = fog.density * startDistanceFalloff * airDistance;
-		float transmittanceHeightFog = exp(-opticalDepthHeightFog);
-		
-		float fogAmount = transmittanceHeightFog;
-		return 1.0 - fogAmount;
+		return fog.density * startDistanceFalloff * airDistance;
 	}
+}
+
+//	distance	: sample to point distance
+//	O			: sample position
+//	V			: sample to point vector
+inline half GetFogAmount(float distance, float3 O, float3 V)
+{
+	return (half)(1.0 - exp(-GetFogOpticalDepth(distance, O, V, distance)));
 }
 
 inline half4 GetFog(float distance, float3 O, float3 V)
