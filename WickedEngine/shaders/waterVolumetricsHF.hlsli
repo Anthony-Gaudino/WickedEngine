@@ -1146,14 +1146,22 @@ WaterVolumetrics GetWaterVolumetrics(float3 position, float waterHeight)
  * the same plane a metre ahead of the near plane, so all of them switch on the
  * same pixels at the same instant.
  *
- * **The surface height it carries stays the still plane, deliberately**, unlike
- * the shaded-point medium above. This one is handed to a MARCH, whose samples
- * are spread along the view ray and can be a long way off; the height is what
- * `SubmergedLightPath` clips a light against at each of them. The crest the
- * camera happens to be under says nothing about the surface over a sample a
- * hundred metres away, so using it would replace an unbiased answer - the plane
- * is the mean surface - with a biased one. Measuring per sample is the honest
- * alternative and costs a displacement fetch per step per light.
+ * **Measured against the surface as DRAWN over the eye, not the still plane.**
+ * The height is what `SubmergedLightPath` clips a light against at every sample
+ * of the march this medium is handed to, and against the plane a crest breaks
+ * it outright: the eye inside a wave stands tens of metres ABOVE the plane, so
+ * the distance up to the surface comes out negative, clamps to zero, and every
+ * sample in the column is told the sun reached it having crossed no water at
+ * all. A hundred metres of sea then lights up like open air, and passing the
+ * plane on the way down puts it out within a metre - a brightness that tracks
+ * height against a plane nothing is at.
+ *
+ * The plane is the better answer for a sample a hundred metres off, where the
+ * crest over the camera says nothing about the surface out there and the plane
+ * is at least the mean. It is the worse answer everywhere near the eye, which
+ * is where an optically thick medium gathers nearly all of what it sends back.
+ * Measuring per sample is the honest alternative and costs a displacement fetch
+ * per step per light.
  *
  * There is no fade with depth here, unlike a shaded point. Fading the medium
  * thins the water rather than removing it, and both halves of that are wrong:
@@ -1169,7 +1177,9 @@ WaterVolumetrics GetWaterVolumetrics(float3 position, float waterHeight)
  */
 WaterVolumetrics GetWaterVolumetricsAtEye(float2 screenUV)
 {
-	return MakeWaterVolumetrics((half)ocean_underwater_factor(screenUV));
+	return MakeWaterVolumetrics(
+		(half)ocean_underwater_factor(screenUV),
+		ocean_drawn_surface_height(GetCamera().position));
 }
 
 /**
