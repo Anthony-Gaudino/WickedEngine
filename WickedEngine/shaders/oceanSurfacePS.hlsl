@@ -507,6 +507,49 @@ float4 main(PSIn input) : SV_TARGET
 		[branch]
 		if (!camera_below_water)
 		{
+			// **How much sun reaches the column, measured from inside it.**
+			// The column stands below this surface, so what shadows it is the
+			// water between the sun and a point IN it - and one mean free path
+			// down is where the light it sends back comes from, the medium's
+			// own answer to how far in it is still being lit.
+			//
+			// Measured at the interface instead, the trace starts where the
+			// test that decides which side a point is on has no side to report,
+			// and at a low sun it then searches for an exit it is already
+			// standing at. Neighbouring fragments answer that differently and
+			// the sea is drawn in patches - which the refraction shows in full,
+			// having no `NdotL` to multiply them away.
+			const float meanFreePath =
+				refractionMedium.VisibleRange() / WATER_MARCH_OPTICAL_DEPTHS;
+
+			// **Dropped from the height field, not from `surface.P`.** The
+			// two do not agree: choppy waves displace the surface sideways as
+			// well as up, so the vertex that lands here came from somewhere
+			// else in the patch, and the field sampled back at this xz returns
+			// a different height - below the fragment wherever the surface
+			// folds. Measured down from `surface.P` the origin then sits ABOVE
+			// the surface as the trace understands it, the trace begins in air,
+			// finds no crossing and reports no water at all. The column keeps
+			// its whole sun and the fold is drawn as a bright patch.
+			//
+			// Started from the field itself, the origin is one mean free path
+			// under the surface by construction, and the trace cannot mistake
+			// which side of it that is.
+			const float3 columnPoint = float3(
+				surface.P.x,
+				ocean_drawn_surface_height(surface.P) - meanFreePath,
+				surface.P.z);
+
+			const float columnSunwardWater = TraceWaterSegment(
+				columnPoint,
+				mad(refractionMedium.VisibleRange(), GetSunDirection(),
+					columnPoint),
+				blue_noise(pixel).x
+			).submerged;
+
+			const float3 columnSunModulation =
+				exp(-refractionMedium.sigmaT * columnSunwardWater);
+
 			// The water answering for itself, over a depth that ends the
 			// question - and standing in this wave's shadow while it does.
 			// The sun reaching that column crossed the crest overhead, which
@@ -518,7 +561,7 @@ float4 main(PSIn input) : SV_TARGET
 			half4 deepRefraction = half4((half3)MakeDeepWaterFog(
 				ScreenCoord,
 				V,
-				exp(-refractionMedium.sigmaT * surface.water_thickness)
+				columnSunModulation
 			).inscatter, 1);
 
 			// **This column takes no froxel light.** What stands here is water
