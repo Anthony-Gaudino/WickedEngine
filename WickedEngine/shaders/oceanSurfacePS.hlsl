@@ -691,9 +691,34 @@ float4 main(PSIn input) : SV_TARGET
 		const float shore_depth = max(
 			shore_water_column, surface.P.y - shore_position.y);
 
+		// **What survives the water between here and the shore.** The foam
+		// grows at the point the ray struck the bed, which can be a long way
+		// off, and everything of it that reaches this fragment crossed that
+		// water. Fogging its COLOUR is not enough on its own: the foam also
+		// decides how much of this fragment is a lit surface rather than a
+		// refraction, and that share was arriving whole from any distance - so
+		// a shore beyond a crest went on restyling the crest in front of it
+		// however murky the water between them.
+		//
+		// Taken on the channel that carries furthest, since the foam is white
+		// and what is still visible of it is whatever has not been extinguished
+		// yet.
+		const WaterVolumetrics foamMedium = MakeWaterVolumetrics(1);
+		const float shoreDistance = distance(surface.P, shore_position);
+
+		const float3 shoreTransmittance =
+			exp(-shoreDistance * foamMedium.sigmaT);
+
+		const float shoreReach = max(
+			max(shoreTransmittance.r, shoreTransmittance.g),
+			shoreTransmittance.b);
+
+		// Only the SHORE's foam. Wave foam is on this fragment and crosses
+		// nothing to be seen.
 		float foam_shore = shore_foam_present
 			? saturate(exp(-shore_depth * shore_foam_falloff))
 				* GetWeather().ocean.shore_foam_strength
+				* shoreReach
 			: 0;
 		float foam_wave = pow(saturate(gradient.a), 4) * saturate(exp(-water_depth * 0.1));
 		float foam_combined = saturate(foam_shore + foam_wave);
@@ -756,8 +781,8 @@ float4 main(PSIn input) : SV_TARGET
 		// stops wearing a distant shore's foam without any of it being
 		// refused or faded out by hand.
 		const WaterFog foamFog = MakeWaterFog(
-			MakeWaterVolumetrics(1),
-			distance(surface.P, shore_position),
+			foamMedium,
+			shoreDistance,
 			V,
 			0,
 			ScreenCoord,
@@ -781,6 +806,7 @@ float4 main(PSIn input) : SV_TARGET
 			(shore_foam_present
 				? saturate(exp(-shore_depth * shore_foam_falloff * 2))
 					* GetWeather().ocean.shore_foam_strength
+					* shoreReach
 				: 0));
 	}
 #endif
