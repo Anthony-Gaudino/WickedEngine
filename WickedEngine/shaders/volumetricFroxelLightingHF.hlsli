@@ -11,6 +11,7 @@
  * Include after `globals.hlsli`, `lightingHF.hlsli` and `fogHF.hlsli`.
  */
 #include "volumetricFroxelMediumHF.hlsli"
+#include "waterSegmentHF.hlsli"
 
 /**
  * Reads one bucket of the transparent entity tile list.
@@ -143,6 +144,54 @@ inline float3 VolumetricFroxelScatteredLight(
 				}
 			}
 
+			// **Water standing between this cell and the light.** Where the
+			// cell is IN the water the medium answers for it, over the slant
+			// path down from the surface above. Where the cell is in AIR
+			// nothing asks at all, and a crest is perfectly capable of
+			// standing between a patch of air and the sun - which is what
+			// leaves the air in front of a wave lit as though the wave were
+			// not there, and the wave reading as if the light came through it.
+			//
+			// The ocean cannot say this through the shadow map. It writes the
+			// transparent layer, and what it writes there is caustic
+			// modulation about 1, so it occludes nothing; the layer holds one
+			// value for every receiver behind it, and a submerged one already
+			// counts this water itself, measured from the surface over its own
+			// head.
+			//
+			// **Traced, and smooth because of it.** This is a path LENGTH
+			// through the waves, continuous in the cell's position, so it
+			// carries none of the grid: a density that switches from air to
+			// water inside one cell cannot be resolved by a volume whose
+			// slices are metres deep, and prints its slices as rings about the
+			// eye. A length has no such edge to alias.
+			//
+			// Bounded by `VisibleRange`, past which the light is gone whatever
+			// else stands in the way.
+			//
+			// **Sampled at a fixed phase, though it is a quantity.** A measured
+			// length would ordinarily take the jittered phase and let the
+			// temporal pass average it, and inside the volume that is exactly
+			// what would happen. But this same function feeds the TAIL march,
+			// which is published as one value per column and has no history at
+			// all - a phase that moves there is not averaged, it flickers. The
+			// fixed phase terraces instead, which is steady and far the lesser
+			// of the two.
+			[branch]
+			if (GetCamera().IsWaterFog() && medium.water.submersion <= 0)
+			{
+				const WaterVolumetrics crossedMedium =
+					MakeWaterVolumetrics(1);
+
+				const float crossed = TraceWaterSegment(
+					mediumPosition,
+					mad(crossedMedium.VisibleRange(),
+						(float3)L, mediumPosition),
+					WATER_SEGMENT_STABLE_PHASE
+				).submerged;
+
+				shadow *= (half3)exp(-crossedMedium.sigmaT * crossed);
+			}
 
 			if (GetFrame().options & OPTION_BIT_VOLUMETRICCLOUDS_CAST_SHADOW)
 			{

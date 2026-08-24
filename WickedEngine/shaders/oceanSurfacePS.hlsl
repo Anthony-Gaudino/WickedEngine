@@ -311,28 +311,11 @@ float4 main(PSIn input) : SV_TARGET
 	// wave really has, and it grows with the wave.
 	const WaterVolumetrics subsurfaceMedium = MakeWaterVolumetrics(1);
 
-	const float sunwardWater = TraceWaterSegment(
+	surface.water_thickness = (half)TraceWaterSegment(
 		surface.P,
 		mad(subsurfaceMedium.VisibleRange(), GetSunDirection(), surface.P),
 		blue_noise(pixel).x
 	).submerged;
-
-	// **From under the water there is no wave being lit through.** The light
-	// crosses the surface once and travels on to the eye, which is refraction,
-	// and the water fog carries it already. A trace from a surface point
-	// towards the sun leaves the water on its first step, so it reports no
-	// thickness and the transmission term hands that same light over a second
-	// time at full strength - the phase's own shape drawn around the sun.
-	//
-	// Charged the whole column instead, which is the depth the light really
-	// crossed to reach an eye down here, and leaves exactly one copy of it.
-	//
-	// Faded on the eye's submersion for the reason the mirror below is, so the
-	// term withdraws as the waterline sweeps the screen.
-	surface.water_thickness = (half)lerp(
-		sunwardWater,
-		subsurfaceMedium.VisibleRange(),
-		eye_submersion);
 	surface.update();
 
 	Lighting lighting;

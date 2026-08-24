@@ -70,7 +70,18 @@ inline half3 attenuation_water(
 	[branch]
 	if (L.y >= 0)
 	{
-		return 1;
+		// The interface stands under no COLUMN of water, which is what the
+		// path below measures and why it is skipped here. It can still stand
+		// behind a WAVE: the shaded face of a crest has the whole crest
+		// between it and the sun, and answering 1 there lights it as though
+		// the light came straight through - the sun seen through a wave a
+		// hundred metres thick.
+		//
+		// `water_thickness` is that wave, traced towards the sun, and it is
+		// zero on flat water, where the ray leaves on its first step and this
+		// returns 1 exactly as before.
+		return (half3)exp(
+			-MakeWaterVolumetrics(1).sigmaT * surface.water_thickness);
 	}
 #endif // WATER
 	return WaterLightTransmittance(
@@ -204,8 +215,21 @@ inline half3 WaterSubsurfaceScattering(
 	const half entering =
 		(half)FresnelTransmittanceIntoWater(L.y);
 
+	// **From under the water there is no wave being lit through.** The light
+	// crosses the surface once and travels on to the eye, which is refraction,
+	// and the water fog carries it already. A trace towards the sun from a
+	// surface point leaves the water on its first step, so it reports no
+	// thickness and this would hand that same light over a second time at full
+	// strength - the phase's own shape drawn as rings about the sun.
+	//
+	// Graded on the very test the fog, the froxels and the underwater pass
+	// share, so the term withdraws as the waterline sweeps the screen rather
+	// than switching under it.
+	const half surfaced =
+		(half)(1 - ocean_underwater_factor(surface.screenUV));
+
 	return lightColor * (half3)(scatterAlbedo * transmitted) * phase
-		* entering * (1 - surface.F)
+		* entering * (1 - surface.F) * surfaced
 		* (half)GetWeather().ocean.subsurface_strength;
 }
 #endif // WATER
