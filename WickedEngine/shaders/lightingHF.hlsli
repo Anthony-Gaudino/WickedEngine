@@ -67,8 +67,14 @@ inline half3 attenuation_water(
 )
 {
 #ifdef WATER
+	// **Asked of the angle ABOVE the surface, never of `L`.** A directional
+	// light arrives here already bent into the water, pointing down, so `L.y`
+	// is negative for a sun overhead and a test on it never fires - the case
+	// below is entered instead, where a water surface carries no
+	// `waterSurfaceHeight` to measure a column against and the answer comes
+	// back 1. The sun then reaches the shaded face of every wave undimmed.
 	[branch]
-	if (L.y >= 0)
+	if (cos_theta_above >= 0)
 	{
 		// The interface stands under no COLUMN of water, which is what the
 		// path below measures and why it is skipped here. It can still stand

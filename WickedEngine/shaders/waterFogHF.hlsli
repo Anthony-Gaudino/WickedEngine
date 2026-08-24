@@ -690,10 +690,20 @@ WaterFog GetWaterFog(float2 screenUV, float3 fragmentPosition)
  *
  * @param[in] screenUV - Screen space UV coordinates (0-1) of the pixel.
  * @param[in] toEye - Normalized direction from the far end towards the eye.
+ * @param[in] sunModulation - How much of the sun reaches this column, per
+ *                            channel in [0, 1]. A column standing under a wave
+ *                            is in that wave's shadow, and this is where that
+ *                            is said: the sun's own forward peak is by far the
+ *                            brightest thing the water scatters back, and left
+ *                            at 1 it glows through a crest that should have
+ *                            stopped it. Only the terms the SUN feeds are
+ *                            scaled, so the column keeps its daylight.
  *
  * @return The fog of an unbounded depth of water.
  */
-WaterFog MakeDeepWaterFog(float2 screenUV, float3 toEye)
+WaterFog MakeDeepWaterFog(
+	float2 screenUV, float3 toEye, float3 sunModulation
+)
 {
 	const WaterVolumetrics medium = MakeWaterVolumetrics(1);
 
@@ -705,7 +715,7 @@ WaterFog MakeDeepWaterFog(float2 screenUV, float3 toEye)
 		screenUV,
 		uv_to_clipspace(screenUV),
 		false,
-		1
+		sunModulation
 	);
 }
 

@@ -508,17 +508,25 @@ float4 main(PSIn input) : SV_TARGET
 		if (!camera_below_water)
 		{
 			// The water answering for itself, over a depth that ends the
-			// question.
-			half4 deepRefraction = half4(
-				(half3)MakeDeepWaterFog(ScreenCoord, V).inscatter, 1);
+			// question - and standing in this wave's shadow while it does.
+			// The sun reaching that column crossed the crest overhead, which
+			// is the same length the wave presents to the light everywhere
+			// else, so it is dimmed by the same transmittance. Left unshaded
+			// the column keeps the sun's forward peak, the brightest thing
+			// water scatters back, and a crest a hundred metres thick glows
+			// with light that never got through it.
+			half4 deepRefraction = half4((half3)MakeDeepWaterFog(
+				ScreenCoord,
+				V,
+				exp(-refractionMedium.sigmaT * surface.water_thickness)
+			).inscatter, 1);
 
-			// Carried through the froxels exactly as the content being replaced
-			// was, over the same span and at the same pixel. The copy's own
-			// fragments were lit on their way to the eye before they were
-			// copied; a stand-in that skipped it would sit a whole shaft
-			// brighter or darker than the fragments beside it.
-			ApplyVolumetricLight(
-				refraction_uv, refraction_position, 0, deepRefraction);
+			// **This column takes no froxel light.** What stands here is water
+			// beginning at this surface: the air in front of it belongs to the
+			// fragment's own `ApplyVolumetricLight` below, which passes this
+			// term as the background it must not light twice, and behind the
+			// surface there is no air to gather any. What the water sends back
+			// is the in-scatter above and nothing else.
 
 			surface.refraction.rgb = lerp(
 				deepRefraction.rgb,
