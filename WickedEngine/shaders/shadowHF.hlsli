@@ -162,7 +162,7 @@ static const half soft_shadow_sample_count_rcp = rcp(soft_shadow_sample_count);
 // for the same reason: structure that has spread on the way down is blurred as
 // well as faded. It reuses the points the occlusion is already sampling at, so
 // it costs no extra taps, and 0 reproduces the occlusion tap exactly.
-inline half3 sample_shadow(float2 uv, float cmp, float4 uv_clamping, half2 radius, min16uint2 pixel, half transparent_contrast = 1, float2 transparent_spread = 0)
+inline half3 sample_shadow(float2 uv, float cmp, float4 uv_clamping, half2 radius, min16uint2 pixel, half transparent_contrast = 1, float2 transparent_spread = 0, bool transparent_only = false)
 {
 	Texture2D<half4> texture_shadowatlas = bindless_textures_half4[descriptor_index(GetFrame().texture_shadowatlas_index)];
 	Texture2D<half4> texture_shadowatlas_transparent = bindless_textures_half4[descriptor_index(GetFrame().texture_shadowatlas_transparent_index)];
@@ -205,8 +205,17 @@ inline half3 sample_shadow(float2 uv, float cmp, float4 uv_clamping, half2 radiu
 #ifdef SHADOW_SAMPLING_DITHERING
 	const half2x2 rot = dither_rot2x2(pixel + GetTemporalAASampleRotation()); // per pixel rotation for every sample
 #endif // SHADOW_SAMPLING_DITHERING
+	// Occlusion needs the whole disk: a shadow's edge is the highest frequency
+	// thing in the atlas and undersampling it bands. The transparent layer is
+	// the opposite - caustics and a caster's tint, both broad beside an edge -
+	// so a caller wanting only that spends a quarter of the taps and the other
+	// three quarters would go on resolving something it did not ask for.
+	const min16uint sample_stride = transparent_only ? 4 : 1;
+	const half sample_weight =
+		(half)sample_stride * soft_shadow_sample_count_rcp;
+
 	[loop] // decent perf win with loop on the "island" level on AMD
-	for (min16uint i = 0; i < soft_shadow_sample_count; ++i)
+	for (min16uint i = 0; i < soft_shadow_sample_count; i += sample_stride)
 	{
 #ifdef SHADOW_SAMPLING_DITHERING
 		const half2 vogel_point = mul(vogel_points[i], rot);
@@ -219,7 +228,12 @@ inline half3 sample_shadow(float2 uv, float cmp, float4 uv_clamping, half2 radiu
 #endif // DISABLE_SOFT_SHADOWMAP
 
 		sample_uv = clamp(sample_uv, uv_clamping.xy, uv_clamping.zw);
-		half3 pcf = texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, sample_uv, cmp).rrr; // note: cmpf16 not good enough here!
+		// Occlusion may already be supplied by ray traced shadows, in which
+		// case only the transparent layer is wanted from here - it is a
+		// separate quantity and nothing else reads it.
+		half3 pcf = transparent_only
+			? (half3)1
+			: texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, sample_uv, cmp).rrr; // note: cmpf16 not good enough here!
 		
 #ifndef DISABLE_TRANSPARENT_SHADOWMAP
 		// !Reminder: there is no dependency between sampling shadowatlas and shadowatlas_transparent, this has best performance!
@@ -238,7 +252,7 @@ inline half3 sample_shadow(float2 uv, float cmp, float4 uv_clamping, half2 radiu
 		
 #ifndef DISABLE_SOFT_SHADOWMAP
 	}
-	shadow *= soft_shadow_sample_count_rcp;
+	shadow *= sample_weight;
 #endif // DISABLE_SOFT_SHADOWMAP
 
 	return shadow;
@@ -256,43 +270,51 @@ inline float4 shadow_border_clamp(in ShaderEntity light, in float slice)
 // transparent_spread arrives in this cascade's own uv, which is what a caller
 // holding the light's projection can measure it in, and is placed into the
 // atlas here alongside the position it belongs to.
-inline half3 shadow_2D(in ShaderEntity light, in float z, in float2 shadow_uv, in uint cascade, min16uint2 pixel = 0, half transparent_contrast = 1, half transparent_spread = 0)
+inline half3 shadow_2D(in ShaderEntity light, in float z, in float2 shadow_uv, in uint cascade, min16uint2 pixel = 0, half transparent_contrast = 1, half transparent_spread = 0, bool transparent_only = false)
 {
 	shadow_uv.x += cascade;
 	shadow_uv = mad(shadow_uv, light.shadowAtlasMulAdd.xy, light.shadowAtlasMulAdd.zw);
-	return sample_shadow(shadow_uv, z, shadow_border_clamp(light, cascade), light.GetType() == ENTITY_TYPE_RECTLIGHT ? (half2(light.GetRadius(), light.GetLength()) * 0.025) : light.GetRadius(), pixel, transparent_contrast, transparent_spread * light.shadowAtlasMulAdd.xy);
+	return sample_shadow(shadow_uv, z, shadow_border_clamp(light, cascade), light.GetType() == ENTITY_TYPE_RECTLIGHT ? (half2(light.GetRadius(), light.GetLength()) * 0.025) : light.GetRadius(), pixel, transparent_contrast, transparent_spread * light.shadowAtlasMulAdd.xy, transparent_only);
 }
 
-inline half3 shadow_cube(in ShaderEntity light, in float3 Lunnormalized, min16uint2 pixel = 0, half transparent_contrast = 1)
+inline half3 shadow_cube(in ShaderEntity light, in float3 Lunnormalized, min16uint2 pixel = 0, half transparent_contrast = 1, bool transparent_only = false)
 {
 	const float remapped_distance = light.GetCubemapDepthRemapNear() + light.GetCubemapDepthRemapFar() / (max(max(abs(Lunnormalized.x), abs(Lunnormalized.y)), abs(Lunnormalized.z)) * 0.989); // little bias to avoid artifact
 	const float3 uv_slice = cubemap_to_uv(-Lunnormalized);
 	float2 shadow_uv = uv_slice.xy;
 	shadow_uv.x += uv_slice.z;
 	shadow_uv = mad(shadow_uv, light.shadowAtlasMulAdd.xy, light.shadowAtlasMulAdd.zw);
-	return sample_shadow(shadow_uv, remapped_distance, shadow_border_clamp(light, uv_slice.z), light.GetRadius(), pixel, transparent_contrast);
+	return sample_shadow(shadow_uv, remapped_distance, shadow_border_clamp(light, uv_slice.z), light.GetRadius(), pixel, transparent_contrast, 0, transparent_only);
 }
 
 #else
 
 // See the disk-sampling overload above for what transparent_contrast means.
-inline half3 sample_shadow(float2 uv, float cmp, min16uint2 pixel, half transparent_contrast = 1)
+inline half3 sample_shadow(float2 uv, float cmp, min16uint2 pixel, half transparent_contrast = 1, bool transparent_only = false)
 {
 	Texture2D<half4> texture_shadowatlas = bindless_textures_half4[descriptor_index(GetFrame().texture_shadowatlas_index)];
-	half3 shadow = texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, uv, cmp).r;
+	half3 shadow = 1;
+
+	// Only the transparent layer is wanted where ray traced shadows already
+	// answer for the occlusion, and these taps are the occlusion.
+	[branch]
+	if (!transparent_only)
+	{
+		shadow = texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, uv, cmp).r;
 
 #ifndef DISABLE_SOFT_SHADOWMAP
-	// sample along a rectangle pattern around center:
-	shadow.x += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, uv, cmp, int2(-1, -1)).r;
-	shadow.x += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, uv, cmp, int2(-1, 0)).r;
-	shadow.x += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, uv, cmp, int2(-1, 1)).r;
-	shadow.x += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, uv, cmp, int2(0, -1)).r;
-	shadow.x += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, uv, cmp, int2(0, 1)).r;
-	shadow.x += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, uv, cmp, int2(1, -1)).r;
-	shadow.x += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, uv, cmp, int2(1, 0)).r;
-	shadow.x += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, uv, cmp, int2(1, 1)).r;
-	shadow = shadow.xxx / 9.0;
+		// sample along a rectangle pattern around center:
+		shadow.x += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, uv, cmp, int2(-1, -1)).r;
+		shadow.x += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, uv, cmp, int2(-1, 0)).r;
+		shadow.x += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, uv, cmp, int2(-1, 1)).r;
+		shadow.x += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, uv, cmp, int2(0, -1)).r;
+		shadow.x += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, uv, cmp, int2(0, 1)).r;
+		shadow.x += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, uv, cmp, int2(1, -1)).r;
+		shadow.x += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, uv, cmp, int2(1, 0)).r;
+		shadow.x += texture_shadowatlas.SampleCmpLevelZero(sampler_cmp_depth, uv, cmp, int2(1, 1)).r;
+		shadow = shadow.xxx / 9.0;
 #endif // DISABLE_SOFT_SHADOWMAP
+	}
 
 #ifndef DISABLE_TRANSPARENT_SHADOWMAP
 	Texture2D<half4> texture_shadowatlas_transparent = bindless_textures_half4[descriptor_index(GetFrame().texture_shadowatlas_transparent_index)];
@@ -320,15 +342,15 @@ inline void shadow_border_shrink(in ShaderEntity light, inout float2 shadow_uv)
 
 // transparent_spread is accepted to match the disk-sampling overload and has
 // nowhere to go: this path takes a single tap, and one tap cannot be spread.
-inline half3 shadow_2D(in ShaderEntity light, in float z, in float2 shadow_uv, in uint cascade, in min16uint2 pixel = 0, half transparent_contrast = 1, half transparent_spread = 0)
+inline half3 shadow_2D(in ShaderEntity light, in float z, in float2 shadow_uv, in uint cascade, in min16uint2 pixel = 0, half transparent_contrast = 1, half transparent_spread = 0, bool transparent_only = false)
 {
 	shadow_border_shrink(light, shadow_uv);
 	shadow_uv.x += cascade;
 	shadow_uv = mad(shadow_uv, light.shadowAtlasMulAdd.xy, light.shadowAtlasMulAdd.zw);
-	return sample_shadow(shadow_uv, z, pixel, transparent_contrast);
+	return sample_shadow(shadow_uv, z, pixel, transparent_contrast, transparent_only);
 }
 
-inline half3 shadow_cube(in ShaderEntity light, in float3 Lunnormalized, in min16uint2 pixel = 0, half transparent_contrast = 1)
+inline half3 shadow_cube(in ShaderEntity light, in float3 Lunnormalized, in min16uint2 pixel = 0, half transparent_contrast = 1, bool transparent_only = false)
 {
 	const float remapped_distance = light.GetCubemapDepthRemapNear() + light.GetCubemapDepthRemapFar() / (max(max(abs(Lunnormalized.x), abs(Lunnormalized.y)), abs(Lunnormalized.z)) * 0.989); // little bias to avoid artifact
 	const float3 uv_slice = cubemap_to_uv(-Lunnormalized);
@@ -336,7 +358,7 @@ inline half3 shadow_cube(in ShaderEntity light, in float3 Lunnormalized, in min1
 	shadow_border_shrink(light, shadow_uv);
 	shadow_uv.x += uv_slice.z;
 	shadow_uv = mad(shadow_uv, light.shadowAtlasMulAdd.xy, light.shadowAtlasMulAdd.zw);
-	return sample_shadow(shadow_uv, remapped_distance, pixel, transparent_contrast);
+	return sample_shadow(shadow_uv, remapped_distance, pixel, transparent_contrast, transparent_only);
 }
 
 #endif // SHADOW_SAMPLING_DISK

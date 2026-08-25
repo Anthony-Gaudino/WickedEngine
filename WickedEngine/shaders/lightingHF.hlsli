@@ -240,6 +240,29 @@ inline half3 WaterSubsurfaceScattering(
 }
 #endif // WATER
 
+/**
+ * Whether ray traced shadows already answer for this surface's occlusion.
+ *
+ * Where they do, the shadow map's own depth test is not worth taking - but the
+ * TRANSPARENT atlas still is. It holds the ocean's caustics and every coloured
+ * caster's tint, it is a separate quantity from occlusion, and this cascade
+ * path is the only thing that reads it. A shadow lookup told this returns that
+ * layer alone.
+ *
+ * @return true when the occlusion is already in hand and only the transparent
+ *         layer is wanted from a shadow lookup.
+ */
+inline bool ShadowMaskSuppliesOcclusion()
+{
+#if defined(SHADOW_MASK_ENABLED) && !defined(TRANSPARENT)
+	return (GetFrame().options & OPTION_BIT_RAYTRACED_SHADOWS) != 0
+		&& GetCamera().texture_rtshadow_index >= 0
+		&& (GetCamera().options & SHADERCAMERA_OPTION_USE_SHADOW_MASK) != 0;
+#else
+	return false;
+#endif // SHADOW_MASK_ENABLED
+}
+
 inline void light_directional(in ShaderEntity light, in Surface surface, inout Lighting lighting, in half shadow_mask = 1)
 {
 	if (shadow_mask <= 0.001)
@@ -264,10 +287,20 @@ inline void light_directional(in ShaderEntity light, in Surface surface, inout L
 			light_color *= shadow_2D_volumetricclouds(surface.P);
 		}
 
-#if defined(SHADOW_MASK_ENABLED) && !defined(TRANSPARENT)
-		[branch]
-		if ((GetFrame().options & OPTION_BIT_RAYTRACED_SHADOWS) == 0 || GetCamera().texture_rtshadow_index < 0 || (GetCamera().options & SHADERCAMERA_OPTION_USE_SHADOW_MASK) == 0)
-#endif // SHADOW_MASK_ENABLED
+		// **The transparent layer is not occlusion, and is read either way.**
+		// Ray traced shadows are the better answer for whether the sun reaches
+		// a point, and where they are available the shadow map's own test is
+		// skipped for them. What is NOT in `shadow_mask` is the transparent
+		// shadow atlas: the ocean writes its caustics there, and coloured
+		// transparent casters write their tint, and this cascade path is the
+		// only thing that reads it. Skipping the whole block for the occlusion
+		// took the caustics with it, so a sea bed lost them the moment ray
+		// traced shadows came on while a transparent object beside it kept
+		// them - which is how the mechanism was confirmed.
+		//
+		// The block now always runs and is told which of the two quantities is
+		// wanted from it.
+		const bool shadow_transparent_only = ShadowMaskSuppliesOcclusion();
 		{
 			// The refracted direction, because that is the one the light
 			// travelled down - the same leg attenuation_water() dims it over.
@@ -300,7 +333,7 @@ inline void light_directional(in ShaderEntity light, in Surface surface, inout L
 
 			if (best_cascade < cascade_count)
 			{
-				half3 shadow = shadow_2D(light, shadow_pos.z, shadow_uv.xy, best_cascade, surface.pixel, caustic_contrast, caustic_spread);
+				half3 shadow = shadow_2D(light, shadow_pos.z, shadow_uv.xy, best_cascade, surface.pixel, caustic_contrast, caustic_spread, shadow_transparent_only);
 
 				if (best_cascade < cascade_count - 1)
 				{
@@ -314,7 +347,7 @@ inline void light_directional(in ShaderEntity light, in Surface surface, inout L
 						shadow_pos = mul(fallback_matrix, float4(surface.P, 1)).xyz;
 						shadow_uv = clipspace_to_uv(shadow_pos);
 						const half3 shadow_fallback = shadow_2D(light, shadow_pos.z, shadow_uv.xy, fallback_cascade, surface.pixel, caustic_contrast,
-							cascade_uv_per_metre(fallback_matrix) * (half)caustic_decay.y);
+							cascade_uv_per_metre(fallback_matrix) * (half)caustic_decay.y, shadow_transparent_only);
 						shadow = lerp(shadow, shadow_fallback, cascade_blend);
 					}
 				}
@@ -413,13 +446,12 @@ inline void light_point(in ShaderEntity light, in Surface surface, inout Lightin
 	[branch]
 	if (light.IsCastingShadow() && surface.IsReceiveShadow())
 	{
-#if defined(SHADOW_MASK_ENABLED) && !defined(TRANSPARENT)
-		[branch]
-		if ((GetFrame().options & OPTION_BIT_RAYTRACED_SHADOWS) == 0 || GetCamera().texture_rtshadow_index < 0 || (GetCamera().options & SHADERCAMERA_OPTION_USE_SHADOW_MASK) == 0)
-#endif // SHADOW_MASK_ENABLED
+		// Read either way, for the reason given at the directional light: the
+		// transparent atlas is not occlusion and nothing else samples it.
 		{
 			light_color *= shadow_cube(light, LunnormalizedShadow, surface.pixel,
-				(half)caustic_decay_water(surface, L, dist2 * dist_rcp).x);
+				(half)caustic_decay_water(surface, L, dist2 * dist_rcp).x,
+				ShadowMaskSuppliesOcclusion());
 		}
 		
 		if (!any(light_color))
@@ -536,10 +568,8 @@ inline void light_spot(in ShaderEntity light, in Surface surface, inout Lighting
 	[branch]
 	if (light.IsCastingShadow() && surface.IsReceiveShadow())
 	{
-#if defined(SHADOW_MASK_ENABLED) && !defined(TRANSPARENT)
-		[branch]
-		if ((GetFrame().options & OPTION_BIT_RAYTRACED_SHADOWS) == 0 || GetCamera().texture_rtshadow_index < 0 || (GetCamera().options & SHADERCAMERA_OPTION_USE_SHADOW_MASK) == 0)
-#endif // SHADOW_MASK_ENABLED
+		// Read either way, for the reason given at the directional light: the
+		// transparent atlas is not occlusion and nothing else samples it.
 		{
 			float4 shadow_pos = mul(load_entitymatrix(light.GetMatrixIndex() + 0), float4(surface.P, 1));
 			shadow_pos.xyz /= shadow_pos.w;
@@ -548,7 +578,8 @@ inline void light_spot(in ShaderEntity light, in Surface surface, inout Lighting
 			if (is_saturated(shadow_uv))
 			{
 				light_color *= shadow_2D(light, shadow_pos.z, shadow_uv.xy, 0, surface.pixel,
-					(half)caustic_decay_water(surface, L, dist2 * dist_rcp).x);
+					(half)caustic_decay_water(surface, L, dist2 * dist_rcp).x,
+					0, ShadowMaskSuppliesOcclusion());
 			}
 		}
 		
@@ -684,10 +715,8 @@ inline void light_rect(in ShaderEntity light, in Surface surface, inout Lighting
 	[branch]
 	if (light.IsCastingShadow() && surface.IsReceiveShadow())
 	{
-#if defined(SHADOW_MASK_ENABLED) && !defined(TRANSPARENT)
-		[branch]
-		if ((GetFrame().options & OPTION_BIT_RAYTRACED_SHADOWS) == 0 || GetCamera().texture_rtshadow_index < 0 || (GetCamera().options & SHADERCAMERA_OPTION_USE_SHADOW_MASK) == 0)
-#endif // SHADOW_MASK_ENABLED
+		// Read either way, for the reason given at the directional light: the
+		// transparent atlas is not occlusion and nothing else samples it.
 		{
 			float4 shadow_pos = mul(load_entitymatrix(light.GetMatrixIndex() + 0), float4(surface.P, 1));
 			shadow_pos.xyz /= shadow_pos.w;
@@ -696,7 +725,8 @@ inline void light_rect(in ShaderEntity light, in Surface surface, inout Lighting
 			if (is_saturated(shadow_uv))
 			{
 				light_color *= shadow_2D(light, shadow_pos.z, shadow_uv.xy, 0, surface.pixel,
-					(half)caustic_decay_water(surface, L, dist2 * dist_rcp).x);
+					(half)caustic_decay_water(surface, L, dist2 * dist_rcp).x,
+					0, ShadowMaskSuppliesOcclusion());
 			}
 		}
 		
