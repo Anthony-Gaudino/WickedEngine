@@ -377,6 +377,13 @@ float4 main(PSIn input) : SV_TARGET
 
 	float water_depth = FLT_MAX;
 
+	// **How much of the refraction genuinely came from the scene copy.** Where
+	// the water answers for itself the rest of it did not, and a term the
+	// shader synthesised carries none of the light the copy was drawn with.
+	// 1 wherever nothing was substituted, which is every case but the deep
+	// column below.
+	half3 refractionCopyShare = 1;
+
 	[branch]
 	if (camera.texture_refraction_index >= 0)
 	{
@@ -575,6 +582,10 @@ float4 main(PSIn input) : SV_TARGET
 				deepRefraction.rgb,
 				(half3)surface.refraction.rgb,
 				refractionReach);
+
+			// The blend above is exactly how much of this term the copy
+			// supplied, so it is exactly how much of it arrives already lit.
+			refractionCopyShare = refractionReach;
 		}
 
 		water_depth = max(water_depth, -dot(float4(refraction_position, 1), water_plane));
@@ -845,10 +856,16 @@ float4 main(PSIn input) : SV_TARGET
 	const half4 beforeVolumetricLight = color;
 #endif // OCEAN_VOLUMETRIC_DEBUG == 1
 
+	// **Only the share that came from the COPY is already lit.** The copy was
+	// drawn with the volumetric light in it, so that much of this pixel must
+	// not be lit again. What the water answered for itself was never drawn at
+	// all: it carries none, and withholding the light from it leaves the ocean
+	// a hole in the volume - darker than everything around it precisely where
+	// the water is deep enough to have nothing behind it.
 	ApplyVolumetricLight(
 		ScreenCoord,
 		surface.P,
-		(half3)((1 - surface.F) * surface.refraction.a),
+		(half3)((1 - surface.F) * surface.refraction.a * refractionCopyShare),
 		color
 	);
 
