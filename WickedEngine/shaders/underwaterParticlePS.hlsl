@@ -29,6 +29,7 @@
 #include "waterFogHF.hlsli"
 #include "underwaterParticleHF.hlsli"
 #include "volumetricFroxelHF.hlsli"
+#include "volumetricCloudApplyHF.hlsli"
 
 /**
  * Depth range over which a particle fades out against solid geometry, in
@@ -135,6 +136,7 @@ half4 main(UnderwaterParticleVertexToPixel input) : SV_TARGET
 	color.rgb *= color.a;
 	ApplyWaterFogPremultiplied(screenUV, input.P, color);
 	ApplyVolumetricLightPremultiplied(screenUV, input.P, color);
+	ApplyVolumetricCloudsPremultiplied(screenUV, input.P, color);
 
 	return color;
 }

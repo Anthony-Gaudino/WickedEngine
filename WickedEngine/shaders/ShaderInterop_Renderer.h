@@ -1487,6 +1487,23 @@ struct alignas(16) ShaderCamera
 	// the lookup without a condition at any of the call sites.
 	int texture_volumetricfroxels_index;
 
+	// The clouds as they were marched and reprojected, at half resolution:
+	// premultiplied radiance with coverage in alpha, and the distance the march
+	// settled on in `.r` of the depth pair.
+	//
+	// **Held so that a fragment can ask for itself.** The clouds resolve to one
+	// screen space buffer and are composited at a single moment in the frame,
+	// which is after the opaque pass and before the transparents - so a
+	// transparent drawn later paints straight over them and stands out of a
+	// cloud it is plainly inside. A fragment that looks the buffer up takes the
+	// share standing in front of ITSELF instead, which is the same reason
+	// `texture_volumetricfroxels_index` is held.
+	//
+	// -1 for any camera without clouds - a reflection, a probe, a shadow
+	// cascade - so the lookup skips without a condition at the call site.
+	int texture_volumetricclouds_index;
+	int texture_volumetricclouds_depth_index;
+
 	int texture_reflection_index;
 	int texture_reflection_depth_index;
 	int texture_refraction_index;
@@ -1576,6 +1593,8 @@ struct alignas(16) ShaderCamera
 		texture_vxgi_specular_index = -1;
 		texture_reprojected_depth_index = -1;
 		texture_volumetricfroxels_index = -1;
+		texture_volumetricclouds_index = -1;
+		texture_volumetricclouds_depth_index = -1;
 
 		options = 0;
 	}

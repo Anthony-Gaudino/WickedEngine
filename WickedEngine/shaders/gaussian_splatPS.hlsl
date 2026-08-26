@@ -2,6 +2,7 @@
 #include "ShaderInterop_GaussianSplat.h"
 #include "waterFogHF.hlsli"
 #include "volumetricFroxelHF.hlsli"
+#include "volumetricCloudApplyHF.hlsli"
 
 float4 main(float4 pos : SV_Position, half4 color : COLOR, half2 localPos : LOCALPOS) : SV_Target
 {
@@ -40,6 +41,7 @@ float4 main(float4 pos : SV_Position, half4 color : COLOR, half2 localPos : LOCA
 	// blend.
 	ApplyWaterFogPremultiplied(screenUV, P, result);
 	ApplyVolumetricLightPremultiplied(screenUV, P, result);
+	ApplyVolumetricCloudsPremultiplied(screenUV, P, result);
 
 	return result;
 }

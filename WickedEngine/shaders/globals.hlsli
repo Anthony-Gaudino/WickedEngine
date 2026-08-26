@@ -766,6 +766,8 @@ struct PrimitiveID
 #define texture_cameravolumelut bindless_textures3D_half4[descriptor_index(GetFrame().texture_cameravolumelut_index)]
 #define texture_wind bindless_textures3D[descriptor_index(GetFrame().texture_wind_index)]
 #define texture_volumetricfroxels bindless_textures3D[descriptor_index(GetCamera().texture_volumetricfroxels_index)]
+#define texture_volumetricclouds bindless_textures_half4[descriptor_index(GetCamera().texture_volumetricclouds_index)]
+#define texture_volumetricclouds_depth bindless_textures_float2[descriptor_index(GetCamera().texture_volumetricclouds_depth_index)]
 #define texture_volumetricfroxeltail bindless_textures_half4[descriptor_index(GetFrame().texture_volumetricfroxeltail_index)]
 #define scene_acceleration_structure bindless_accelerationstructures[descriptor_index(GetScene().TLAS)]
 

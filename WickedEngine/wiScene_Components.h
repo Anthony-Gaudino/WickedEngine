@@ -1471,6 +1471,8 @@ namespace wi::scene
 		int texture_vxgi_specular_index = -1;
 		int texture_reprojected_depth_index = -1;
 		int texture_volumetricfroxels_index = -1;
+		int texture_volumetricclouds_index = -1;
+		int texture_volumetricclouds_depth_index = -1;
 		uint shadercamera_options = SHADERCAMERA_OPTION_NONE;
 
 		struct RenderToTexture

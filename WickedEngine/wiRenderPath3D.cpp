@@ -492,6 +492,33 @@ namespace wi
 			volumetriccloudResources = {};
 		}
 
+		// Published to the fragments that lay the clouds over themselves. The
+		// clouds resolve to one screen space buffer and are composited at a
+		// single moment - after the opaque pass, before the transparents - so
+		// anything drawn later paints over them and stands out of a cloud it is
+		// inside. A fragment holding the buffer takes the share standing in
+		// front of ITSELF instead.
+		//
+		// The reprojected pair rather than the raw march: it is the temporally
+		// accumulated result the composite reads too, so both describe the same
+		// clouds.
+		const bool cloudsPublished =
+			volumetriccloudResources.texture_reproject[0].IsValid();
+		const int cloudTemporal =
+			volumetriccloudResources.GetTemporalOutputIndex();
+
+		camera->texture_volumetricclouds_index = cloudsPublished
+			? device->GetDescriptorIndex(
+				&volumetriccloudResources.texture_reproject[cloudTemporal],
+				SubresourceType::SRV)
+			: -1;
+		camera->texture_volumetricclouds_depth_index = cloudsPublished
+			? device->GetDescriptorIndex(
+				&volumetriccloudResources.texture_reproject_depth[
+					cloudTemporal],
+				SubresourceType::SRV)
+			: -1;
+
 		// Held to the same gate as the volumetric lights it carries, so a scene
 		// with none of them pays neither the memory nor the two dispatches.
 		if (getVolumeLightsEnabled() &&
@@ -938,6 +965,8 @@ namespace wi
 		// The volume is built along the main camera's rays and means nothing
 		// along the reflection's.
 		camera_reflection.texture_volumetricfroxels_index = -1;
+		camera_reflection.texture_volumetricclouds_index = -1;
+		camera_reflection.texture_volumetricclouds_depth_index = -1;
 
 		video_cmd = {};
 		if (getSceneUpdateEnabled() && scene->videos.GetCount() > 0)

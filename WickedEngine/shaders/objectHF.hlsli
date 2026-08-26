@@ -48,6 +48,7 @@
 #include "shadingHF.hlsli"
 #include "waterFogHF.hlsli"
 #include "volumetricFroxelHF.hlsli"
+#include "volumetricCloudApplyHF.hlsli"
 
 // DEFINITIONS
 //////////////////
@@ -1142,6 +1143,13 @@ float4 main(PixelInput input, in bool is_frontface : SV_IsFrontFace APPEND_COVER
 		(half3)((1 - surface.F) * surface.refraction.a),
 		color
 	);
+
+#ifdef TRANSPARENT
+	// Only a transparent draw. The clouds are composited between the opaque
+	// pass and the transparents, so an opaque surface has already been covered
+	// by them and asking again would lay them over it twice.
+	ApplyVolumetricClouds(ScreenCoord, surface.P, color);
+#endif // TRANSPARENT
 
 	color.rgb = mul(saturationMatrix(material.GetSaturation()), color.rgb);
 

@@ -1,6 +1,7 @@
 #include "globals.hlsli"
 #include "waterFogHF.hlsli"
 #include "volumetricFroxelHF.hlsli"
+#include "volumetricCloudApplyHF.hlsli"
 
 float4 main(float4 pos : SV_Position, float4 screen : SCREEN, float4 uv : TEXCOORD, float4 color : COLOR) : SV_TARGET
 {
@@ -67,10 +68,12 @@ float4 main(float4 pos : SV_Position, float4 screen : SCREEN, float4 uv : TEXCOO
 		if (g_xTrailWaterFogMode == TRAIL_WATERFOG_PREMULTIPLIED)
 		{
 			ApplyVolumetricLightPremultiplied(fogUV, P, fogged);
+			ApplyVolumetricCloudsPremultiplied(fogUV, P, fogged);
 		}
 		else if (g_xTrailWaterFogMode != TRAIL_WATERFOG_ADDITIVE)
 		{
 			ApplyVolumetricLight(fogUV, P, fogged);
+			ApplyVolumetricClouds(fogUV, P, fogged);
 		}
 
 		color = (float4)fogged;

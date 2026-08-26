@@ -5,6 +5,7 @@
 #include "emittedparticleHF.hlsli"
 #include "ShaderInterop_EmittedParticle.h"
 #include "objectHF.hlsli"
+#include "volumetricCloudApplyHF.hlsli"
 
 #ifdef EMITTEDPARTICLE_DISTORTION
 static const uint SLOT = NORMALMAP;
@@ -186,6 +187,7 @@ float4 main(VertextoPixel input) : SV_TARGET
 		// Straight alpha here, so the blend applies the coverage itself and
 		// this must not apply it again.
 		ApplyVolumetricLight(ScreenCoord, pos3D, color);
+		ApplyVolumetricClouds(ScreenCoord, pos3D, color);
 	}
 #endif // EMITTEDPARTICLE_DISTORTION
 

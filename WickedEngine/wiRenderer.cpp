@@ -11792,6 +11792,8 @@ void BindCameraCB(
 	shadercam.texture_vxgi_specular_index = camera.texture_vxgi_specular_index;
 	shadercam.texture_reprojected_depth_index = camera.texture_reprojected_depth_index;
 	shadercam.texture_volumetricfroxels_index = camera.texture_volumetricfroxels_index;
+	shadercam.texture_volumetricclouds_index = camera.texture_volumetricclouds_index;
+	shadercam.texture_volumetricclouds_depth_index = camera.texture_volumetricclouds_depth_index;
 
 	device->BindDynamicConstantBuffer(cb, CBSLOT_RENDERER_CAMERA, cmd);
 }

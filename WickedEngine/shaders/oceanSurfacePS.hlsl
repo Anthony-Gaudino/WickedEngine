@@ -27,6 +27,7 @@
 #include "globals.hlsli"
 #include "oceanSurfaceHF.hlsli"
 #include "objectHF.hlsli"
+#include "volumetricCloudApplyHF.hlsli"
 
 Texture2D<float4> texture_ocean_displacementmap : register(t0);
 Texture2D<float4> texture_gradientmap : register(t1);
@@ -621,6 +622,7 @@ float4 main(PSIn input) : SV_TARGET
 				deepRefraction.rgb,
 				(half3)surface.refraction.rgb,
 				refractionReach);
+
 		}
 
 		water_depth = max(water_depth, -dot(float4(refraction_position, 1), water_plane));
@@ -896,6 +898,12 @@ float4 main(PSIn input) : SV_TARGET
 	// front of the water enters the pixel at all - and it enters down this
 	// pixel's own column, which is the one it was gathered along.
 	ApplyVolumetricLight(ScreenCoord, surface.P, color);
+
+	// The clouds are composited before the transparents, and the ocean is one -
+	// so it paints over them and stands out of a cloud that has swallowed the
+	// land around it. Laid over this fragment here instead, where the share in
+	// front of THIS surface is what is asked for.
+	ApplyVolumetricClouds(ScreenCoord, surface.P, color);
 
 #if OCEAN_VOLUMETRIC_DEBUG == 1
 	return float4((float3)abs(color.rgb - beforeVolumetricLight.rgb), 1);
