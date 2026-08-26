@@ -461,13 +461,17 @@ float4 main(PSIn input) : SV_TARGET
 		// which clips at zero and draws the silhouette as a bright edge. The
 		// haze grows with distance, so the nearer of the two depths is the
 		// bound, and asking at it is the whole of the correction.
+		// Whether what the lookup landed on stands nearer to the eye than the
+		// water being shaded - the eye's own side of this surface. Asked once
+		// and used twice: it bounds the share removed just below, and it
+		// condemns the sample outright further down.
 		const float3 eyeToCopy = refraction_position - GetCamera().position;
+		const bool sampleInFront = dot(eyeToCopy, eyeToCopy) < dist * dist;
+
 		half4 inFrontOfWater = 0;
 		ApplyVolumetricLight(
 			refraction_uv,
-			dot(eyeToCopy, eyeToCopy) < dist * dist
-				? refraction_position
-				: surface.P,
+			sampleInFront ? refraction_position : surface.P,
 			inFrontOfWater);
 
 		surface.refraction.rgb =
@@ -506,29 +510,39 @@ float4 main(PSIn input) : SV_TARGET
 
 		const WaterVolumetrics refractionMedium = MakeWaterVolumetrics(1);
 
+		// Whether what the lookup landed on stands above the water at all. A
+		// ray refracted into the surface from outside is bent towards the
+		// vertical and goes down, so nothing above the surface is ever on the
+		// far end of one.
+		const bool sampleAboveWater = refraction_position.y >
+			ocean_drawn_surface_height(refraction_position);
+
 		// **Nothing arrives from there at all**, said three ways at once,
 		// because no two of them are enough on their own:
 		//
-		// - It stands ABOVE the water. A ray refracted into the surface from
-		//   outside is bent towards the vertical and goes down; it cannot climb
-		//   back into the air to fetch this.
-		// - The straight path to it crosses NO water. So it is not being seen
-		//   through the sea at all - it is off in the air on the eye's own side
-		//   of the interface, which is how sky above the horizon reaches this
-		//   lookup while every crest between them is missed entirely.
+		// - It stands ABOVE the water, so no refracted ray reaches it.
+		// - It cannot be reached: either the straight path crosses NO water, so
+		//   it is off in the air on the eye's own side of the interface - which
+		//   is how sky above the horizon reaches this lookup while every crest
+		//   between them is missed - or it stands NEARER than the surface,
+		//   which is the same side reached the other way round. A refracted ray
+		//   descends and travels away; it cannot fetch something back towards
+		//   the eye, which is how a distant crest ends up wearing a cube that
+		//   floats far in front of it. The two catch different things: that
+		//   cube has water in the way and passes the first, and a dinghy
+		//   genuinely beyond a thin crest is not nearer and passes the second.
 		// - It lies beyond `VisibleRange`. Even granting a path, nothing
 		//   survives that far.
 		//
 		// Any two without the third condemns something real. A dinghy just past
 		// a thin crest is above the water and far off, but the path to it
 		// crosses the crest, and it is genuinely visible through it. A beach at
-		// the waterline is above the water and has no water in front of it, but
-		// it is right there, and refusing it paints a dark band along every
-		// shore.
+		// the waterline is above the water and stands in front of the water it
+		// meets, but it is right there, and refusing it paints a dark line
+		// along every shore.
 		const bool refractionUnreachable =
-			refraction_position.y >
-				ocean_drawn_surface_height(refraction_position)
-			&& refractionWater <= 0
+			sampleAboveWater
+			&& (refractionWater <= 0 || sampleInFront)
 			&& distance(refraction_position, surface.P) >
 				refractionMedium.VisibleRange();
 
