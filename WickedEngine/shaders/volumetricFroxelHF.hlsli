@@ -184,14 +184,14 @@ inline bool VolumetricFroxelCarriesTheSun()
  * all the sky - which the water correctly extinguishes to nothing - comes back
  * carrying an entire atmosphere's haze.
  *
- * Judged throughout on the same graded submersion the volume is filled with,
- * rather than on the sign of the eye's height, because that is what decides
- * which medium the column holds. Both the side the ray starts on and the fade
- * between the two answers come from it: a column already full of water is being
- * read all the way down exactly as it should be, and the two must change over
- * together or a camera crossing the waterline drops the near stretch of its own
- * shafts - or, asking the camera's own point instead, drops the whole air
- * column of every ray that was looking up.
+ * **Which side the ray starts on comes from the camera's own height; the fade
+ * between the two answers comes from the pixel.** They are different questions
+ * and only one of them the pixel can answer. Where a ray starts is a fact about
+ * the eye, and the pixel's probe reads a point a hand's breadth ahead of the
+ * near plane - so a ray pointing up out of a trough reports air while the eye
+ * is under it. The fade is the opposite: it is what sweeps the waterline down
+ * the screen instead of snapping it, and only the pixel knows where that line
+ * falls.
  *
  * @param[in] screenUV - Screen space position of the fragment (0-1).
  * @param[in] fragmentPosition - World position of the fragment.
@@ -202,8 +202,9 @@ inline bool VolumetricFroxelCarriesTheSun()
  *         `distanceToEye` wherever the ray stays in one medium.
  *
  * @note Costs two surface height samples in a scene that has an ocean, and the
- *       pixel's own submersion - an unprojection and a third sample - only once
- *       the camera is at or below the surface at all.
+ *       pixel's own submersion - an unprojection and a third sample - only for
+ *       a dry eye looking at something submerged, which is the one case that
+ *       has a waterline to sweep.
  */
 inline float VolumetricFroxelColumnLength(
 	in float2 screenUV, in float3 fragmentPosition, in float distanceToEye
@@ -220,24 +221,28 @@ inline float VolumetricFroxelColumnLength(
 	const float fragmentHeight =
 		fragmentPosition.y - ocean_drawn_surface_height(fragmentPosition);
 
-	// **The eye's side is asked PER PIXEL, the way the volume's own medium is.**
-	// The volume holds one medium for a whole column and chooses it from this
-	// same test, so which side the ray STARTS on has to be the same question or
-	// the two disagree exactly while the camera straddles the surface: the
-	// camera's own point goes under while every column looking upwards is still
-	// air, and this then reads those rays as crossing out of water a hand's
-	// breadth ahead and cuts them there - discarding the whole air column above
-	// and taking the sky's haze and shafts with it.
+	// **An eye under the surface reads the whole of its column, whichever way
+	// the ray points.** The volume fills a column with one medium and describes
+	// it from the eye onwards: a column it filled with water is water all the
+	// way down, and one it filled with air is the air a ray leaving the surface
+	// looks up through. Neither stops being described part way along.
 	//
-	// The camera's own height still rejects the dry case cheaply, so nothing
-	// pays for the unprojection until the camera is at the surface at all.
-	const half eyeSubmersion = eyeHeight < 0
-		? (half)ocean_underwater_factor(screenUV)
-		: (half)0;
-
-	// Both ends in the same medium, so nothing on this ray is misdescribed.
+	// **Asked of the camera's own height, never of the pixel's probe.** That
+	// probe samples a point a hand's breadth ahead of the near plane, so a ray
+	// pointing upwards out of a trough reports air while the eye is plainly
+	// under - and cutting on it discards the water that ray really crosses,
+	// which is most of what it was looking through.
 	[branch]
-	if ((eyeSubmersion > 0) == (fragmentHeight < 0))
+	if (eyeHeight < 0)
+	{
+		return distanceToEye;
+	}
+
+	// Both ends dry, so nothing on this ray is misdescribed. Rejected here
+	// rather than by the arithmetic below so that a scene with an ocean nobody
+	// is looking through pays no unprojection.
+	[branch]
+	if (fragmentHeight >= 0)
 	{
 		return distanceToEye;
 	}
@@ -254,7 +259,9 @@ inline float VolumetricFroxelColumnLength(
 	const float crossing = distanceToEye * saturate(abs(eyeHeight)
 		/ max(abs(eyeHeight) + abs(fragmentHeight), 0.00001));
 
-	return lerp(crossing, distanceToEye, eyeSubmersion);
+	// Faded on the pixel's own submersion, which is what sweeps the waterline
+	// down the screen as the camera comes down to meet it.
+	return lerp(crossing, distanceToEye, ocean_underwater_factor(screenUV));
 }
 
 /**
