@@ -438,6 +438,9 @@ float4 main(PSIn input) : SV_TARGET
 		}
 
 		surface.refraction.rgb = texture_refraction.SampleLevel(sampler_linear_mirror, refraction_uv, 0).rgb;
+		// Recompute depth params again with actual perturbation:
+		refraction_depth = texture_depth.SampleLevel(sampler_point_clamp, refraction_uv, 0);
+		refraction_position = reconstruct_position(refraction_uv, refraction_depth);
 
 		// **What the copy carries from IN FRONT of the water must not bend with
 		// it.** The copy holds the light scattered along its whole column, and
@@ -447,21 +450,28 @@ float4 main(PSIn input) : SV_TARGET
 		// the crests into a lamp's glow.
 		//
 		// Taken out here at the UV it was gathered at, and put back by
-		// `ApplyVolumetricLight` below at the UV it belongs to. The applier
-		// over a zero colour returns exactly the term to remove.
+		// `ApplyVolumetricLight` below at the UV it belongs to. What is left is
+		// the share scattered BEHIND this surface, which is the only part of it
+		// the water is entitled to bend.
 		//
-		// Exact only where the two columns agree, which is everywhere but a
-		// silhouette: there the copy's column ended somewhere else entirely and
-		// a thin edge of its own haze survives. That is the screen space
-		// lookup's limit, not this subtraction's.
+		// **Never more than that column held.** The share is measured out to
+		// this surface's own depth, but the sample's column ended wherever its
+		// own content stands - and at a silhouette that is far nearer. Taking
+		// the surface's share there removes light the sample never carried,
+		// which clips at zero and draws the silhouette as a bright edge. The
+		// haze grows with distance, so the nearer of the two depths is the
+		// bound, and asking at it is the whole of the correction.
+		const float3 eyeToCopy = refraction_position - GetCamera().position;
 		half4 inFrontOfWater = 0;
-		ApplyVolumetricLight(refraction_uv, surface.P, inFrontOfWater);
+		ApplyVolumetricLight(
+			refraction_uv,
+			dot(eyeToCopy, eyeToCopy) < dist * dist
+				? refraction_position
+				: surface.P,
+			inFrontOfWater);
 
 		surface.refraction.rgb =
 			max(0, surface.refraction.rgb - inFrontOfWater.rgb);
-		// Recompute depth params again with actual perturbation:
-		refraction_depth = texture_depth.SampleLevel(sampler_point_clamp, refraction_uv, 0);
-		refraction_position = reconstruct_position(refraction_uv, refraction_depth);
 		// **What the copy hands back is dimmed by the water between it and this
 		// surface, and by nothing else.** A screen space lookup has no idea
 		// what lies along the way to whatever it landed on, and the copy is
