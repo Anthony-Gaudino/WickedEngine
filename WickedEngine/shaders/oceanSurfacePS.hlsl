@@ -377,13 +377,6 @@ float4 main(PSIn input) : SV_TARGET
 
 	float water_depth = FLT_MAX;
 
-	// **How much of the refraction genuinely came from the scene copy.** Where
-	// the water answers for itself the rest of it did not, and a term the
-	// shader synthesised carries none of the light the copy was drawn with.
-	// 1 wherever nothing was substituted, which is every case but the deep
-	// column below.
-	half3 refractionCopyShare = 1;
-
 	[branch]
 	if (camera.texture_refraction_index >= 0)
 	{
@@ -443,7 +436,29 @@ float4 main(PSIn input) : SV_TARGET
 			// Perturbation according to the water the first sample is behind:
 			refraction_uv = ScreenCoord.xy + surface.N.xz * bump_strength * saturate(1 - exp(-refracted_water));
 		}
+
 		surface.refraction.rgb = texture_refraction.SampleLevel(sampler_linear_mirror, refraction_uv, 0).rgb;
+
+		// **What the copy carries from IN FRONT of the water must not bend with
+		// it.** The copy holds the light scattered along its whole column, and
+		// the near stretch of that column never entered the water at all - it
+		// is the haze between the eye and this surface. Read through a
+		// refracted UV it is dragged sideways by the wave normal, which draws
+		// the crests into a lamp's glow.
+		//
+		// Taken out here at the UV it was gathered at, and put back by
+		// `ApplyVolumetricLight` below at the UV it belongs to. The applier
+		// over a zero colour returns exactly the term to remove.
+		//
+		// Exact only where the two columns agree, which is everywhere but a
+		// silhouette: there the copy's column ended somewhere else entirely and
+		// a thin edge of its own haze survives. That is the screen space
+		// lookup's limit, not this subtraction's.
+		half4 inFrontOfWater = 0;
+		ApplyVolumetricLight(refraction_uv, surface.P, inFrontOfWater);
+
+		surface.refraction.rgb =
+			max(0, surface.refraction.rgb - inFrontOfWater.rgb);
 		// Recompute depth params again with actual perturbation:
 		refraction_depth = texture_depth.SampleLevel(sampler_point_clamp, refraction_uv, 0);
 		refraction_position = reconstruct_position(refraction_uv, refraction_depth);
@@ -582,10 +597,6 @@ float4 main(PSIn input) : SV_TARGET
 				deepRefraction.rgb,
 				(half3)surface.refraction.rgb,
 				refractionReach);
-
-			// The blend above is exactly how much of this term the copy
-			// supplied, so it is exactly how much of it arrives already lit.
-			refractionCopyShare = refractionReach;
 		}
 
 		water_depth = max(water_depth, -dot(float4(refraction_position, 1), water_plane));
@@ -856,18 +867,11 @@ float4 main(PSIn input) : SV_TARGET
 	const half4 beforeVolumetricLight = color;
 #endif // OCEAN_VOLUMETRIC_DEBUG == 1
 
-	// **Only the share that came from the COPY is already lit.** The copy was
-	// drawn with the volumetric light in it, so that much of this pixel must
-	// not be lit again. What the water answered for itself was never drawn at
-	// all: it carries none, and withholding the light from it leaves the ocean
-	// a hole in the volume - darker than everything around it precisely where
-	// the water is deep enough to have nothing behind it.
-	ApplyVolumetricLight(
-		ScreenCoord,
-		surface.P,
-		(half3)((1 - surface.F) * surface.refraction.a * refractionCopyShare),
-		color
-	);
+	// **Nothing is withheld here.** The share the copy carried was taken back
+	// out of it where it was sampled, so this is the only place the light in
+	// front of the water enters the pixel at all - and it enters down this
+	// pixel's own column, which is the one it was gathered along.
+	ApplyVolumetricLight(ScreenCoord, surface.P, color);
 
 #if OCEAN_VOLUMETRIC_DEBUG == 1
 	return float4((float3)abs(color.rgb - beforeVolumetricLight.rgb), 1);
