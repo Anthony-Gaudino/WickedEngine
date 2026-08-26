@@ -94,15 +94,35 @@ float4 main(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
 		}
 	}
 
-	// The water between the clouds and the eye. They are blended over the scene
-	// after the sky, so without this they overwrite the sky's fog and leave a
-	// bright unfogged band at the horizon.
+	// **Where the cloud actually is**, from the distance the cloud pass itself
+	// measured and writes into `.r` - the same `tDepth` it uses to place the
+	// cloud in the world. Everything below is a segment between the eye and
+	// this point, so it has to be the cloud and not a stand-in for it.
 	//
-	// **Measured to the far plane, never to the depth buffer's position.** A
-	// cloud is kilometres off and the depth buffer holds whatever opaque thing
-	// stands in front of it, so measuring to that puts the cloud wherever the
-	// sea bed is - and flying over the ocean then absorbs every cloud in front
-	// of the water away to nothing.
+	// **Never the far plane.** That point lies at whatever the ray would
+	// eventually meet, which looking down at the sea is the bottom of it: the
+	// segment then plunges the whole depth of the ocean and the cloud arrives
+	// fogged as though it lay on the sea bed, invisible against the water and
+	// sea-coloured against the land.
+	//
+	// **Never the depth buffer's position either.** That holds whatever opaque
+	// thing stands in front of the cloud, so a cloud kilometres off is put
+	// wherever the shore happens to be.
+	//
+	// `FLT_MAX` where the pass found no cloud, which the far plane bounds.
+	// Those pixels carry no cloud to fog.
+	const float3 towardsCloud =
+		reconstruct_position(uv, 0) - GetCamera().position;
+
+	const float3 cloudPosition = mad(
+		min(cloud_depth_current.SampleLevel(sampler_linear_clamp, uv, 0).r,
+			GetCamera().z_far),
+		normalize(towardsCloud),
+		GetCamera().position);
+
+	// The water between the cloud and the eye. Clouds are blended over the
+	// scene after the sky, so without this they overwrite the sky's fog and
+	// leave a bright unfogged band at the horizon.
 	//
 	// **Traced, not solved between the ends.** The cheap form takes the surface
 	// between eye and cloud to be the straight line joining their heights, and
@@ -110,23 +130,14 @@ float4 main(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target
 	// between the two is not there and the cloud arrives at full brightness
 	// through the crest in front of it. Only a trace can find a crest that the
 	// ends know nothing about.
-	//
-	// **A cloud is not under the water**, which is what the zero height says,
-	// and it has to be said even though the position is now the cloud's own. A
-	// ray dipping towards the horizon puts that far plane point BELOW the
-	// surface, and the fog then describes the cloud as something submerged -
-	// taking the refracted leg, the path for light climbing out of the water,
-	// whose depth for a near horizontal ray is almost nothing, so the cloud
-	// arrives undimmed.
-	const float3 cloudPosition = reconstruct_position(uv, 0);
 	ApplyWaterFogPremultiplied(
-		GetWaterFog(uv, cloudPosition, 0, true), result);
+		GetWaterFog(
+			uv,
+			cloudPosition,
+			cloudPosition.y - ocean_drawn_surface_height(cloudPosition),
+			true),
+		result);
 
-	// Sampled on the far plane, not at the depth buffer's position. A cloud is
-	// kilometres away and the volume ends long before it, so the far plane and
-	// the cloud read the same texel - the whole column the volume holds - while
-	// the depth buffer's position would hand the cloud the light gathered as
-	// far as whatever opaque thing happens to stand in front of it.
 	ApplyVolumetricLightPremultiplied(uv, cloudPosition, result);
 
 	return result;
