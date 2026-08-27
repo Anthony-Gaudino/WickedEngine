@@ -438,10 +438,42 @@ float4 main(PSIn input) : SV_TARGET
 			refraction_uv = ScreenCoord.xy + surface.N.xz * bump_strength * saturate(1 - exp(-refracted_water));
 		}
 
-		surface.refraction.rgb = texture_refraction.SampleLevel(sampler_linear_mirror, refraction_uv, 0).rgb;
-		// Recompute depth params again with actual perturbation:
+		// **Depth before colour**, so a lookup that landed on the wrong side of
+		// this surface can be moved before its colour is ever read.
 		refraction_depth = texture_depth.SampleLevel(sampler_point_clamp, refraction_uv, 0);
 		refraction_position = reconstruct_position(refraction_uv, refraction_depth);
+
+		// **What stands nearer to the eye than this surface is not behind it.**
+		// The lookup is displaced across the screen by the wave normal, so it
+		// lands wherever that normal sends it, and what is drawn there may be
+		// on the eye's own side of this water - a cube floating in front of the
+		// crest, or one submerged in a crest between here and the eye. A
+		// refracted ray descends and travels AWAY; it cannot fetch either of
+		// them back.
+		//
+		// **Corrected rather than refused.** The pixel's own line of sight is a
+		// lookup that is valid by construction - whatever the water covers here
+		// is behind it - so it is read instead. Refusing outright is the older
+		// answer and it is worse: what stands in for a refusal is a column of
+		// water that never ends, which is right in the open sea and plainly
+		// wrong in ankle deep water at a beach, where it paints a dark line
+		// along the coast.
+		//
+		// The offender sits at the DISPLACED position, so the straight one is
+		// clear of it. That is what separates this from sampling straight
+		// through an OCCLUDED hit, where the occluder is at the straight
+		// position and reading it draws the thing twice.
+		[branch]
+		if (dot(refraction_position - GetCamera().position,
+				refraction_position - GetCamera().position) < dist * dist)
+		{
+			refraction_uv = ScreenCoord.xy;
+			refraction_depth = texture_depth.SampleLevel(sampler_point_clamp, refraction_uv, 0);
+			refraction_position = reconstruct_position(refraction_uv, refraction_depth);
+		}
+
+
+		surface.refraction.rgb = texture_refraction.SampleLevel(sampler_linear_mirror, refraction_uv, 0).rgb;
 
 		// **What the copy carries from IN FRONT of the water must not bend with
 		// it.** The copy holds the light scattered along its whole column, and
@@ -462,10 +494,11 @@ float4 main(PSIn input) : SV_TARGET
 		// which clips at zero and draws the silhouette as a bright edge. The
 		// haze grows with distance, so the nearer of the two depths is the
 		// bound, and asking at it is the whole of the correction.
-		// Whether what the lookup landed on stands nearer to the eye than the
-		// water being shaded - the eye's own side of this surface. Asked once
-		// and used twice: it bounds the share removed just below, and it
-		// condemns the sample outright further down.
+		//
+		// Still asked after the correction above, because a straight lookup can
+		// land on something nearer too - the water covering a pixel that a
+		// foreground object also covers - and that is the case the refusal
+		// further down is left to answer.
 		const float3 eyeToCopy = refraction_position - GetCamera().position;
 		const bool sampleInFront = dot(eyeToCopy, eyeToCopy) < dist * dist;
 
@@ -518,32 +551,30 @@ float4 main(PSIn input) : SV_TARGET
 		const bool sampleAboveWater = refraction_position.y >
 			ocean_drawn_surface_height(refraction_position);
 
-		// **Nothing arrives from there at all**, said three ways at once,
-		// because no two of them are enough on their own:
+		// **Nothing arrives from there at all**, by either of two routes, and
+		// only past the range where anything could have survived the trip.
 		//
-		// - It stands ABOVE the water, so no refracted ray reaches it.
-		// - It cannot be reached: either the straight path crosses NO water, so
-		//   it is off in the air on the eye's own side of the interface - which
-		//   is how sky above the horizon reaches this lookup while every crest
-		//   between them is missed - or it stands NEARER than the surface,
-		//   which is the same side reached the other way round. A refracted ray
-		//   descends and travels away; it cannot fetch something back towards
-		//   the eye, which is how a distant crest ends up wearing a cube that
-		//   floats far in front of it. The two catch different things: that
-		//   cube has water in the way and passes the first, and a dinghy
-		//   genuinely beyond a thin crest is not nearer and passes the second.
-		// - It lies beyond `VisibleRange`. Even granting a path, nothing
-		//   survives that far.
+		// - It stands NEARER to the eye than this surface. A refracted ray
+		//   descends and travels AWAY, so it cannot fetch something back
+		//   towards the eye - whichever side of the water that something is on.
+		//   This is a distant crest wearing a cube that floats in front of it,
+		//   and equally an object submerged in a NEARER crest: being under the
+		//   water does not put it on the far side of this one.
+		// - Or it stands ABOVE the water AND the straight path to it crosses NO
+		//   water, so it is off in the air on the eye's own side of the
+		//   interface - which is how sky above the horizon reaches this lookup
+		//   while every crest between them is missed entirely. Both halves are
+		//   needed on this route: above alone condemns whatever genuinely
+		//   stands beyond a thin crest, which IS seen through it.
 		//
-		// Any two without the third condemns something real. A dinghy just past
-		// a thin crest is above the water and far off, but the path to it
-		// crosses the crest, and it is genuinely visible through it. A beach at
-		// the waterline is above the water and stands in front of the water it
-		// meets, but it is right there, and refusing it paints a dark line
-		// along every shore.
+		// **The range guard is what spares the shore**, and it holds over both
+		// routes. A beach at the waterline stands above the water and in front
+		// of the water it meets, so it answers to either - but it is right
+		// there, and refusing it paints a dark line along every coast.
+		// `VisibleRange` narrows as the water thickens, so the guard is
+		// tightest in the murkiest preset and that is where it is checked.
 		const bool refractionUnreachable =
-			sampleAboveWater
-			&& (refractionWater <= 0 || sampleInFront)
+			(sampleInFront || (sampleAboveWater && refractionWater <= 0))
 			&& distance(refraction_position, surface.P) >
 				refractionMedium.VisibleRange();
 
