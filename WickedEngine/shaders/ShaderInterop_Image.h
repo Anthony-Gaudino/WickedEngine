@@ -19,23 +19,41 @@ enum IMAGE_FLAGS
 	IMAGE_FLAG_GRADIENT_LINEAR = 1u << 12u,
 	IMAGE_FLAG_GRADIENT_LINEAR_REFLECTED = 1u << 13u,
 	IMAGE_FLAG_GRADIENT_CIRCULAR = 1u << 14u,
-	// Fog this draw with the ocean's water. Set only for sprites drawn into the
+
+	FONT_FLAG_ISFONT = 1u << 15u,
+	FONT_FLAG_SDF_RENDERING = 1u << 16u,
+	FONT_FLAG_OUTPUT_COLOR_SPACE_HDR10_ST2084 = 1u << 17u,
+	FONT_FLAG_OUTPUT_COLOR_SPACE_LINEAR = 1u << 18u,
+
+	// The flags below apply to a font draw as much as an image one, this
+	// shader drawing both. A glyph standing in the world is fogged and clipped
+	// by the water exactly as a sprite is.
+
+	// Fog this draw with the ocean's water. Set only for draws made into the
 	// scene: this same shader is every 2D UI element, every post-process blit
 	// and the final compose, none of which are in the world at all.
-	IMAGE_FLAG_UNDERWATER_FOG = 1u << 15u,
+	IMAGE_FLAG_UNDERWATER_FOG = 1u << 19u,
 	// ...and this draw is additive, so it takes the extinction only.
-	IMAGE_FLAG_UNDERWATER_FOG_ADDITIVE = 1u << 16u,
+	IMAGE_FLAG_UNDERWATER_FOG_ADDITIVE = 1u << 20u,
 	// Keep only the half of this draw on one side of the ocean surface. The
 	// transparent pass issues a scene sprite twice, once on each side of the
 	// water, so that a sprite crossing the waterline is refracted below it and
 	// dry above it. Exactly one of the two is set, or neither.
-	IMAGE_FLAG_WATERSIDE_BEYOND = 1u << 17u,
-	IMAGE_FLAG_WATERSIDE_NEAR = 1u << 18u,
+	IMAGE_FLAG_WATERSIDE_BEYOND = 1u << 21u,
+	IMAGE_FLAG_WATERSIDE_NEAR = 1u << 22u,
 	// Clip this draw against the camera's clip plane, for a planar reflection.
-	// Set only for sprites drawn into the scene: a full screen blit issued
-	// during the same pass has no world position to test.
-	IMAGE_FLAG_CLIP_PLANE = 1u << 19u,
+	// Set only for draws made into the scene: a full screen blit issued during
+	// the same pass has no world position to test.
+	IMAGE_FLAG_CLIP_PLANE = 1u << 23u,
 };
+
+namespace SDF
+{
+	static const uint padding = 5;
+	static const uint onedge_value = 127;
+	static const float onedge_value_unorm = float(onedge_value) / 255.0f;
+	static const float pixel_dist_scale = float(onedge_value) / float(padding);
+}
 
 struct alignas(16) ImageConstants
 {
@@ -74,7 +92,15 @@ struct alignas(16) ImageConstants
 	uint2 gradient_color; // packed half4
 	uint gradient_uv_start; // packed half2
 	uint gradient_uv_end; // packed half2
+
+	float4x4 transform;
+
+	inline bool IsFont() { return flags & FONT_FLAG_ISFONT; }
 };
+#ifdef __cplusplus
+static_assert(sizeof(ImageConstants) <= 256); // fit into one cb alloc dx12
+#endif // __cplusplus
+
 CONSTANTBUFFER(image, ImageConstants, CBSLOT_IMAGE);
 
 #endif // WI_SHADERINTEROP_IMAGE_H

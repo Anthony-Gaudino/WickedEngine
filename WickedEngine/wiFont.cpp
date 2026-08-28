@@ -2,7 +2,7 @@
 #include "wiRenderer.h"
 #include "wiResourceManager.h"
 #include "wiHelper.h"
-#include "shaders/ShaderInterop_Font.h"
+#include "shaders/ShaderInterop_Image.h"
 #include "wiBacklog.h"
 #include "wiTextureHelper.h"
 #include "wiRectPacker.h"
@@ -14,6 +14,7 @@
 #include "wiUnorderedSet.h"
 #include "wiVector.h"
 #include "wiMath.h"
+#include "wiImage.h"
 
 #include "Utility/liberation_sans.h"
 #include "Utility/stb_truetype.h"
@@ -28,20 +29,6 @@ namespace wi::font
 {
 	namespace font_internal
 	{
-		enum DEPTH_TEST_MODE
-		{
-			DEPTH_TEST_OFF,
-			DEPTH_TEST_ON,
-			DEPTH_TEST_MODE_COUNT
-		};
-		static BlendState blendState;
-		static RasterizerState rasterizerState;
-		static DepthStencilState depthStencilStates[DEPTH_TEST_MODE_COUNT];
-
-		static Shader vertexShader;
-		static Shader pixelShader;
-		static PipelineState PSO[DEPTH_TEST_MODE_COUNT];
-
 		static thread_local wi::Canvas canvas;
 
 		static Texture texture;
@@ -124,7 +111,7 @@ namespace wi::font
 			bool start_new_word = false;
 		};
 
-		static thread_local wi::vector<FontVertex> vertexList;
+		static thread_local wi::vector<XMFLOAT4> vertexList;
 		ParseStatus ParseText(const wchar_t* text, size_t text_length, const Params& params)
 		{
 			ParseStatus status;
@@ -141,11 +128,11 @@ namespace wi::font
 				if (status.last_word_begin > 0 && params.h_wrap >= 0 && status.cursor.position.x >= params.h_wrap - 1)
 				{
 					// Word ended and wrap detected, push down last word by one line:
-					const float word_offset = vertexList[status.last_word_begin].pos.x;
+					const float word_offset = vertexList[status.last_word_begin].x;
 					for (size_t i = status.last_word_begin; i < status.quadCount * 4; ++i)
 					{
-						vertexList[i].pos.x -= word_offset;
-						vertexList[i].pos.y += linebreak_size;
+						vertexList[i].x -= word_offset;
+						vertexList[i].y += linebreak_size;
 					}
 					status.cursor.position.x -= word_offset;
 					status.cursor.position.y += linebreak_size;
@@ -215,11 +202,6 @@ namespace wi::font
 					const float top = status.cursor.position.y + glyphOffsetY;
 					const float bottom = top + glyphHeight;
 
-					vertexList[vertexID + 0].pos = float2(left, top);
-					vertexList[vertexID + 1].pos = float2(right, top);
-					vertexList[vertexID + 2].pos = float2(left, bottom);
-					vertexList[vertexID + 3].pos = float2(right, bottom);
-
 					float tc_left = glyph.tc_left;
 					float tc_right = glyph.tc_right;
 					float tc_top = glyph.tc_top;
@@ -232,10 +214,11 @@ namespace wi::font
 					{
 						std::swap(tc_top, tc_bottom);
 					}
-					vertexList[vertexID + 0].uv = float2(tc_left, tc_top);
-					vertexList[vertexID + 1].uv = float2(tc_right, tc_top);
-					vertexList[vertexID + 2].uv = float2(tc_left, tc_bottom);
-					vertexList[vertexID + 3].uv = float2(tc_right, tc_bottom);
+
+					vertexList[vertexID + 0] = float4(left, top, tc_left, tc_top);
+					vertexList[vertexID + 1] = float4(right, top, tc_right, tc_top);
+					vertexList[vertexID + 2] = float4(left, bottom, tc_left, tc_bottom);
+					vertexList[vertexID + 3] = float4(right, bottom, tc_right, tc_bottom);
 
 					int advance, lsb;
 					stbtt_GetCodepointHMetrics(&glyph.fontStyle->fontInfo, code, &advance, &lsb);
@@ -272,29 +255,12 @@ namespace wi::font
 
 		void CommitText(void* vertexList_GPU)
 		{
-			std::memcpy(vertexList_GPU, vertexList.data(), sizeof(FontVertex) * vertexList.size());
+			std::memcpy(vertexList_GPU, vertexList.data(), sizeof(XMFLOAT4) * vertexList.size());
 		}
 
 	}
 	using namespace font_internal;
 
-	void LoadShaders()
-	{
-		wi::renderer::LoadShader(ShaderStage::VS, vertexShader, "fontVS.cso");
-		wi::renderer::LoadShader(ShaderStage::PS, pixelShader, "fontPS.cso");
-
-		for (int d = 0; d < DEPTH_TEST_MODE_COUNT; ++d)
-		{
-			PipelineStateDesc desc;
-			desc.vs = &vertexShader;
-			desc.ps = &pixelShader;
-			desc.bs = &blendState;
-			desc.dss = &depthStencilStates[d];
-			desc.rs = &rasterizerState;
-			desc.pt = PrimitiveTopology::TRIANGLESTRIP;
-			wi::graphics::GetDevice()->CreatePipelineState(&desc, &PSO[d]);
-		}
-	}
 	void Initialize()
 	{
 		wi::Timer timer;
@@ -306,43 +272,6 @@ namespace wi::font
 			helper::Decompress(liberation_sans_zstd, sizeof(liberation_sans_zstd), data);
 			AddFontStyle("Liberation Sans", data.data(), data.size(), true);
 		}
-
-		RasterizerState rs;
-		rs.fill_mode = FillMode::SOLID;
-		rs.cull_mode = CullMode::NONE;
-		rs.front_counter_clockwise = true;
-		rs.depth_bias = 0;
-		rs.depth_bias_clamp = 0;
-		rs.slope_scaled_depth_bias = 0;
-		rs.depth_clip_enable = false;
-		rs.multisample_enable = false;
-		rs.antialiased_line_enable = false;
-		rasterizerState = rs;
-
-		BlendState bd;
-		bd.render_target[0].blend_enable = true;
-		bd.render_target[0].src_blend = Blend::ONE; // premultiplied blending
-		bd.render_target[0].dest_blend = Blend::INV_SRC_ALPHA;
-		bd.render_target[0].blend_op = BlendOp::ADD;
-		bd.render_target[0].src_blend_alpha = Blend::ONE;
-		bd.render_target[0].dest_blend_alpha = Blend::INV_SRC_ALPHA;
-		bd.render_target[0].blend_op_alpha = BlendOp::ADD;
-		bd.render_target[0].render_target_write_mask = ColorWrite::ENABLE_ALL;
-		bd.independent_blend_enable = false;
-		blendState = bd;
-
-		DepthStencilState dsd;
-		dsd.depth_enable = false;
-		dsd.stencil_enable = false;
-		depthStencilStates[DEPTH_TEST_OFF] = dsd;
-
-		dsd.depth_enable = true;
-		dsd.depth_write_mask = DepthWriteMask::ZERO;
-		dsd.depth_func = ComparisonFunc::GREATER_EQUAL;
-		depthStencilStates[DEPTH_TEST_ON] = dsd;
-
-		static wi::eventhandler::Handle handle1 = wi::eventhandler::Subscribe(wi::eventhandler::EVENT_RELOAD_SHADERS, [](uint64_t userdata) { LoadShaders(); });
-		LoadShaders();
 
 		wilog("wi::font Initialized (%d ms)", (int)std::round(timer.elapsed()));
 	}
@@ -627,16 +556,17 @@ namespace wi::font
 		M = M * Projection;
 
 		GraphicsDevice* device = wi::graphics::GetDevice();
-		GraphicsDevice::GPUAllocation mem = device->AllocateGPU(sizeof(FontVertex) * status.quadCount * 4, cmd);
+		GraphicsDevice::GPUAllocation mem = device->AllocateGPU(sizeof(float4) * status.quadCount * 4, cmd);
 		if (!mem.IsValid())
 			return status.cursor;
 		CommitText(mem.data);
 
-		FontConstants font = {};
-		font.buffer_index = device->GetDescriptorIndex(&mem.buffer, SubresourceType::SRV);
-		font.buffer_offset = (uint)mem.offset;
-		font.texture_index = device->GetDescriptorIndex(&texture, SubresourceType::SRV);
-		if (font.buffer_index < 0 || font.texture_index < 0)
+		ImageConstants image = {};
+		image.flags = FONT_FLAG_ISFONT;
+		image.buffer_index = device->GetDescriptorIndex(&mem.buffer, SubresourceType::SRV);
+		image.buffer_offset = (uint)mem.offset;
+		image.texture_base_index = device->GetDescriptorIndex(&texture, SubresourceType::SRV);
+		if (image.buffer_index < 0 || image.texture_base_index < 0)
 			return status.cursor;
 
 		using namespace wi::math;
@@ -644,71 +574,78 @@ namespace wi::font
 		float softness = 0;
 		float bolden = 0;
 		float hdr_scaling = 1;
-		uint32_t flags = 0;
 		if (params.isSDFRenderingEnabled())
 		{
-			flags |= FONT_FLAG_SDF_RENDERING;
+			image.flags |= FONT_FLAG_SDF_RENDERING;
 		}
 		if (params.isHDR10OutputMappingEnabled())
 		{
-			flags |= FONT_FLAG_OUTPUT_COLOR_SPACE_HDR10_ST2084;
+			image.flags |= FONT_FLAG_OUTPUT_COLOR_SPACE_HDR10_ST2084;
 		}
 		if (params.isLinearOutputMappingEnabled())
 		{
-			flags |= FONT_FLAG_OUTPUT_COLOR_SPACE_LINEAR;
+			image.flags |= FONT_FLAG_OUTPUT_COLOR_SPACE_LINEAR;
+			hdr_scaling = params.hdr_scaling;
 		}
+		// The water flags live in the image renderer's enum, which the font
+		// renderer now shares - a glyph standing in the scene is fogged and
+		// clipped by exactly the same code a sprite is.
 		if (params.isUnderwaterFogEnabled())
 		{
-			flags |= FONT_FLAG_UNDERWATER_FOG;
-			hdr_scaling = params.hdr_scaling;
+			image.flags |= IMAGE_FLAG_UNDERWATER_FOG;
 		}
 		if (params.isWaterSideBeyond())
 		{
-			flags |= FONT_FLAG_WATERSIDE_BEYOND;
+			image.flags |= IMAGE_FLAG_WATERSIDE_BEYOND;
 		}
 		if (params.isWaterSideNear())
 		{
-			flags |= FONT_FLAG_WATERSIDE_NEAR;
+			image.flags |= IMAGE_FLAG_WATERSIDE_NEAR;
 		}
 		if (params.isClipPlaneEnabled())
 		{
-			flags |= FONT_FLAG_CLIP_PLANE;
+			image.flags |= IMAGE_FLAG_CLIP_PLANE;
 		}
 
 		device->EventBegin("Font", cmd);
 
-		device->BindPipelineState(&PSO[params.isDepthTestEnabled()], cmd);
+		const wi::image::DEPTH_TEST_MODE depth_test_mode = params.isDepthTestEnabled() ? wi::image::DEPTH_TEST_ON : wi::image::DEPTH_TEST_OFF;
+		const PipelineState* pso = wi::image::GetPSO(depth_test_mode, wi::enums::BLENDMODE_ALPHA, wi::image::STENCILMODE_DISABLED, wi::image::STENCILREFMODE_ALL);
+		assert(pso != nullptr);
+		assert(pso->IsValid());
+
+		device->BindPipelineState(pso, cmd);
 
 		if (params.shadowColor.getA() > 0)
 		{
 			// font shadow render:
-			XMStoreFloat4x4(&font.transform, XMMatrixTranslation(params.shadow_offset_x, params.shadow_offset_y, 0) * M);
+			XMStoreFloat4x4(&image.transform, XMMatrixTranslation(params.shadow_offset_x, params.shadow_offset_y, 0) * M);
 			color = params.shadowColor;
 			color.x *= params.shadow_intensity;
 			color.y *= params.shadow_intensity;
 			color.z *= params.shadow_intensity;
-			font.color = pack_half4(color);
+			image.packed_color = pack_half4(color);
 			bolden = params.shadow_bolden;
 			softness = params.shadow_softness * 0.5f;
-			font.softness_bolden_hdrscaling = pack_half3(softness, bolden, hdr_scaling);
-			font.softness_bolden_hdrscaling.y |= flags << 16u;
-			device->BindDynamicConstantBuffer(font, CBSLOT_FONT, cmd);
+			image.hdr_scaling_aspect = pack_half2(hdr_scaling, 0);
+			image.angular_softness_direction = pack_half2(softness, bolden);
+			device->BindDynamicConstantBuffer(image, CBSLOT_IMAGE, cmd);
 
 			device->DrawInstanced(4, status.quadCount, 0, 0, cmd);
 		}
 
 		// font base render:
-		XMStoreFloat4x4(&font.transform, M);
+		XMStoreFloat4x4(&image.transform, M);
 		color = params.color;
 		color.x *= params.intensity;
 		color.y *= params.intensity;
 		color.z *= params.intensity;
-		font.color = pack_half4(color);
+		image.packed_color = pack_half4(color);
 		bolden = params.bolden;
 		softness = params.softness * 0.5f;
-		font.softness_bolden_hdrscaling = pack_half3(softness, bolden, hdr_scaling);
-		font.softness_bolden_hdrscaling.y |= flags << 16u;
-		device->BindDynamicConstantBuffer(font, CBSLOT_FONT, cmd);
+		image.hdr_scaling_aspect = pack_half2(hdr_scaling, 0);
+		image.angular_softness_direction = pack_half2(softness, bolden);
+		device->BindDynamicConstantBuffer(image, CBSLOT_IMAGE, cmd);
 
 		device->DrawInstanced(4, status.quadCount, 0, 0, cmd);
 

@@ -259,6 +259,7 @@ namespace wi::renderer
 		wi::graphics::CommandList cmd
 	);
 
+	// Rebuild or update all required acceleration structures for the frame
 	void UpdateRaytracingAccelerationStructures(const wi::scene::Scene& scene, wi::graphics::CommandList cmd);
 
 	// Binds all common constant buffers and samplers that may be used in all shaders
@@ -622,8 +623,14 @@ namespace wi::renderer
 	// VXGI: Voxel-based Global Illumination (voxel cone tracing-based)
 	struct VXGIResources
 	{
+		// Full-resolution outputs, bilateral-upsampled from the half-res
+		// traces. These are what gets sampled during shading.
 		wi::graphics::Texture diffuse;
 		wi::graphics::Texture specular;
+		// Half-resolution cone-trace targets. The expensive cone tracing runs
+		// at half resolution here and is then upsampled into diffuse/specular.
+		wi::graphics::Texture diffuse_half;
+		wi::graphics::Texture specular_half;
 		mutable bool pre_clear = true;
 
 		bool IsValid() const { return diffuse.IsValid(); }
@@ -637,6 +644,7 @@ namespace wi::renderer
 	void VXGI_Resolve(
 		const VXGIResources& res,
 		const wi::scene::Scene& scene,
+		const wi::graphics::Texture& depth,
 		wi::graphics::CommandList cmd
 	);
 

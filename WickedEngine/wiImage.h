@@ -43,6 +43,12 @@ namespace wi::image
 		QUALITY_ANISOTROPIC,
 		QUALITY_COUNT
 	};
+	enum DEPTH_TEST_MODE
+	{
+		DEPTH_TEST_OFF,
+		DEPTH_TEST_ON,
+		DEPTH_TEST_MODE_COUNT
+	};
 
 	struct Params
 	{
@@ -277,5 +283,7 @@ namespace wi::image
 
 	// Initializes the image renderer
 	void Initialize();
+
+	const wi::graphics::PipelineState* GetPSO(DEPTH_TEST_MODE depth_test_mode, wi::enums::BLENDMODE blend_mode, STENCILMODE stencil_mode, STENCILREFMODE stencil_ref_mode);
 
 }

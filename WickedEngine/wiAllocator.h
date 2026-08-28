@@ -153,6 +153,8 @@ namespace wi::allocator
 		}
 		void copy(const shared_ptr& other)
 		{
+			if (this == &other)
+				return;
 			reset();
 			handle = other.handle;
 			if (IsValid())
@@ -229,6 +231,8 @@ namespace wi::allocator
 		}
 		void copy(const weak_ptr& other)
 		{
+			if (this == &other)
+				return;
 			reset();
 			handle = other.handle;
 			if (IsValid())

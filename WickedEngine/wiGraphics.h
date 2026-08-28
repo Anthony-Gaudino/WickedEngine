@@ -411,7 +411,6 @@ namespace wi::graphics
 		ALIASING_BUFFER = 1 << 8,			// memory allocation will be suitable for buffers
 		ALIASING_TEXTURE_NON_RT_DS = 1 << 9,// memory allocation will be suitable for textures that are non render targets nor depth stencils
 		ALIASING_TEXTURE_RT_DS = 1 << 10,	// memory allocation will be suitable for textures that are either render targets or depth stencils
-		ALIASING = ALIASING_BUFFER | ALIASING_TEXTURE_NON_RT_DS | ALIASING_TEXTURE_RT_DS, // memory allocation will be suitable for all kinds of resources. Requires GraphicsDeviceCapability::ALIASING_GENERIC to be supported
 		TYPED_FORMAT_CASTING = 1 << 11,	// enable casting formats between same type and different modifiers: eg. UNORM -> SRGB
 		TYPELESS_FORMAT_CASTING = 1 << 12,	// enable casting formats to other formats that have the same bit-width and channel layout: eg. R32_FLOAT -> R32_UINT
 		VIDEO_DECODE = 1 << 13,	// resource is usabe in video decoding operations (for buffers it is indicating a bitstream buffer, for textures it is a DPB and output texture if DPB_AND_OUTPUT_COINCIDE is supported)
@@ -422,12 +421,6 @@ namespace wi::graphics
 
 		VIDEO_COMPATIBILITY_H264 = 1 << 18,	// required for vulkan resource creation for every resource (bitstream buffer, DPB, output) that will be used in a H264 decode session
 		VIDEO_COMPATIBILITY_H265 = 1 << 19,	// required for vulkan resource creation for every resource (bitstream buffer, DPB, output) that will be used in a H265 decode session
-
-		// Compat:
-		SPARSE_TILE_POOL_BUFFER = ALIASING_BUFFER,
-		SPARSE_TILE_POOL_TEXTURE_NON_RT_DS = ALIASING_TEXTURE_NON_RT_DS,
-		SPARSE_TILE_POOL_TEXTURE_RT_DS = ALIASING_TEXTURE_RT_DS,
-		SPARSE_TILE_POOL = ALIASING,
 	};
 
 	enum class GraphicsDeviceCapability
@@ -2013,6 +2006,15 @@ namespace wi::graphics
 	//	plane can be specified optionally, the value ~0u means all planes
 	constexpr size_t ComputeTextureMemorySizeInBytes(const TextureDesc& desc, uint32_t plane = ~0u)
 	{
+		// An uninitialized / not-yet-created texture (e.g. a component whose
+		// GPU resource has not been built yet) has an UNKNOWN format and no
+		// memory footprint. Return early so we don't hit GetFormatStride's
+		// unhandled- format assert on a legitimately empty descriptor.
+		if (desc.format == Format::UNKNOWN)
+		{
+			return 0;
+		}
+
 		size_t size = 0;
 		const uint32_t bytes_per_block = GetFormatStride(desc.format, plane);
 		const uint32_t pixels_per_block = GetFormatBlockSize(desc.format);

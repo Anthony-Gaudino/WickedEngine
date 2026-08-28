@@ -1828,7 +1828,7 @@ namespace wi::terrain
 				}
 
 #ifndef NOSPARSE
-				tile_pool_desc.misc_flags = ResourceMiscFlag::SPARSE_TILE_POOL_TEXTURE_NON_RT_DS;
+				tile_pool_desc.misc_flags = ResourceMiscFlag::ALIASING_TEXTURE_NON_RT_DS;
 				bool success = device->CreateBuffer(&tile_pool_desc, nullptr, &atlas.tile_pool);
 				assert(success);
 #endif // NOSPARSE

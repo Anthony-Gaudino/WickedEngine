@@ -378,16 +378,6 @@ void HairParticleWindow::UpdateData()
 	ss += "Position format: " + std::string(wi::graphics::GetFormatString(hair->position_format)) + "\n";
 	ss += "Memory usage: " + wi::helper::GetMemorySizeText(hair->GetMemorySizeInBytes()) + "\n";
 
-	ss += "\nSuballocation offset: ";
-	if (hair->generalBufferOffsetAllocation.IsValid())
-	{
-		ss += wi::helper::GetMemorySizeText(hair->generalBufferOffsetAllocation.byte_offset);
-	}
-	else
-	{
-		ss += "suballocation is not used for this hair particle system";
-	}
-
 	infoLabel.SetText(ss);
 
 	meshComboBox.ClearItems();

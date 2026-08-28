@@ -459,8 +459,6 @@ void PaintToolWindow::UpdateData(float dt)
 	int substep_count = (int)std::ceil(wi::math::Distance(pos, posNew) / (radius * pressureNew));
 	substep_count = std::max(1, std::min(100, substep_count));
 
-	wi::jobsystem::context ctx;
-
 	for (int substep = 0; substep < substep_count; ++substep)
 	{
 		const float t = float(substep) / float(substep_count);
@@ -1030,18 +1028,16 @@ void PaintToolWindow::UpdateData(float dt)
 							}
 						}
 
-						wi::jobsystem::Execute(ctx, [=](wi::jobsystem::JobArgs args) {
-							if (mesh->bvh.IsValid())
-							{
-								mesh->BuildBVH();
-							}
+						if (mesh->bvh.IsValid())
+						{
+							mesh->BuildBVH();
+						}
 
-							if (chunk_data != nullptr)
-							{
-								chunk_data->heightmap = {};
-								terrain->CreateChunkRegionTexture(*chunk_data);
-							}
-						});
+						if (chunk_data != nullptr)
+						{
+							chunk_data->heightmap = {};
+							terrain->CreateChunkRegionTexture(*chunk_data);
+						}
 					}
 				}
 
@@ -1091,9 +1087,7 @@ void PaintToolWindow::UpdateData(float dt)
 
 				if (rebuild)
 				{
-					wi::jobsystem::Execute(ctx, [=](wi::jobsystem::JobArgs args) {
-						mesh->ComputeNormals(MeshComponent::COMPUTE_NORMALS_SMOOTH_FAST);
-					});
+					mesh->ComputeNormals(MeshComponent::COMPUTE_NORMALS_SMOOTH_FAST);
 				}
 			}
 		}
@@ -1348,8 +1342,6 @@ void PaintToolWindow::UpdateData(float dt)
 		break;
 
 		}
-
-		wi::jobsystem::Wait(ctx);
 	}
 
 	while (strokes.size() > stabilizer)

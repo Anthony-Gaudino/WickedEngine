@@ -95,8 +95,6 @@ namespace wi
 		constantBuffer = {};
 		constantBufferData = {}; // force a re-upload into the recreated buffer
 		generalBuffer = {};
-		generalBufferOffsetAllocation = {};
-		generalBufferOffsetAllocationAlias = {};
 		simulation_view = {};
 		vb_pos[0] = {};
 		vb_pos[1] = {};
@@ -169,24 +167,10 @@ namespace wi
 				align(prim_view.size, alignment) +
 				align(vb_pos_raytracing.size, alignment)
 				;
-#if 0 // Suballocation is disabled for hair particle system for now, there is some memory overwrite-like issue somewhere
-			wi::renderer::BufferSuballocation suballoc = wi::renderer::SuballocateGPUBuffer(bd.size);
-			if (suballoc.IsValid())
-			{
-				bool success = device->CreateBuffer(&bd, nullptr, &generalBuffer, &suballoc.alias, suballoc.allocation.byte_offset);
-				assert(success);
-				device->SetName(&generalBuffer, "HairParticleSystem::generalBuffer (suballocated)");
-				generalBufferOffsetAllocation = std::move(suballoc.allocation);
-				generalBufferOffsetAllocationAlias = std::move(suballoc.alias);
-			}
-			else
-#endif
-			{
-				// If suballocation was not successful, a standalone buffer can be created instead:
-				bool success = device->CreateBuffer(&bd, nullptr, &generalBuffer);
-				assert(success);
-				device->SetName(&generalBuffer, "HairParticleSystem::generalBuffer");
-			}
+
+			bool success = device->CreateBuffer(&bd, nullptr, &generalBuffer);
+			assert(success);
+			device->SetName(&generalBuffer, "HairParticleSystem::generalBuffer");
 			gpu_initialized = false;
 
 			uint64_t buffer_offset = 0ull;

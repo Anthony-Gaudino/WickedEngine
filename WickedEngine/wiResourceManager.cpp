@@ -13,6 +13,20 @@
 #include <mutex>
 #include <unordered_map>
 
+#ifdef _WIN32
+#include <wrl/client.h>
+#include <wincodec.h>
+#pragma comment(lib, "windowscodecs.lib")
+#include <shlwapi.h>
+#pragma comment(lib, "Shlwapi.lib")
+#endif // _WIN32
+
+#ifdef __APPLE__
+#include <ImageIO/ImageIO.h>
+#include <CoreFoundation/CoreFoundation.h>
+#include <CoreGraphics/CoreGraphics.h>
+#endif // __APPLE__
+
 using namespace wi::graphics;
 
 //#define RESOURCE_LOGGING
@@ -245,6 +259,8 @@ namespace wi
 			{"DDS", DataType::IMAGE},
 			{"TGA", DataType::IMAGE},
 			{"HDR", DataType::IMAGE},
+			{"HEIC", DataType::IMAGE},
+			{"HEIF", DataType::IMAGE},
 			{"WAV", DataType::SOUND},
 			{"OGG", DataType::SOUND},
 			{"LUA", DataType::SCRIPT},
@@ -685,8 +701,67 @@ namespace wi
 					Format bc_format = Format::BC3_UNORM;
 					Swizzle swizzle = { ComponentSwizzle::R, ComponentSwizzle::G, ComponentSwizzle::B, ComponentSwizzle::A };
 
-					void* rgba;
-					if (!has_flag(flags, Flags::IMPORT_COLORGRADINGLUT) && stbi_is_16_bit_from_memory(filedata, (int)filesize))
+					void* rgba = nullptr;
+					if (!ext.compare("HEIC") || !ext.compare("HEIF"))
+					{
+#ifdef _WIN32
+						Microsoft::WRL::ComPtr<IWICImagingFactory> factory;
+						success = SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory)));
+						assert(success);
+						Microsoft::WRL::ComPtr<IStream> stream;
+						stream.Attach(SHCreateMemStream(filedata, static_cast<UINT>(filesize)));
+						assert(stream);
+						Microsoft::WRL::ComPtr<IWICBitmapDecoder> decoder;
+						success = SUCCEEDED(factory->CreateDecoderFromStream(stream.Get(), nullptr, WICDecodeMetadataCacheOnDemand, &decoder));
+						assert(success);
+						Microsoft::WRL::ComPtr<IWICBitmapFrameDecode> frame;
+						success = SUCCEEDED(decoder->GetFrame(0, &frame));
+						assert(success);
+						Microsoft::WRL::ComPtr<IWICFormatConverter> converter;
+						success = SUCCEEDED(factory->CreateFormatConverter(&converter));
+						assert(success);
+						success = SUCCEEDED(converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom));
+						assert(success);
+						UINT uwidth = 0, uheight = 0;
+						success = SUCCEEDED(converter->GetSize(&uwidth, &uheight)) && uwidth != 0 && uheight != 0;
+						assert(success);
+						const size_t stride = static_cast<size_t>(uwidth) * 4;
+						const size_t buffer_size = stride * uheight;
+						rgba = static_cast<unsigned char*>(malloc(buffer_size));
+						success = SUCCEEDED(converter->CopyPixels(nullptr, static_cast<UINT>(stride), static_cast<UINT>(buffer_size), (unsigned char*)rgba));
+						assert(success);
+						width = (int)uwidth;
+						height = (int)uheight;
+#elif defined __APPLE__
+						CFDataRef data = CFDataCreate(kCFAllocatorDefault, static_cast<const UInt8*>(filedata), static_cast<CFIndex>(filesize));
+						assert(data);
+						CGImageSourceRef source = CGImageSourceCreateWithData(data, nullptr);
+						CFRelease(data);
+						assert(source);
+						CFStringRef keys[] = { kCGImageSourceCreateThumbnailFromImageAlways, kCGImageSourceCreateThumbnailWithTransform };
+						CFTypeRef values[] = { kCFBooleanTrue, kCFBooleanTrue };
+						CFDictionaryRef options = CFDictionaryCreate(nullptr, (const void**)keys, (const void**)values, 2, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+						CGImageRef image = CGImageSourceCreateThumbnailAtIndex(source, 0, options);
+						CFRelease(options);
+						CFRelease(source);
+						assert(image);
+						width  = (int)CGImageGetWidth(image);
+						height = (int)CGImageGetHeight(image);
+						assert(width != 0 && height != 0);
+						const size_t stride = size_t(width * 4);
+						const size_t buffer_size = stride * height;
+						rgba = static_cast<unsigned char*>(malloc(buffer_size));
+						assert(rgba);
+						CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+						CGContextRef ctx = CGBitmapContextCreate(rgba, width, height, 8, stride, colorSpace, kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+						CGColorSpaceRelease(colorSpace);
+						assert(ctx);
+						CGContextDrawImage(ctx, CGRectMake(0, 0, width, height), image);
+						CGContextRelease(ctx);
+						CGImageRelease(image);
+#endif // _WIN32
+					}
+					else if (!has_flag(flags, Flags::IMPORT_COLORGRADINGLUT) && stbi_is_16_bit_from_memory(filedata, (int)filesize))
 					{
 						is_16bit = true;
 						rgba = stbi_load_16_from_memory(filedata, (int)filesize, &width, &height, &channels, 0);

@@ -100,6 +100,7 @@ namespace wi::scene
 		wi::unordered_map<wi::ecs::Entity, wi::vector<wi::ecs::Entity>> topdown_hierarchy; // managed by BuildTopDownHierarchy() in every Update(), allows parent->children traversal
 		wi::jobsystem::context topdown_hierarchy_workload;
 		uint32_t cpu_gpu_mapped_resource_index = 0;
+		mutable uint32_t blas_optimize_offset = 0;
 
 		// AABB culling streams:
 		wi::vector<wi::primitive::AABB> aabb_objects;
@@ -229,7 +230,7 @@ namespace wi::scene
 			float maxDistance = 100.0f;
 			struct ClipMap
 			{
-				float voxelsize = 0.125;
+				float voxelsize = 0.25;
 				XMFLOAT3 center = XMFLOAT3(0, 0, 0);
 				XMINT3 offsetfromPrevFrame = XMINT3(0, 0, 0);
 				XMFLOAT3 extents = XMFLOAT3(0, 0, 0);

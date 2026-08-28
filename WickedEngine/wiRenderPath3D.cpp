@@ -1717,6 +1717,7 @@ namespace wi
 				wi::renderer::VXGI_Resolve(
 					vxgiResources,
 					*scene,
+					depthBuffer_Copy,
 					cmd
 				);
 			}
@@ -3393,6 +3394,8 @@ namespace wi
 				desc.mip_levels = 1;
 				if (camera.render_to_texture.sample_count > 1)
 				{
+					device->CreateSubresource(&camera.render_to_texture.rendertarget_render, SubresourceType::RTV, 0, 1, 0, 1); // resolve, swapped
+					device->CreateSubresource(&camera.render_to_texture.rendertarget_display, SubresourceType::RTV, 0, 1, 0, 1); // resolve, swapped
 					desc.sample_count = camera.render_to_texture.sample_count;
 					desc.layout = ResourceState::RENDERTARGET;
 					desc.bind_flags = BindFlag::RENDER_TARGET;
@@ -3440,6 +3443,7 @@ namespace wi
 			}
 			camera.width = (float)camera.render_to_texture.resolution.x;
 			camera.height = (float)camera.render_to_texture.resolution.y;
+			camera.sample_count = camera.render_to_texture.sample_count;
 			camera.UpdateCamera();
 
 			if (camera.render_to_texture.depthstencil_resolved.IsValid())

@@ -400,12 +400,12 @@ namespace wi::primitive
 		float B = XMVectorGetX(XMVector3Dot(OC, D));
 		float c = XMVectorGetX(XMVector3Dot(OC, OC)) - radius * radius;
 		float discr = B * B - c;
-		if (discr > 0)
+		if (discr >= 0)
 		{
 			float discrSq = std::sqrt(discr);
 
 			float t = (-B - discrSq);
-			if (t<b.TMax && t>b.TMin)
+			if (t >= b.TMin && t <= b.TMax)
 			{
 				XMVECTOR P = O + D * t;
 				XMVECTOR N = XMVector3Normalize(P - C);
@@ -415,12 +415,13 @@ namespace wi::primitive
 			}
 
 			t = (-B + discrSq);
-			if (t<b.TMax && t>b.TMin)
+			if (t >= b.TMin && t <= b.TMax)
 			{
 				XMVECTOR P = O + D * t;
 				XMVECTOR N = XMVector3Normalize(P - C);
 				dist = t;
 				XMStoreFloat3(&direction, N);
+				return true;
 			}
 		}
 		return false;

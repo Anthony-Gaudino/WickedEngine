@@ -138,6 +138,9 @@
 		1E73E7392F0513710090D1DA /* libWickedEngine_MacOS.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 1E73E7382F0513620090D1DA /* libWickedEngine_MacOS.a */; };
 		1E73E7552F053DBE0090D1DA /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1E73E7532F053DBE0090D1DA /* Metal.framework */; };
 		1EBD1C072F251B7E00C29B34 /* GameController.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1EBD1C052F251B7E00C29B34 /* GameController.framework */; };
+		1EFE85123029D965000F65B3 /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1EFE85113029D965000F65B3 /* CoreGraphics.framework */; };
+		1EFE85143029D972000F65B3 /* CoreFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1EFE85133029D972000F65B3 /* CoreFoundation.framework */; };
+		1EFE85163029D97E000F65B3 /* ImageIO.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1EFE85153029D97E000F65B3 /* ImageIO.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -322,6 +325,9 @@
 		1E73E7512F053DB80090D1DA /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
 		1E73E7532F053DBE0090D1DA /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
 		1EBD1C052F251B7E00C29B34 /* GameController.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = GameController.framework; path = System/Library/Frameworks/GameController.framework; sourceTree = SDKROOT; };
+		1EFE85113029D965000F65B3 /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.2.sdk/System/Library/Frameworks/CoreGraphics.framework; sourceTree = DEVELOPER_DIR; };
+		1EFE85133029D972000F65B3 /* CoreFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreFoundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.2.sdk/System/Library/Frameworks/CoreFoundation.framework; sourceTree = DEVELOPER_DIR; };
+		1EFE85153029D97E000F65B3 /* ImageIO.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ImageIO.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.2.sdk/System/Library/Frameworks/ImageIO.framework; sourceTree = DEVELOPER_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -337,11 +343,14 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				1EFE85143029D972000F65B3 /* CoreFoundation.framework in Frameworks */,
 				1E50B2772FD07B1B000EE545 /* CoreAudio.framework in Frameworks */,
 				1E50B0022FD0453E000EE545 /* QuartzCore.framework in Frameworks */,
 				1E50AFC42FD04448000EE545 /* GameController.framework in Frameworks */,
+				1EFE85123029D965000F65B3 /* CoreGraphics.framework in Frameworks */,
 				1E50B27B2FD07B3B000EE545 /* AudioToolbox.framework in Frameworks */,
 				1E50AFC52FD0444F000EE545 /* UIKit.framework in Frameworks */,
+				1EFE85163029D97E000F65B3 /* ImageIO.framework in Frameworks */,
 				1E50AFC72FD04454000EE545 /* Metal.framework in Frameworks */,
 				1E50B2792FD07B2B000EE545 /* AVFoundation.framework in Frameworks */,
 				1E50AFC22FD04441000EE545 /* libWickedEngine_iOS.a in Frameworks */,
@@ -544,6 +553,9 @@
 		1E73E7162F0511130090D1DA /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				1EFE85153029D97E000F65B3 /* ImageIO.framework */,
+				1EFE85133029D972000F65B3 /* CoreFoundation.framework */,
+				1EFE85113029D965000F65B3 /* CoreGraphics.framework */,
 				1E50B27A2FD07B3B000EE545 /* AudioToolbox.framework */,
 				1E50B2782FD07B2B000EE545 /* AVFoundation.framework */,
 				1E50B2762FD07B1B000EE545 /* CoreAudio.framework */,
@@ -850,7 +862,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = turanszkij.Editor;
+				PRODUCT_BUNDLE_IDENTIFIER = WickedEditor;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = iphoneos;
@@ -886,7 +898,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = turanszkij.Editor;
+				PRODUCT_BUNDLE_IDENTIFIER = WickedEditor;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = iphoneos;

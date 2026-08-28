@@ -10,10 +10,10 @@ float Wedge2D(float2 v, float2 w)
 
 struct VertextoPixel
 {
-	float4 pos : SV_POSITION;
-	float4 screen : TEXCOORD0;
-	float2 q : TEXCOORD1;
-	float2 edge : TEXCOORD2;
+	float4 pos : SV_Position;
+	float4 screen : SCREENCOORD;
+	float2 q : QUADCOORD;
+	float2 edge : EDGECOORD;
 
 	float2 uv_screen()
 	{

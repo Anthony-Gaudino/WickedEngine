@@ -76,8 +76,8 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint groupIn
 	float2 bary = float2(f, g);
 
 	// compute final surface position on triangle from barycentric coords:
-	float3 position = attribute_at_bary(pos0, pos1, pos2, bary);
-	position = mul(xHairBaseMeshUnormRemap.GetMatrix(), float4(position, 1)).xyz; // position UNORM -> FLOAT
+	float3 base = attribute_at_bary(pos0, pos1, pos2, bary);
+	base = mul(xHairBaseMeshUnormRemap.GetMatrix(), float4(base, 1)).xyz; // position UNORM -> FLOAT
 	half3 target = normalize(attribute_at_bary(nor0, nor1, nor2, bary));
 	target = normalize(mul(xHairTransform.GetMatrixAdjoint(), target));
 	half3 tangent = normalize(mul(half3(hemispherepoint_cos(rng.next_float(), rng.next_float()).xy, 0), get_tangentspace(target)));
@@ -89,17 +89,23 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint groupIn
 	uint currentFrame = 0;
 	if (xHairAtlasRectCount > 1)
 	{
-		currentFrame = uint(noise_gradient_3D(position * xHairUniformity) * 1000) % xHairAtlasRectCount;
+		currentFrame = uint(noise_gradient_3D(base * xHairUniformity) * 1000) % xHairAtlasRectCount;
 	}
 	const HairParticleAtlasRect atlas_rect = xHairAtlasRects[currentFrame];
 	
 	// Transform particle by the emitter object matrix:
-	float3 base = mul(xHairTransform.GetMatrix(), float4(position.xyz, 1)).xyz;
+	base = mul(xHairTransform.GetMatrix(), float4(base.xyz, 1)).xyz;
+
+	float3 collapsed_base = base;
+	if (xHairFlags & HAIR_FLAG_UNORM_POS)
+	{
+		collapsed_base = inverse_lerp(geometry.aabb_min, geometry.aabb_max, collapsed_base); // remap to UNORM
+	}
 	
 	float3 diff = GetCamera().position - base;
 	const float distsq = dot(diff, diff);
 	const bool distance_culled = distsq > sqr(xHairViewDistance);
-	
+
 	// Frustum culling the whole strand at once:
 	//	intentionally overestimated, to not disappear as soon in different views (shadow map, etc)
 	ShaderSphere sphere;
@@ -155,8 +161,12 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint groupIn
 		bend = GetCamera().up * (1 - saturate(dot(target, GetCamera().up))) * 0.8;
 	}
 
+	// Compute the actual billboard normal direction (matching geometry
+	// orientation)
+	half3 billboard_normal = normalize(target + bend);
+
 	// Bottom vertices:
-	half3x3 TBN = half3x3(tangent, normalize(target + bend), binormal);
+	half3x3 TBN = half3x3(tangent, billboard_normal, binormal);
 	if (distance_culled)
 	{
 		// Strand is beyond the view distance, so it is never rendered: no
@@ -173,14 +183,9 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint groupIn
 		const uint root_vertexcount = 2 * xHairBillboardCount;
 		if (xHairFlags & HAIR_FLAG_RAYTRACED)
 		{
-			float3 rt_pos = base;
-			if (xHairFlags & HAIR_FLAG_UNORM_POS)
-			{
-				rt_pos = inverse_lerp(geometry.aabb_min, geometry.aabb_max, base); // remap to UNORM
-			}
 			for (uint i = 0; i < root_vertexcount; ++i)
 			{
-				vertexBuffer_POS_RT[v0 + i] = float4(rt_pos, 0);
+				vertexBuffer_POS_RT[v0 + i] = float4(collapsed_base, 0);
 			}
 		}
 		v0 += root_vertexcount;
@@ -228,14 +233,13 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint groupIn
 				patchPos = mul(patchPos, variationMatrix);
 
 				float3 position = base + patchPos;
-
 				if (xHairFlags & HAIR_FLAG_UNORM_POS)
 				{
 					position = inverse_lerp(geometry.aabb_min, geometry.aabb_max, position); // remap to UNORM
 				}
 
 				vertexBuffer_POS[v0] = float4(position, 0);
-				vertexBuffer_NOR[v0] = half4(target, 0);
+				vertexBuffer_NOR[v0] = half4(billboard_normal, 0);
 				vertexBuffer_UVS[v0] = uv.xyxy; // a second uv set could be used here
 				if (xHairFlags & HAIR_FLAG_RAYTRACED)
 				{
@@ -409,8 +413,6 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint groupIn
 		
 		half3 normal = to_tail;
 		
-		// Write out render buffers:
-		//	These must be persistent, not culled (raytracing, surfels...)
 		half3 normal_bend = normalize(normal + bend);
 		binormal = cross(normal_bend, tangent);
 		tangent = cross(binormal, normal_bend);
@@ -420,6 +422,8 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint groupIn
 		//draw_line(base, base + normal, float4(0, 1, 0, 1));
 		//draw_line(base, base + binormal, float4(0, 0, 1, 1));
 	
+		// Write out render buffers:
+		//	These must be persistent, not culled (raytracing, surfels...)
 		if (distance_culled)
 		{
 			// See the root vertices above: collapse these cap vertices to this
@@ -427,20 +431,14 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint groupIn
 			// point, so the raytracing BVH stays well distributed and stable
 			// across cull-boundary crossings.
 			const uint cap_vertexcount = 2 * xHairBillboardCount;
-			float3 pos = base;
-			if (xHairFlags & HAIR_FLAG_UNORM_POS)
-			{
-				pos = inverse_lerp(geometry.aabb_min, geometry.aabb_max, base); // remap to UNORM
-			}
-
 			for (uint i = 0; i < cap_vertexcount; ++i)
 			{
-				vertexBuffer_POS[v0] = float4(pos, 0); // pos must be written always for wetmap
+				vertexBuffer_POS[v0] = float4(collapsed_base, 0); // pos must be written always for wetmap
 				vertexBuffer_NOR[v0] = half4(normal, 0); // nor must be written always for wetmap
 
 				if (xHairFlags & HAIR_FLAG_RAYTRACED)
 				{
-					vertexBuffer_POS_RT[v0] = float4(pos, 0);
+					vertexBuffer_POS_RT[v0] = float4(collapsed_base, 0);
 				}
 				v0++;
 			}
@@ -489,14 +487,20 @@ void main(uint3 DTid : SV_DispatchThreadID, uint3 Gid : SV_GroupID, uint groupIn
 					patchPos = mul(patchPos, variationMatrix);
 
 					float3 position = base + patchPos;
-
 					if (xHairFlags & HAIR_FLAG_UNORM_POS)
 					{
 						position = inverse_lerp(geometry.aabb_min, geometry.aabb_max, position); // remap to UNORM
 					}
 
 					vertexBuffer_POS[v0] = float4(position, 0);
-					vertexBuffer_NOR[v0] = half4(normal, 0);
+					// Store the bent normal (matching the billboard's actual
+					// orientation, TBN above), not the raw strand direction.
+					// Otherwise a wind/gravity-bent card is shaded as if it
+					// still pointed along the strand, which reads as a dark,
+					// pulsating patch when viewed from above (normal facing
+					// away from both the view and the light). Kept consistent
+					// with the root vertices, which also store the bent normal.
+					vertexBuffer_NOR[v0] = half4(normal_bend, 0);
 					vertexBuffer_UVS[v0] = uv.xyxy; // a second uv set could be used here
 					if (xHairFlags & HAIR_FLAG_RAYTRACED)
 					{

@@ -341,11 +341,28 @@ float4 main(PSIn input) : SV_TARGET
 	// E[|s|^2] - |E[s]|^2, the two moments stored side by side by the folding
 	// pass.
 	//
-	// Taken from the RAW sample: gradient.rg is replaced by perlin at distance
-	// just below, after which the mean and the second moment describe
-	// different surfaces and their difference means nothing.
+	// Taken from the RAW sample, before the detail taps below are folded in:
+	// `gradient.b` is the second moment of the base sample alone, so once
+	// anything has been added to `gradient.rg` the mean and the second moment
+	// describe different surfaces and their difference means nothing.
 	const float2 meanSlope = gradient.rg * xOceanGridLen * 0.5;
 	float slopeVariance = max(0, gradient.b - dot(meanSlope, meanSlope));
+
+	// Add some small scale detail waves to make it look less uniform:
+	const uint detail_count = 3;
+	half2 gradient_detail = 0;
+	float detail_variance = 0;
+	for (uint i = 0; i < detail_count; ++i)
+	{
+		const float4 detail = texture_gradientmap.Sample(sampler_aniso_wrap, input.uv * pow(2.0, half(i + 1)));
+		gradient_detail += (half2)detail.rg;
+
+		const float2 detailMean = detail.rg * xOceanGridLen * 0.5;
+		detail_variance += max(0, detail.b - dot(detailMean, detailMean));
+	}
+	gradient_detail /= half(detail_count);
+	gradient.rg += gradient_detail;
+
 
 	const float g_PerlinSize = 1;
 	const float2 g_UVBase = 0;
@@ -380,30 +397,18 @@ float4 main(PSIn input) : SV_TARGET
 		gradient.rg += bindless_textures_half4[descriptor_index(camera.texture_waterriples_index)].SampleLevel(sampler_linear_clamp, ScreenCoord, 0).rg * 0.0125;
 	}
 
-	// Add some small scale detail waves to make it look less uniform:
-	const uint detail_count = 3;
-	half2 gradient_detail = 0;
-	float detail_variance = 0;
-	for (uint i = 0; i < detail_count; ++i)
-	{
-		const float4 detail = texture_gradientmap.Sample(sampler_aniso_wrap, input.uv * pow(2.0, half(i + 1)));
-		gradient_detail += (half2)detail.rg;
-
-		const float2 detailMean = detail.rg * xOceanGridLen * 0.5;
-		detail_variance += max(0, detail.b - dot(detailMean, detailMean));
-	}
-	gradient_detail /= half(detail_count);
-	gradient.rg += gradient_detail;
-
 	// Each of those taps is the same map at twice the frequency of the last, so
-	// they go sub-pixel long before the base does - and being added after the
-	// distance fade, nothing else ever damps them. Left alone they are the
+	// they go sub-pixel long before the base does, and left alone they are the
 	// sharpest aliasing on the water.
 	//
 	// Their variance scales the way their mean does: averaging n taps divides
-	// the mean by n and the variance by n squared.
-	slopeVariance +=
-		detail_variance / float(detail_count * detail_count);
+	// the mean by n and the variance by n squared. The distance fade above
+	// keeps only `1 - gradient_fade` of them, and a variance scales by the
+	// square of what scales the quantity itself.
+	const float detail_survives = 1 - gradient_fade;
+	slopeVariance += detail_variance
+		* detail_survives * detail_survives
+		/ float(detail_count * detail_count);
 
 	const float bump_strength = 0.1;
 	
@@ -998,7 +1003,12 @@ float4 main(PSIn input) : SV_TARGET
 				* GetWeather().ocean.shore_foam_strength
 				* shoreReach
 			: 0;
-		float foam_wave = pow(saturate(gradient.a), 4) * saturate(exp(-water_depth * 0.1));
+		// Faded on the same curve the slopes are. Past the fade the gradient
+		// map has been replaced by perlin, so foam grown from a crest that is
+		// no longer being drawn repeats the patch across the distance.
+		float foam_wave =
+			pow(saturate(gradient.a * (1 - gradient_fade)), 4)
+			* saturate(exp(-water_depth * 0.1));
 		float foam_combined = saturate(foam_shore + foam_wave);
 		float foam = smoothstep(0.5, 0.6, saturate(foam_combined + 0.1));
 
