@@ -121,8 +121,6 @@ half3 OceanFallbackReflection(in Surface surface, in bool cameraBelowWater)
  * @param[in] surface - The shaded surface, supplying the world position the
  *                      column hangs from.
  * @param[in] V - Normalized direction from the surface towards the eye.
- * @param[in] dist - Distance from the eye to this fragment, which is the air
- *                   path the sun shaft march is measured over.
  * @param[in] screenCoord - Screen space UV (0-1) of the fragment.
  * @param[in] pixel - Integer pixel coordinate, for the shadow trace's dither.
  * @param[in] medium - The water this column is made of.
@@ -143,7 +141,6 @@ half3 OceanFallbackReflection(in Surface surface, in bool cameraBelowWater)
 half3 OceanDeepWaterColumn(
 	in Surface surface,
 	in float3 V,
-	in float dist,
 	in float2 screenCoord,
 	in uint2 pixel,
 	in WaterVolumetrics medium,
@@ -232,7 +229,7 @@ half3 OceanDeepWaterColumn(
 			medium,
 			surface.P,
 			V,
-			dist,
+			medium.VisibleRange(),
 			pixel);
 	}
 
@@ -362,7 +359,7 @@ half3 OceanTracedRefraction(
 
 	return lerp(
 		OceanDeepWaterColumn(
-			surface, V, dist, screenCoord, pixel, medium, columnWeight),
+			surface, V, screenCoord, pixel, medium, columnWeight),
 		arriving,
 		transmittance);
 }
@@ -933,7 +930,7 @@ float4 main(PSIn input) : SV_TARGET
 
 			surface.refraction.rgb = lerp(
 				OceanDeepWaterColumn(
-					surface, V, dist, ScreenCoord, pixel, refractionMedium,
+					surface, V, ScreenCoord, pixel, refractionMedium,
 					columnWeight),
 				(half3)surface.refraction.rgb,
 				refractionReach);
