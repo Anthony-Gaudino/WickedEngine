@@ -1531,7 +1531,7 @@ void GraphicsWindow::Create(EditorComponent* _editor)
 	AddWidget(&underwaterSnellRTCheckBox);
 
 	waterRefractionRTCheckBox.Create("Water Refraction Ray Tracing: ");
-	waterRefractionRTCheckBox.SetTooltip("Trace the refracted ray into the scene to find what the water bends into view, instead of guessing at it with a screen space offset. Off, an object standing behind a crest is drawn twice. Requires a ray tracing capable GPU.");
+	waterRefractionRTCheckBox.SetTooltip("Find what the water bends into view by tracing the refracted ray, instead of sliding the screen space lookup sideways by the wave slope. Gives the water true apparent depth, so a submerged object sits where refraction really puts it and rises as the surface tilts. Off is cheaper and keeps a fixed offset that produces no depth at all. Underwater particles, transparents and light shafts are not visible through a traced surface. Requires a ray tracing capable GPU.");
 	waterRefractionRTCheckBox.SetSize(XMFLOAT2(hei, hei));
 	waterRefractionRTCheckBox.SetPos(XMFLOAT2(x, y += step));
 

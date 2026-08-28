@@ -99,6 +99,34 @@ static const float WATER_DOWNWELLING_SLANT = 1.204;
 static const float WATER_MARCH_OPTICAL_DEPTHS = 3.0;
 
 /**
+ * Optical depths past which what the water transmits cannot be displayed.
+ *
+ * For a ray that is TERMINATED rather than integrated - one traced until it
+ * finds something - where the question is not how much of the in-scatter has
+ * been gathered but whether stopping here is visible at all.
+ *
+ * Stopping a ray creates a step wherever a neighbouring ray carried on: the one
+ * that found geometry contributes its radiance dimmed by \f$e^{-\tau}\f$, and
+ * the one that gave up contributes nothing. The step between them is exactly
+ * that transmittance, so the reach is the depth at which it falls below one
+ * level of an 8-bit channel:
+ * \[
+ * e^{-\tau} < \frac{1}{255} \implies \tau > \ln 255 \approx 5.545
+ * \]
+ *
+ * Below that the boundary cannot be quantised into the framebuffer, so no
+ * blend, feather or fade is needed to hide it - the reach ends where the
+ * display stops resolving it, and the constant is fixed by the medium and the
+ * channel depth rather than tuned by eye.
+ *
+ * @note Nearly twice `WATER_MARCH_OPTICAL_DEPTHS`, which answers the different
+ *       question of how far a fixed sample count can be spread and still
+ *       resolve a shadow. A march traded the last few percent of blue for a
+ *       finer step; a terminated ray has no step to protect and trades nothing.
+ */
+static const float WATER_INVISIBLE_OPTICAL_DEPTHS = 5.5452; // ln(255)
+
+/**
  * Fraction of light reflected by the surface at straight-down incidence.
  *
  * \[
@@ -519,6 +547,34 @@ struct WaterVolumetrics
 	float VisibleRange()
 	{
 		return WATER_MARCH_OPTICAL_DEPTHS / min3(sigmaT.r, sigmaT.g, sigmaT.b);
+	}
+
+	/**
+	 * Distance past which stopping a traced ray cannot be seen.
+	 *
+	 * The reach for a ray that ends when it meets something, rather than a
+	 * segment that is integrated over. Taken on the thinnest channel, so the
+	 * bound holds for the one that carries furthest and every other channel is
+	 * darker still by the time it is reached.
+	 *
+	 * A ray given up on at this range and one that found geometry there differ
+	 * by less than a single 8-bit level, so the hit and miss cases meet without
+	 * a seam and neither has to be blended into the other. See
+	 * `WATER_INVISIBLE_OPTICAL_DEPTHS` for why that is the depth chosen.
+	 *
+	 * Example usage:
+	 * @code
+	 * RayDesc ray;
+	 * ray.TMax = medium.InvisibleRange();
+	 * @endcode
+	 *
+	 * @return Distance in metres. Meaningless unless `IsActive()`, since the
+	 *         coefficients fall to nothing above the surface.
+	 */
+	float InvisibleRange()
+	{
+		return WATER_INVISIBLE_OPTICAL_DEPTHS
+			/ min3(sigmaT.r, sigmaT.g, sigmaT.b);
 	}
 
 	/**

@@ -7,6 +7,7 @@
 #include "wiEventHandler.h"
 #include "wiTimer.h"
 #include "wiVector.h"
+#include "wiProfiler.h"
 
 #include "perlin.h"
 
@@ -893,6 +894,7 @@ namespace wi
 		GraphicsDevice* device = wi::graphics::GetDevice();
 
 		device->EventBegin("Ocean Depth Prepass", cmd);
+		auto range = wi::profiler::BeginRangeGPU("Ocean Depth Prepass", cmd);
 
 		device->BindPipelineState(&PSO_prepass, cmd);
 		device->BindStencilRef(wi::enums::STENCILREF_MASK_OCEAN, cmd);
@@ -904,6 +906,7 @@ namespace wi
 		OceanCB cb = GetOceanCB(params, camera.Eye, MESH_CELLS_PER_SIDE);
 		DrawClipmap(cb, false, 1, cmd);
 
+		wi::profiler::EndRange(range);
 		device->EventEnd(cmd);
 	}
 
@@ -912,6 +915,7 @@ namespace wi
 		GraphicsDevice* device = wi::graphics::GetDevice();
 
 		device->EventBegin("Ocean Rendering", cmd);
+		auto range = wi::profiler::BeginRangeGPU("Ocean Surface", cmd);
 
 		const bool wire = wi::renderer::IsWireRender();
 
@@ -941,6 +945,7 @@ namespace wi
 		OceanCB cb = GetOceanCB(params, camera.Eye, MESH_CELLS_PER_SIDE);
 		DrawClipmap(cb, false, 1, cmd);
 
+		wi::profiler::EndRange(range);
 		device->EventEnd(cmd);
 	}
 

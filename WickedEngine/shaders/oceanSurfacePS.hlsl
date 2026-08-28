@@ -18,6 +18,27 @@
  */
 #define OCEAN_VOLUMETRIC_DEBUG 0
 
+/**
+ * Traces the refracted ray but does not shade what it finds.
+ *
+ * Splits the traced refraction's cost in two. Only `distance` is consumed from
+ * the result, so the compiler removes the hit shading - the surface load, the
+ * light loop, the environment reflection and the GI - and what is left running
+ * is the traversal alone.
+ *
+ * Read against `Ocean Surface` in the GPU profiler, with the refraction toggle
+ * on. What the two numbers separate:
+ *
+ * - Most of the cost gone: the shading dominates, and tracing FEWER PIXELS or
+ *   shading them more cheaply is the only thing worth doing.
+ * - Cost barely moved: the traversal dominates, and only reducing the number of
+ *   rays helps.
+ *
+ * The water is drawn wrong while this is on - every hit comes back a flat grey.
+ * 0 in anything but a measurement.
+ */
+#define OCEAN_REFRACTION_PROFILE 0
+
 #define DISABLE_DECALS
 #define DISABLE_ENVMAPS
 #define DISABLE_TRANSPARENT_SHADOWMAP
@@ -28,6 +49,9 @@
 #include "oceanSurfaceHF.hlsli"
 #include "objectHF.hlsli"
 #include "volumetricCloudApplyHF.hlsli"
+#ifdef RTAPI
+#include "rtsceneHF.hlsli"
+#endif // RTAPI
 
 Texture2D<float4> texture_ocean_displacementmap : register(t0);
 Texture2D<float4> texture_gradientmap : register(t1);
@@ -81,6 +105,197 @@ half3 OceanFallbackReflection(in Surface surface, in bool cameraBelowWater)
 
 	return sky * surface.F;
 }
+
+/**
+ * What water of no particular end sends back towards the eye.
+ *
+ * The answer for light that reached this surface from below having met nothing
+ * on the way - the open sea's own colour, being in-scatter alone over a column
+ * that runs until the water has finished with it. It stands in wherever what
+ * lies behind the surface contributes less than the water in front of it.
+ *
+ * Shared by both refraction paths so that one medium is described once: the
+ * screen space lookup and the traced ray differ only in what they find, never
+ * in what the water does to it.
+ *
+ * @param[in] surface - The shaded surface, supplying the world position the
+ *                      column hangs from.
+ * @param[in] V - Normalized direction from the surface towards the eye.
+ * @param[in] screenCoord - Screen space UV (0-1) of the fragment.
+ * @param[in] pixel - Integer pixel coordinate, for the shadow trace's dither.
+ * @param[in] medium - The water this column is made of.
+ *
+ * @return In-scattered radiance, already dimmed by the wave standing over it.
+ */
+half3 OceanDeepWaterColumn(
+	in Surface surface,
+	in float3 V,
+	in float2 screenCoord,
+	in uint2 pixel,
+	in WaterVolumetrics medium
+)
+{
+	// **How much sun reaches the column, measured from inside it.** The column
+	// stands below this surface, so what shadows it is the water between the
+	// sun and a point IN it - and one mean free path down is where the light it
+	// sends back comes from, the medium's own answer to how far in it is still
+	// being lit.
+	//
+	// Measured at the interface instead, the trace starts where the test that
+	// decides which side a point is on has no side to report, and at a low sun
+	// it then searches for an exit it is already standing at. Neighbouring
+	// fragments answer that differently and the sea is drawn in patches - which
+	// the refraction shows in full, having no `NdotL` to multiply them away.
+	const float meanFreePath =
+		medium.VisibleRange() / WATER_MARCH_OPTICAL_DEPTHS;
+
+	// **Dropped from the height field, not from `surface.P`.** The two do not
+	// agree: choppy waves displace the surface sideways as well as up, so the
+	// vertex that lands here came from somewhere else in the patch, and the
+	// field sampled back at this xz returns a different height - below the
+	// fragment wherever the surface folds. Measured down from `surface.P` the
+	// origin then sits ABOVE the surface as the trace understands it, the trace
+	// begins in air, finds no crossing and reports no water at all. The column
+	// keeps its whole sun and the fold is drawn as a bright patch.
+	//
+	// Started from the field itself, the origin is one mean free path under the
+	// surface by construction, and the trace cannot mistake which side of it
+	// that is.
+	const float3 columnPoint = float3(
+		surface.P.x,
+		ocean_drawn_surface_height(surface.P) - meanFreePath,
+		surface.P.z);
+
+	const float columnSunwardWater = TraceWaterSegment(
+		columnPoint,
+		mad(medium.VisibleRange(), GetSunDirection(), columnPoint),
+		blue_noise(pixel).x
+	).submerged;
+
+	const float3 columnSunModulation =
+		exp(-medium.sigmaT * columnSunwardWater);
+
+	// The water answering for itself, over a depth that ends the question - and
+	// standing in this wave's shadow while it does. The sun reaching that
+	// column crossed the crest overhead, which is the same length the wave
+	// presents to the light everywhere else, so it is dimmed by the same
+	// transmittance. Left unshaded the column keeps the sun's forward peak, the
+	// brightest thing water scatters back, and a crest a hundred metres thick
+	// glows with light that never got through it.
+	//
+	// **This column takes no froxel light.** What stands here is water
+	// beginning at this surface: the air in front of it belongs to the
+	// fragment's own `ApplyVolumetricLight`, which passes this term as the
+	// background it must not light twice, and behind the surface there is no
+	// air to gather any. What the water sends back is the in-scatter above and
+	// nothing else.
+	return (half3)MakeDeepWaterFog(
+		screenCoord,
+		V,
+		columnSunModulation
+	).inscatter;
+}
+
+#ifdef RTAPI
+/**
+ * The radiance arriving at this surface along the refracted direction.
+ *
+ * The question the water actually asks - what light reaches this point from
+ * below - answered by following the direction Snell's law gives and shading
+ * whatever is found there. A screen space lookup cannot answer it even in
+ * principle: a screen buffer holds the radiance of whatever is nearest the
+ * CAMERA along each pixel, and the point a refracted ray reaches is only that
+ * by coincidence.
+ *
+ * The ray descends and stays inside the critical cone, so every metre of it is
+ * under the surface and the whole path is water. Its length comes back from the
+ * trace exactly, rather than being estimated from a depth buffer, so the
+ * transport applied to what it found is the true one.
+ *
+ * **One source, no fallback.** Hit and miss are not two cases blended together:
+ * a miss contributes nothing and a hit at the far end of the reach contributes
+ * less than one 8-bit level, because `InvisibleRange` is defined as the depth
+ * where that is so. The boundary between them cannot be quantised into the
+ * framebuffer, which is why nothing is faded across it.
+ *
+ * References:
+ * https://en.wikipedia.org/wiki/Snell%27s_law
+ *
+ * @param[in] surface - The shaded surface, supplying the world position and
+ *                      normal the ray is refracted about.
+ * @param[in] V - Normalized direction from the surface towards the eye.
+ * @param[in] dist - Distance from the eye to this fragment, for the ray cone.
+ * @param[in] screenCoord - Screen space UV (0-1) of the fragment.
+ * @param[in] pixel - Integer pixel coordinate, for the ray cone and dither.
+ * @param[in] medium - The water the ray travels through.
+ *
+ * @return Radiance leaving the far end of the refracted ray and arriving here,
+ *         with the water's transport over that path already applied.
+ *
+ * @note Above-water eyes only. Refracting outwards is the opposite interface -
+ *       a different index ratio, and total internal reflection past the
+ *       critical angle - which Snell's window answers rather than this.
+ */
+half3 OceanTracedRefraction(
+	in Surface surface,
+	in float3 V,
+	in float dist,
+	in float2 screenCoord,
+	in uint2 pixel,
+	in WaterVolumetrics medium
+)
+{
+	const float3 refractedDir =
+		refract(-V, surface.N, 1.0 / WATER_REFRACTIVE_INDEX);
+
+	const float range = medium.InvisibleRange();
+
+	RayDesc ray;
+	ray.Origin = surface.P;
+	ray.Direction = refractedDir;
+	ray.TMin = 0.01;
+	ray.TMax = range;
+
+	RayCone raycone = RayCone::from_spread_angle(
+		pixel_cone_spread_angle_from_image_height(
+			GetCamera().internal_resolution.y));
+	raycone = raycone.propagate(0, dist);
+
+	const SceneRadiance rad = TraceSceneRadiance(
+		ray,
+		~0u,
+		RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES |
+		RAY_FLAG_CULL_BACK_FACING_TRIANGLES,
+		raycone,
+		pixel,
+		GetCamera().internal_resolution_rcp
+	);
+
+	// **A miss is not the sky.** `TraceSceneRadiance` answers a ray that hit
+	// nothing with the sky in its direction, which is right for a reflection
+	// or an escape ray and wrong for this one: a refracted ray DESCENDS, so
+	// what it failed to find is more water, not the daylight above it.
+	const bool found = rad.distance < FLT_MAX;
+
+	const float crossed = found ? min(rad.distance, range) : range;
+
+#if OCEAN_REFRACTION_PROFILE
+	const half3 arriving = found ? (half3)0.5 : (half3)0;
+#else
+	const half3 arriving = found ? (half3)rad.color : (half3)0;
+#endif
+
+	const half3 transmittance = (half3)exp(-medium.sigmaT * crossed);
+
+	// What the water puts in the way of what was found, and what it puts there
+	// instead. The same column every other water fragment stands on, so the
+	// traced refraction and the surface around it describe one medium.
+	return lerp(
+		OceanDeepWaterColumn(surface, V, screenCoord, pixel, medium),
+		arriving,
+		transmittance);
+}
+#endif // RTAPI
 
 float4 main(PSIn input) : SV_TARGET
 {
@@ -378,8 +593,56 @@ float4 main(PSIn input) : SV_TARGET
 
 	float water_depth = FLT_MAX;
 
+	// Whether what lies behind this surface is found by following the refracted
+	// ray, rather than guessed at by sliding the screen space lookup sideways.
+	//
+	// **An eye under the surface is not offered it.** Looking outwards crosses
+	// the same interface the other way - the reciprocal index ratio, and total
+	// internal reflection past the critical angle - and Snell's window is what
+	// answers that. Tracing it with the inbound ratio would describe a
+	// refraction that does not happen.
+#ifdef RTAPI
+	const bool refraction_traced = camera.IsWaterRefractionRT()
+		&& GetScene().TLAS >= 0
+		&& !camera_below_water;
+
 	[branch]
-	if (camera.texture_refraction_index >= 0)
+	if (refraction_traced)
+	{
+		// **How much water stands over the bed at this pixel**, which the foam
+		// asks for below. Taken straight down from this fragment rather than
+		// from where the ray came to rest: the foam is a property of the water
+		// column here, and the refracted ray deliberately ends somewhere else.
+		const float3 belowPosition = reconstruct_position(
+			ScreenCoord.xy,
+			texture_depth.SampleLevel(sampler_point_clamp, ScreenCoord.xy, 0));
+
+		water_depth = -dot(float4(belowPosition, 1), water_plane);
+		water_depth += texture_ocean_displacementmap.SampleLevel(
+			sampler_linear_wrap,
+			belowPosition.xz * xOceanPatchSizeRecip, 0).z; // texture is xzy!
+
+		surface.refraction.rgb = OceanTracedRefraction(
+			surface,
+			V,
+			dist,
+			ScreenCoord.xy,
+			pixel,
+			MakeWaterVolumetrics(1)
+		);
+
+		// The transport is applied over the traced path inside, so nothing here
+		// is owed a screen depth attenuation - see the note on the screen space
+		// path below, which holds for the same reason and more strongly.
+		surface.refraction.a = 1;
+		color.a = 1;
+	}
+#else
+	const bool refraction_traced = false;
+#endif // RTAPI
+
+	[branch]
+	if (!refraction_traced && camera.texture_refraction_index >= 0)
 	{
 		// Water refraction:
 		Texture2D texture_refraction = bindless_textures[descriptor_index(camera.texture_refraction_index)];
@@ -585,75 +848,11 @@ float4 main(PSIn input) : SV_TARGET
 		[branch]
 		if (!camera_below_water)
 		{
-			// **How much sun reaches the column, measured from inside it.**
-			// The column stands below this surface, so what shadows it is the
-			// water between the sun and a point IN it - and one mean free path
-			// down is where the light it sends back comes from, the medium's
-			// own answer to how far in it is still being lit.
-			//
-			// Measured at the interface instead, the trace starts where the
-			// test that decides which side a point is on has no side to report,
-			// and at a low sun it then searches for an exit it is already
-			// standing at. Neighbouring fragments answer that differently and
-			// the sea is drawn in patches - which the refraction shows in full,
-			// having no `NdotL` to multiply them away.
-			const float meanFreePath =
-				refractionMedium.VisibleRange() / WATER_MARCH_OPTICAL_DEPTHS;
-
-			// **Dropped from the height field, not from `surface.P`.** The
-			// two do not agree: choppy waves displace the surface sideways as
-			// well as up, so the vertex that lands here came from somewhere
-			// else in the patch, and the field sampled back at this xz returns
-			// a different height - below the fragment wherever the surface
-			// folds. Measured down from `surface.P` the origin then sits ABOVE
-			// the surface as the trace understands it, the trace begins in air,
-			// finds no crossing and reports no water at all. The column keeps
-			// its whole sun and the fold is drawn as a bright patch.
-			//
-			// Started from the field itself, the origin is one mean free path
-			// under the surface by construction, and the trace cannot mistake
-			// which side of it that is.
-			const float3 columnPoint = float3(
-				surface.P.x,
-				ocean_drawn_surface_height(surface.P) - meanFreePath,
-				surface.P.z);
-
-			const float columnSunwardWater = TraceWaterSegment(
-				columnPoint,
-				mad(refractionMedium.VisibleRange(), GetSunDirection(),
-					columnPoint),
-				blue_noise(pixel).x
-			).submerged;
-
-			const float3 columnSunModulation =
-				exp(-refractionMedium.sigmaT * columnSunwardWater);
-
-			// The water answering for itself, over a depth that ends the
-			// question - and standing in this wave's shadow while it does.
-			// The sun reaching that column crossed the crest overhead, which
-			// is the same length the wave presents to the light everywhere
-			// else, so it is dimmed by the same transmittance. Left unshaded
-			// the column keeps the sun's forward peak, the brightest thing
-			// water scatters back, and a crest a hundred metres thick glows
-			// with light that never got through it.
-			half4 deepRefraction = half4((half3)MakeDeepWaterFog(
-				ScreenCoord,
-				V,
-				columnSunModulation
-			).inscatter, 1);
-
-			// **This column takes no froxel light.** What stands here is water
-			// beginning at this surface: the air in front of it belongs to the
-			// fragment's own `ApplyVolumetricLight` below, which passes this
-			// term as the background it must not light twice, and behind the
-			// surface there is no air to gather any. What the water sends back
-			// is the in-scatter above and nothing else.
-
 			surface.refraction.rgb = lerp(
-				deepRefraction.rgb,
+				OceanDeepWaterColumn(
+					surface, V, ScreenCoord, pixel, refractionMedium),
 				(half3)surface.refraction.rgb,
 				refractionReach);
-
 		}
 
 		water_depth = max(water_depth, -dot(float4(refraction_position, 1), water_plane));
