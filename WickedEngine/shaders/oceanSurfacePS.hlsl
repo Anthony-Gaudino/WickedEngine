@@ -121,20 +121,54 @@ half3 OceanFallbackReflection(in Surface surface, in bool cameraBelowWater)
  * @param[in] surface - The shaded surface, supplying the world position the
  *                      column hangs from.
  * @param[in] V - Normalized direction from the surface towards the eye.
+ * @param[in] dist - Distance from the eye to this fragment, which is the air
+ *                   path the sun shaft march is measured over.
  * @param[in] screenCoord - Screen space UV (0-1) of the fragment.
  * @param[in] pixel - Integer pixel coordinate, for the shadow trace's dither.
  * @param[in] medium - The water this column is made of.
+ * @param[in] weight - Largest share of any channel this column will supply to
+ *                     the PIXEL, in [0, 1] - so the caller's own mix weighted
+ *                     by the Fresnel transmission the composite applies to it,
+ *                     not the mix alone. Below one 8-bit level nothing is
+ *                     computed at all - see the note.
  *
- * @return In-scattered radiance, already dimmed by the wave standing over it.
+ * @return In-scattered radiance, already dimmed by the wave standing over it
+ *         and cut into shafts by whatever stands above the surface. Zero when
+ *         `weight` is below what can be displayed.
+ *
+ * @note **Two marches deep**, between the sunward water trace and the shaft
+ *       modulation - so a caller about to weight the result away is worth
+ *       refusing outright rather than serving. The fog itself is analytic.
  */
 half3 OceanDeepWaterColumn(
 	in Surface surface,
 	in float3 V,
+	in float dist,
 	in float2 screenCoord,
 	in uint2 pixel,
-	in WaterVolumetrics medium
+	in WaterVolumetrics medium,
+	in float weight
 )
 {
+	// **Nothing this column produces could be displayed.** The caller mixes it
+	// in by `weight`, and below one level of an 8-bit channel the result cannot
+	// be quantised into the framebuffer however bright the water is - the same
+	// floor `WATER_INVISIBLE_OPTICAL_DEPTHS` is derived from.
+	//
+	// Worth testing before anything else here: what is skipped is a 12 step
+	// water trace and a 6 step shaft march with a shadow lookup at each sample.
+	//
+	// What reaches it is water that is thin, or steeply enough viewed that the
+	// surface reflects nearly all of it away, or some of each - the weight is
+	// the product of the two and either alone rarely gets there. Water shallow
+	// enough on its own needs to be centimetres deep, since the reach has to
+	// come back within one level of unity across every channel.
+	[branch]
+	if (weight < 1.0 / 255.0)
+	{
+		return 0;
+	}
+
 	// **How much sun reaches the column, measured from inside it.** The column
 	// stands below this surface, so what shadows it is the water between the
 	// sun and a point IN it - and one mean free path down is where the light it
@@ -172,8 +206,35 @@ half3 OceanDeepWaterColumn(
 		blue_noise(pixel).x
 	).submerged;
 
-	const float3 columnSunModulation =
+	float3 columnSunModulation =
 		exp(-medium.sigmaT * columnSunwardWater);
+
+	// **Cut into shafts by whatever stands above the surface**, exactly as
+	// every submerged fragment's own fog is by `GetWaterFog`. The wave's
+	// shadow above says how much sun reached this water; this says what shape
+	// it arrived in, and without it the column is an even glow where the sea
+	// should be striped.
+	//
+	// It matters most to a traced refraction, which carries no fog of its own:
+	// there the column is the only description of that light there is, where a
+	// screen space lookup could take the shafts from a copy in which every
+	// fragment had already fogged itself.
+	//
+	// Asked only where the froxel volume is not already carrying the sun
+	// through the water. The volume builds its underwater cells along straight
+	// view rays, and the leg below the surface of a ray that left the water for
+	// an eye in the air is refracted - so for this column, which only exists
+	// while the eye is dry, those cells are not on the path at all.
+	[branch]
+	if (VolumetricFroxelCarriesTheSun() && GetCamera().IsWaterSunShafts())
+	{
+		columnSunModulation *= WaterSunShaftModulation(
+			medium,
+			surface.P,
+			V,
+			dist,
+			pixel);
+	}
 
 	// The water answering for itself, over a depth that ends the question - and
 	// standing in this wave's shadow while it does. The sun reaching that
@@ -290,8 +351,18 @@ half3 OceanTracedRefraction(
 	// What the water puts in the way of what was found, and what it puts there
 	// instead. The same column every other water fragment stands on, so the
 	// traced refraction and the surface around it describe one medium.
+	// **What of this column survives to the pixel.** It is mixed in by
+	// `1 - transmittance` here and then transmitted through the surface by
+	// `1 - F` in the composite, so both belong in the share the guard is asked
+	// about. Per channel, then the largest, since the column is refused only
+	// when no channel can show it.
+	const half3 columnShare = (1 - transmittance) * (1 - surface.F);
+	const float columnWeight =
+		max(max(columnShare.r, columnShare.g), columnShare.b);
+
 	return lerp(
-		OceanDeepWaterColumn(surface, V, screenCoord, pixel, medium),
+		OceanDeepWaterColumn(
+			surface, V, dist, screenCoord, pixel, medium, columnWeight),
 		arriving,
 		transmittance);
 }
@@ -853,9 +924,17 @@ float4 main(PSIn input) : SV_TARGET
 		[branch]
 		if (!camera_below_water)
 		{
+			// The same share the traced path measures: what the mix keeps,
+			// transmitted through the surface by the composite's `1 - F`.
+			const half3 columnShare =
+				(1 - refractionReach) * (1 - surface.F);
+			const float columnWeight =
+				max(max(columnShare.r, columnShare.g), columnShare.b);
+
 			surface.refraction.rgb = lerp(
 				OceanDeepWaterColumn(
-					surface, V, ScreenCoord, pixel, refractionMedium),
+					surface, V, dist, ScreenCoord, pixel, refractionMedium,
+					columnWeight),
 				(half3)surface.refraction.rgb,
 				refractionReach);
 		}
