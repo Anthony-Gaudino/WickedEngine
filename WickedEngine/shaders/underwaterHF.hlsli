@@ -166,6 +166,40 @@ inline float3 ocean_underwater_test_position(in float2 uv)
  * @return `x` the highest and `y` the lowest world height, or the still plane
  *         in both where the pyramid is unavailable.
  */
+/**
+ * The surface's bounds over one pyramid cell, addressed in patch UV.
+ *
+ * For a walk that already knows which cell it is standing in. That is the whole
+ * economy of walking rather than subdividing: the cell is known exactly, so one
+ * point tap bounds it exactly - where a subdivision has to guess which cells a
+ * stretch might touch and sample several to be safe.
+ *
+ * Point sampled and wrapped, both required. A filtered tap would blend
+ * neighbouring bounds into one that bounds neither, and the patch repeats.
+ *
+ * @param[in] patchUV - Position in patch space; whole units are one patch.
+ * @param[in] level - Mip level of the pyramid to ask.
+ *
+ * @return `x` the highest and `y` the lowest world height in that cell.
+ */
+inline float2 ocean_height_bounds_uv(in float2 patchUV, in uint level)
+{
+	const ShaderOcean ocean = GetWeather().ocean;
+
+	[branch]
+	if (ocean.texture_heightHierarchy < 0)
+	{
+		return ocean.water_height.xx;
+	}
+
+	Texture2D<float2> hierarchy =
+		bindless_textures_float2[
+			descriptor_index(ocean.texture_heightHierarchy)];
+
+	return ocean.water_height
+		+ hierarchy.SampleLevel(sampler_point_wrap, patchUV, level);
+}
+
 inline float2 ocean_height_bounds(in float3 position, in uint level)
 {
 	const ShaderOcean ocean = GetWeather().ocean;
@@ -189,69 +223,11 @@ inline float2 ocean_height_bounds(in float3 position, in uint level)
 }
 
 /**
- * The surface's bounds over a whole stretch of the patch, not just a point.
- *
- * Two point taps, at the stretch's own ends, unioned. The caller asks for a
- * level whose texel is wider than the stretch, so the two texels sampled
- * between them hold nearly all of it.
- *
- * **Nearly, not provably.** A stretch running diagonally can clip the corner of
- * a texel neither end sits in, and that corner is unbounded here. The slack
- * that covers it is the base level's own: it is built from a four by four
- * window for a cell spanning two texels, so each cell already reports a good
- * deal more than it strictly owns. Four taps would close the gap outright and
- * cost twice as much on the hottest path in the water - and this is asked at
- * every node of every descent.
- *
- * A bilinear tap would be cheaper still and simply wrong: it averages
- * neighbouring bounds into a value that bounds neither.
- *
- * @param[in] pointNear - World position at one end of the stretch; `xz` used.
- * @param[in] pointFar - World position at the other end.
- * @param[in] level - Mip level of the pyramid to ask.
- *
- * @return `x` the highest and `y` the lowest world height across the stretch.
- */
-inline float2 ocean_height_bounds_region(
-	in float3 pointNear, in float3 pointFar, in uint level
-)
-{
-	const ShaderOcean ocean = GetWeather().ocean;
-
-	[branch]
-	if (ocean.texture_heightHierarchy < 0)
-	{
-		return ocean.water_height.xx;
-	}
-
-	Texture2D<float2> hierarchy =
-		bindless_textures_float2[
-			descriptor_index(ocean.texture_heightHierarchy)];
-
-	uint width;
-	uint height;
-	uint levels;
-	hierarchy.GetDimensions(0, width, height, levels);
-
-	const uint clamped = min(level, levels - 1);
-	const float2 uvNear = pointNear.xz * ocean.patch_size_rcp;
-	const float2 uvFar = pointFar.xz * ocean.patch_size_rcp;
-
-	const float2 near = hierarchy.SampleLevel(
-		sampler_point_wrap, uvNear, clamped);
-	const float2 far = hierarchy.SampleLevel(
-		sampler_point_wrap, uvFar, clamped);
-
-	return ocean.water_height + float2(
-		max(near.x, far.x), min(near.y, far.y));
-}
-
-/**
  * The coarsest pyramid level whose texel is at least as wide as a stretch.
  *
- * `ocean_height_bounds_region` bounds half a texel either side of its centre,
- * so a stretch is covered once the texel is as wide as the stretch itself.
- * Asking a finer level than that would bound only part of it.
+ * For starting a walk at a level that fits what it has to cross, rather than at
+ * the coarsest and descending to it - which costs one step per level, every
+ * call, before the search can advance at all.
  *
  * @param[in] extent - Length of the stretch across the patch, in metres.
  *

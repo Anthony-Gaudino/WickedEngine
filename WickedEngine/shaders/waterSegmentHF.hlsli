@@ -43,6 +43,50 @@ static const uint WATER_SEGMENT_STEPS = 12;
 static const uint WATER_SEGMENT_REFINEMENTS = 3;
 
 /**
+ * Finds crossings by walking the height pyramid instead of sampling a fixed
+ * number of times along the segment.
+ *
+ * The march samples a set number of times whatever the stretch, so a wave
+ * narrower than the spacing is missed - and a near-horizontal ray lies inside
+ * the slab for hundreds of metres, which is where it fails. The walk skips a
+ * cell only when the ray passes wholly above or wholly below everything the
+ * surface reaches inside it, which holds at any length.
+ *
+ * Set to 0 to fall back to the march, for comparing the two.
+ */
+#define WATER_SEGMENT_HIERARCHICAL 1
+
+/**
+ * Cells the walk may enter before giving up.
+ *
+ * A ceiling on the work, not a resolution. Open water is crossed in a handful
+ * of patch-sized strides because every skip widens the next one; the budget
+ * only binds where a ray runs along many crests at once, which is the
+ * near-horizontal case. Reaching it leaves whatever was found so far.
+ */
+static const uint WATER_SEGMENT_WALK_BUDGET = 128;
+
+/**
+ * Finest pyramid level the walk descends to.
+ *
+ * **Zero, and it cannot be raised to save work.** A leaf is answered by testing
+ * which side of the surface each of its ends is on, so a sheet of water thinner
+ * than the leaf is entered and left inside one cell, puts both ends on the same
+ * side, and is not seen at all. That is the very failure this walk exists to
+ * remove - a feature narrower than the sampling - reintroduced at the size of a
+ * cell instead of the size of a step, and it draws as holes quantised to the
+ * cell grid.
+ *
+ * Crests really do throw sheets that thin: a camera placed between two of them
+ * is underwater, so they are water volume and not an artifact to be tuned away.
+ *
+ * The cost of walking to level zero is bounded by the bound itself, which is
+ * the point of having one - a cell is only entered when the surface could
+ * genuinely be crossed inside it.
+ */
+static const uint WATER_SEGMENT_WALK_MIN_LEVEL = 0;
+
+/**
  * Sample phase for a caller whose answer is a decision rather than a quantity.
  *
  * The step centre, fixed. A moving phase is what keeps a continuous result from
@@ -80,6 +124,15 @@ struct WaterSegment
 	 * Wave surface normal at the first crossing, pointing up out of the water.
 	 */
 	float3 entryNormal;
+
+	/**
+	 * Cells the hierarchical walk entered, for diagnosis. 0 on the march.
+	 *
+	 * A search that reaches its budget returns what it had, which is a hole in
+	 * the water - so knowing how close a view runs to the ceiling says whether
+	 * the ceiling is the problem before it is raised.
+	 */
+	uint cellsUsed;
 };
 
 /**
@@ -176,6 +229,191 @@ inline float3 WaterSegmentSurfaceNormal(in float3 position)
  *
  * @return What the segment met. All fields are zero where there is no ocean.
  */
+/**
+ * Brackets the first and last surface crossing on a stretch of the segment.
+ *
+ * Walks the ocean's height pyramid cell by cell rather than sampling the
+ * stretch a set number of times. A cell is skipped whole when the ray passes
+ * above everything the surface reaches inside it or below everything - which is
+ * true however long the stretch is, and is the guarantee a fixed sample count
+ * cannot give. Twelve samples over the four hundred metres a near-horizontal
+ * ray spends inside the wave slab land thirty-three metres apart, and step over
+ * crests entirely.
+ *
+ * **Walked, not subdivided.** Halving a stretch and testing each half re-tests
+ * ground already covered and costs by the LENGTH of the stretch; a walk costs
+ * by the number of cells actually entered, which is what the sea contains
+ * rather than how far away it is. It also knows exactly which cell it stands
+ * in, so one point tap bounds that cell exactly where a subdivision must sample
+ * several to cover a stretch that could straddle any of them.
+ *
+ * Climbing a level after every skip is what makes open water nearly free: an
+ * empty stretch is crossed in a handful of patch-sized steps. Descending on a
+ * possible crossing is what keeps it exact.
+ *
+ * References:
+ * https://www.nvidia.com/docs/IO/8228/GDC2003_SummedAreaVariance.pdf
+ *
+ * @param[in] origin - Start of the whole segment, in world space.
+ * @param[in] direction - Normalized direction along it.
+ * @param[in] searchNear - Distance along the segment where the search starts.
+ * @param[in] searchFar - Distance where it ends.
+ * @param[out] firstLo - Near side of the bracket around the first crossing.
+ * @param[out] firstHi - Far side of it. Negative where nothing was crossed.
+ * @param[out] lastLo - Near side of the bracket around the last crossing.
+ * @param[out] lastHi - Far side of it.
+ */
+inline void WaterSegmentBracketCrossings(
+	in float3 origin,
+	in float3 direction,
+	in float searchNear,
+	in float searchFar,
+	out float firstLo,
+	out float firstHi,
+	out float lastLo,
+	out float lastHi,
+	out uint cellsUsed
+)
+{
+	firstLo = -1;
+	firstHi = -1;
+	lastLo = -1;
+	lastHi = -1;
+
+	const ShaderOcean ocean = GetWeather().ocean;
+
+	uint baseWidth;
+	uint baseHeight;
+	uint levelCount;
+	bindless_textures_float2[
+		descriptor_index(ocean.texture_heightHierarchy)].GetDimensions(
+			0, baseWidth, baseHeight, levelCount);
+
+	// Patch space, where one unit is one patch and the pyramid is one texel
+	// wide at its coarsest. The walk is done unwrapped so the geometry stays
+	// continuous; only the lookups wrap.
+	const float2 originUV = origin.xz * ocean.patch_size_rcp;
+	const float2 directionUV = direction.xz * ocean.patch_size_rcp;
+
+	// **Started at a level that fits the segment, not at the coarsest.**
+	//
+	// The coarsest cell covers the whole patch, so for any segment shorter than
+	// that it always straddles the ray and the walk spends its first steps
+	// descending without advancing - one per level, every call, before the
+	// search begins. Beginning where the cell is about the size of the segment
+	// skips that descent entirely.
+	//
+	// Never finer than the segment needs either: a coarser start is free, since
+	// an empty stretch is skipped whole and the level climbs back up anyway.
+	const float3 searchStart = mad(searchNear, direction, origin);
+	const float3 searchEnd = mad(searchFar, direction, origin);
+
+	uint level = min(
+		ocean_height_bounds_level(length(searchEnd.xz - searchStart.xz)),
+		levelCount - 1);
+
+	float along = searchNear;
+
+	cellsUsed = 0;
+
+	uint budget = WATER_SEGMENT_WALK_BUDGET;
+
+	[loop]
+	while (along < searchFar && budget > 0)
+	{
+		--budget;
+		++cellsUsed;
+
+		const uint dimension = max(baseWidth >> level, 1u);
+		const float2 hereUV = originUV + directionUV * along;
+
+		// How far to the cell's far side, on whichever axis leaves first. A
+		// component going nowhere never leaves, hence the guard.
+		const float2 cellNext = (floor(hereUV * dimension)
+			+ select(directionUV > 0, 1.0, 0.0)) / dimension;
+
+		const float2 toEdge = select(
+			abs(directionUV) > 1e-9,
+			(cellNext - hereUV) / directionUV,
+			FLT_MAX);
+
+		// **Nudged past the boundary by a fraction of the cell, never by a
+		// fixed distance.** A ray running almost parallel to a cell edge
+		// leaves it a hair beyond where it entered, and a fixed nudge that is
+		// small next to a coarse cell is not enough to carry such a ray across
+		// at all - it stalls on the seam, taking near-zero steps until the
+		// budget runs out, which draws as a line down the screen at whichever
+		// direction happens to be axis aligned in patch space.
+		//
+		// A minimum step sized by the cell removes the stall outright: no
+		// matter how grazing the crossing, the walk always leaves.
+		const float cellWorld = rcp(max(ocean.patch_size_rcp, 1e-6))
+			/ (float)dimension;
+
+		const float cellSpan = max(min(toEdge.x, toEdge.y), 0.0);
+		const float exitAlong = min(
+			along + max(cellSpan, cellWorld * 0.01) + cellWorld * 1e-3,
+			searchFar);
+
+		const float3 pointNear = mad(along, direction, origin);
+		const float3 pointFar = mad(exitAlong, direction, origin);
+
+		const float2 bounds = ocean_height_bounds_uv(hereUV, level);
+
+		const bool clearOfCell =
+			min(pointNear.y, pointFar.y) > bounds.x
+			|| max(pointNear.y, pointFar.y) < bounds.y;
+
+		[branch]
+		if (clearOfCell)
+		{
+			// Nothing here. Step past it and widen the stride, so an empty sea
+			// is crossed in patch-sized strides instead of texel-sized ones.
+			along = exitAlong;
+			level = min(level + 1, levelCount - 1);
+			continue;
+		}
+
+		[branch]
+		if (level > WATER_SEGMENT_WALK_MIN_LEVEL)
+		{
+			// A crossing is possible somewhere in here. Ask a finer cell the
+			// same question without moving.
+			--level;
+			continue;
+		}
+
+		// Finest cell, and the ray could be crossing inside it. Only the ends
+		// can say whether it does; the bound said it was possible, not that it
+		// happened.
+		const bool nearSubmerged = WaterSegmentHeightAbove(pointNear) <= 0;
+		const bool farSubmerged = WaterSegmentHeightAbove(pointFar) <= 0;
+
+		if (nearSubmerged != farSubmerged)
+		{
+			if (firstLo < 0)
+			{
+				firstLo = along;
+				firstHi = exitAlong;
+			}
+
+			lastLo = along;
+			lastHi = exitAlong;
+		}
+		else
+		{
+			// The bound allowed a crossing and the ends disagree with it, so
+			// there is nothing here after all - which is the same news as a
+			// skip and earns the same widening. Without this the walk grinds
+			// along at the finest level for as far as the bound stays
+			// hopeful, which along a crest is most of the way.
+			level = min(level + 1, levelCount - 1);
+		}
+
+		along = exitAlong;
+	}
+}
+
 inline WaterSegment TraceWaterSegment(
 	in float3 origin,
 	in float3 target,
@@ -188,6 +426,7 @@ inline WaterSegment TraceWaterSegment(
 	result.submerged = 0;
 	result.entryPoint = origin;
 	result.entryNormal = float3(0, 1, 0);
+	result.cellsUsed = 0;
 
 	const ShaderOcean ocean = GetWeather().ocean;
 
@@ -285,6 +524,11 @@ inline WaterSegment TraceWaterSegment(
 	float lastLo = -1;
 	float lastHi = -1;
 
+#if WATER_SEGMENT_HIERARCHICAL
+	WaterSegmentBracketCrossings(
+		origin, direction, slabNear, marchFar,
+		firstLo, firstHi, lastLo, lastHi, result.cellsUsed);
+#else
 	float previousDistance = slabNear;
 	bool previousSubmerged = WaterSegmentHeightAbove(
 		mad(previousDistance, direction, origin)) <= 0;
@@ -312,6 +556,7 @@ inline WaterSegment TraceWaterSegment(
 		previousDistance = distanceAlong;
 		previousSubmerged = sampleSubmerged;
 	}
+#endif // WATER_SEGMENT_HIERARCHICAL
 
 	// Nothing was crossed inside the marched stretch. Beyond it the surface is
 	// the still plane, so the ends decide: they disagree only if the plane was
