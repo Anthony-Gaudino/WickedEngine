@@ -925,11 +925,15 @@ namespace wi
 			((camera.shadercamera_options & SHADERCAMERA_OPTION_WATER_REFRACTION_RT) != 0)
 			&& PSO_rtapi.IsValid();
 
+		const bool reflection_rt =
+			((camera.shadercamera_options & SHADERCAMERA_OPTION_WATER_REFLECTION_RT) != 0)
+			&& PSO_rtapi.IsValid();
+
 		if (wire)
 		{
 			device->BindPipelineState(&PSO_wire, cmd);
 		}
-		else if (refraction_rt)
+		else if (refraction_rt || reflection_rt)
 		{
 			device->BindPipelineState(&PSO_rtapi, cmd);
 		}

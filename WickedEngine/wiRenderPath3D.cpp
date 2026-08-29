@@ -868,6 +868,15 @@ namespace wi
 			{
 				camera->shadercamera_options |= SHADERCAMERA_OPTION_WATER_REFRACTION_RT;
 			}
+			// Follows the engine's own ray traced reflections switch rather
+			// than a separate one: the water is reflecting the same scene by
+			// the same means, it just has to trace for itself because the
+			// buffer that pass writes holds nothing at a water pixel.
+			if (getRaytracedReflectionEnabled() &&
+				device->CheckCapability(GraphicsDeviceCapability::RAYTRACING))
+			{
+				camera->shadercamera_options |= SHADERCAMERA_OPTION_WATER_REFLECTION_RT;
+			}
 		}
 
 		camera->texture_primitiveID_index = device->GetDescriptorIndex(&rtPrimitiveID, SubresourceType::SRV);

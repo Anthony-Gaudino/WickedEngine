@@ -1419,6 +1419,22 @@ enum SHADERCAMERA_OPTIONS
 	// Requires hardware ray tracing and a valid TLAS. Without either, the
 	// offset is what is used.
 	SHADERCAMERA_OPTION_WATER_REFRACTION_RT = 1 << 9,
+
+	// Reflect the water by tracing the reflected ray into the scene.
+	//
+	// The engine's ray traced reflections resolve into a screen space buffer
+	// built from the OPAQUE depth and normals, before the transparents draw, so
+	// there is nothing in it at a water pixel but the reflection of whatever
+	// opaque surface stood there. The water cannot read it and has to trace its
+	// own ray.
+	//
+	// A reflection ray is the case `TraceSceneRadiance` suits best: it travels
+	// outwards, so the sky it answers a miss with is the right answer rather
+	// than a fallback.
+	//
+	// Requires hardware ray tracing and a valid TLAS. Without either, the sky
+	// or the global probe is what the surface reflects.
+	SHADERCAMERA_OPTION_WATER_REFLECTION_RT = 1 << 10,
 };
 
 struct alignas(16) ShaderCamera
@@ -1644,6 +1660,7 @@ struct alignas(16) ShaderCamera
 	inline bool IsWaterSideNear() { return options & SHADERCAMERA_OPTION_WATERSIDE_NEAR; }
 	inline bool IsWaterSunShafts() { return options & SHADERCAMERA_OPTION_WATER_SUN_SHAFTS; }
 	inline bool IsWaterRefractionRT() { return options & SHADERCAMERA_OPTION_WATER_REFRACTION_RT; }
+	inline bool IsWaterReflectionRT() { return options & SHADERCAMERA_OPTION_WATER_REFLECTION_RT; }
 
 	inline float3 screen_to_nearplane(float4 svposition)
 	{

@@ -107,6 +107,27 @@ half3 OceanFallbackReflection(in Surface surface, in bool cameraBelowWater)
 }
 
 /**
+ * Whether the surface's reflection is traced rather than looked up.
+ *
+ * Asked in two places - by the reflection itself, and by the planar pass to
+ * know whether to stand aside - so it is written once here. A traced ray knows
+ * what actually stands in the reflected direction for the normal this fragment
+ * really has; the planar pass renders about the FLAT plane and is only ever
+ * right for a surface lying in it. Where both are available the traced answer
+ * is the better one everywhere, so the planar pass is not mixed into it.
+ *
+ * @return true when the reflection is traced into the scene.
+ */
+bool OceanReflectionIsTraced()
+{
+#ifdef RTAPI
+	return GetCamera().IsWaterReflectionRT() && GetScene().TLAS >= 0;
+#else
+	return false;
+#endif // RTAPI
+}
+
+/**
  * What water of no particular end sends back towards the eye.
  *
  * The answer for light that reached this surface from below having met nothing
@@ -255,6 +276,91 @@ half3 OceanDeepWaterColumn(
 }
 
 #ifdef RTAPI
+/**
+ * What the surface reflects, found by following the reflected ray.
+ *
+ * The engine's own ray traced reflections cannot serve the water: they resolve
+ * into a screen space buffer built from the OPAQUE depth and normals, before
+ * the transparents draw, so at a water pixel that buffer holds the reflection
+ * of whatever opaque surface stood there. The water has to trace for itself.
+ *
+ * **Which medium the ray ends in decides how it is answered.** Leaving the
+ * water it travels through air, so what it found arrives undimmed and a miss is
+ * the sky - the one case where `TraceSceneRadiance`'s answer to a miss is the
+ * right one rather than a fallback. Leaving the underside it does not leave the
+ * water at all: past the critical angle that face is a total mirror, so the ray
+ * turns back down into the sea, what it found is seen through the water it
+ * crossed, and a miss is more water. That is the same transport the refraction
+ * is given, for the same reason, and it is taken from the same column.
+ *
+ * @param[in] surface - The shaded surface, supplying the reflection vector and
+ *                      the Fresnel term the result is weighted by.
+ * @param[in] V - Normalized direction from the surface towards the eye.
+ * @param[in] dist - Distance from the eye to this fragment, for the ray cone.
+ * @param[in] screenCoord - Screen space UV (0-1) of the fragment.
+ * @param[in] pixel - Integer pixel coordinate, for the trace's texture LOD.
+ * @param[in] cameraBelowWater - Whether the eye is under the surface, which
+ *                               decides which of the two answers applies.
+ *
+ * @return Reflected radiance, weighted by Fresnel as the probe path weights
+ *         its own.
+ */
+half3 OceanTracedReflection(
+	in Surface surface,
+	in float3 V,
+	in float dist,
+	in float2 screenCoord,
+	in uint2 pixel,
+	in bool cameraBelowWater
+)
+{
+	RayDesc ray;
+	ray.Origin = surface.P;
+	ray.Direction = surface.R;
+	ray.TMin = 0.01;
+	ray.TMax = FLT_MAX;
+
+	RayCone raycone = RayCone::from_spread_angle(
+		pixel_cone_spread_angle_from_image_height(
+			GetCamera().internal_resolution.y));
+	raycone = raycone.propagate(0, dist);
+
+	const SceneRadiance rad = TraceSceneRadiance(
+		ray,
+		~0u,
+		RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES |
+		RAY_FLAG_CULL_BACK_FACING_TRIANGLES,
+		raycone,
+		pixel,
+		GetCamera().internal_resolution_rcp
+	);
+
+	[branch]
+	if (!cameraBelowWater)
+	{
+		return (half3)rad.color * surface.F;
+	}
+
+	const WaterVolumetrics medium = MakeWaterVolumetrics(1);
+	const float range = medium.InvisibleRange();
+
+	const bool found = rad.distance < FLT_MAX;
+	const float crossed = found ? min(rad.distance, range) : range;
+	const half3 arriving = found ? (half3)rad.color : (half3)0;
+
+	const half3 transmittance = (half3)exp(-medium.sigmaT * crossed);
+
+	const half3 columnShare = (1 - transmittance) * surface.F;
+	const float columnWeight =
+		max(max(columnShare.r, columnShare.g), columnShare.b);
+
+	return lerp(
+		OceanDeepWaterColumn(
+			surface, V, screenCoord, pixel, medium, columnWeight),
+		arriving,
+		transmittance) * surface.F;
+}
+
 /**
  * The radiance arriving at this surface along the refracted direction.
  *
@@ -630,8 +736,19 @@ float4 main(PSIn input) : SV_TARGET
 		surface.F = lerp(surface.F, (half3)mirrored, (half)eye_submersion);
 	}
 	
+	// **A traced reflection replaces the planar pass, it is not blended with
+	// it.** Both describe the same thing, and the traced one is right for the
+	// normal this fragment actually has rather than for the flat plane, so
+	// mixing them can only pull the better answer towards the worse.
 	[branch]
-	if (camera.texture_reflection_index >= 0)
+	if (OceanReflectionIsTraced())
+	{
+#ifdef RTAPI
+		lighting.indirect.specular += OceanTracedReflection(
+			surface, V, dist, ScreenCoord.xy, pixel, camera_below_water);
+#endif // RTAPI
+	}
+	else if (camera.texture_reflection_index >= 0)
 	{
 		//REFLECTION
 		float4 reflectionPos = mul(camera.reflection_view_projection, float4(surface.P, 1));
