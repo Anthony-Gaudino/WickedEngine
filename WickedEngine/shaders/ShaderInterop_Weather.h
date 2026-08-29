@@ -489,6 +489,23 @@ struct alignas(16) ShaderOcean
 	 */
 	int buffer_max_displacement;
 
+	/**
+	 * Min/max pyramid of the drawn surface height, or -1 where unavailable.
+	 *
+	 * `x` is the highest the surface reaches anywhere in the patch region a
+	 * texel covers, `y` the lowest. A ray passing entirely above the one or
+	 * below the other cannot cross the surface in that region, however long it
+	 * runs - which is the bound a fixed step count along a segment cannot give.
+	 *
+	 * **Placed here, at the end, deliberately.** Inserted among the scalars
+	 * above it would push `displacement_fade` across a sixteen byte boundary,
+	 * which HLSL relocates and C++ does not - and every field after it would
+	 * then disagree between the two, silently. Here it fills the word left over
+	 * by `shore_foam_strength` and `buffer_max_displacement`, so it costs
+	 * nothing and moves nothing.
+	 */
+	int texture_heightHierarchy;
+
 	bool IsValid() { return texture_displacementmap >= 0; }
 	bool IsSubsurfaceScattering() { return flags & OCEAN_FLAG_SUBSURFACE_SCATTERING; }
 	bool IsShoreFoam() { return flags & OCEAN_FLAG_SHORE_FOAM; }

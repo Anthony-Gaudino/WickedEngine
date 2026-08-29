@@ -147,6 +147,144 @@ inline float3 ocean_underwater_test_position(in float2 uv)
  *
  * @return World height of the surface there.
  */
+/**
+ * The highest and lowest the drawn surface reaches over a region of the patch.
+ *
+ * Reads the ocean's min/max height pyramid. Level 0 covers two displacement
+ * texels across, and each level after it covers twice as much ground, up to a
+ * single texel bounding the whole patch. The bound is exact in the sense that
+ * matters: the surface anywhere inside the region lies between the two, so a
+ * ray passing entirely above the first or below the second cannot cross it
+ * there, however long it runs.
+ *
+ * Point sampled, and it must stay that way - a filtered read would blend two
+ * neighbouring bounds into something that bounds neither.
+ *
+ * @param[in] position - World position; only `xz` is used.
+ * @param[in] level - Mip level of the pyramid to ask.
+ *
+ * @return `x` the highest and `y` the lowest world height, or the still plane
+ *         in both where the pyramid is unavailable.
+ */
+inline float2 ocean_height_bounds(in float3 position, in uint level)
+{
+	const ShaderOcean ocean = GetWeather().ocean;
+
+	[branch]
+	if (ocean.texture_heightHierarchy < 0)
+	{
+		return ocean.water_height.xx;
+	}
+
+	Texture2D<float2> hierarchy =
+		bindless_textures_float2[
+			descriptor_index(ocean.texture_heightHierarchy)];
+
+	const float2 patchUV = position.xz * ocean.patch_size_rcp;
+
+	const float2 bounds = hierarchy.SampleLevel(
+		sampler_point_wrap, patchUV, level);
+
+	return ocean.water_height + bounds;
+}
+
+/**
+ * The surface's bounds over a whole stretch of the patch, not just a point.
+ *
+ * Two point taps, at the stretch's own ends, unioned. The caller asks for a
+ * level whose texel is wider than the stretch, so the two texels sampled
+ * between them hold nearly all of it.
+ *
+ * **Nearly, not provably.** A stretch running diagonally can clip the corner of
+ * a texel neither end sits in, and that corner is unbounded here. The slack
+ * that covers it is the base level's own: it is built from a four by four
+ * window for a cell spanning two texels, so each cell already reports a good
+ * deal more than it strictly owns. Four taps would close the gap outright and
+ * cost twice as much on the hottest path in the water - and this is asked at
+ * every node of every descent.
+ *
+ * A bilinear tap would be cheaper still and simply wrong: it averages
+ * neighbouring bounds into a value that bounds neither.
+ *
+ * @param[in] pointNear - World position at one end of the stretch; `xz` used.
+ * @param[in] pointFar - World position at the other end.
+ * @param[in] level - Mip level of the pyramid to ask.
+ *
+ * @return `x` the highest and `y` the lowest world height across the stretch.
+ */
+inline float2 ocean_height_bounds_region(
+	in float3 pointNear, in float3 pointFar, in uint level
+)
+{
+	const ShaderOcean ocean = GetWeather().ocean;
+
+	[branch]
+	if (ocean.texture_heightHierarchy < 0)
+	{
+		return ocean.water_height.xx;
+	}
+
+	Texture2D<float2> hierarchy =
+		bindless_textures_float2[
+			descriptor_index(ocean.texture_heightHierarchy)];
+
+	uint width;
+	uint height;
+	uint levels;
+	hierarchy.GetDimensions(0, width, height, levels);
+
+	const uint clamped = min(level, levels - 1);
+	const float2 uvNear = pointNear.xz * ocean.patch_size_rcp;
+	const float2 uvFar = pointFar.xz * ocean.patch_size_rcp;
+
+	const float2 near = hierarchy.SampleLevel(
+		sampler_point_wrap, uvNear, clamped);
+	const float2 far = hierarchy.SampleLevel(
+		sampler_point_wrap, uvFar, clamped);
+
+	return ocean.water_height + float2(
+		max(near.x, far.x), min(near.y, far.y));
+}
+
+/**
+ * The coarsest pyramid level whose texel is at least as wide as a stretch.
+ *
+ * `ocean_height_bounds_region` bounds half a texel either side of its centre,
+ * so a stretch is covered once the texel is as wide as the stretch itself.
+ * Asking a finer level than that would bound only part of it.
+ *
+ * @param[in] extent - Length of the stretch across the patch, in metres.
+ *
+ * @return Level to ask for. 0 where the stretch is shorter than a base texel.
+ */
+inline uint ocean_height_bounds_level(in float extent)
+{
+	const ShaderOcean ocean = GetWeather().ocean;
+
+	[branch]
+	if (ocean.texture_heightHierarchy < 0)
+	{
+		return 0;
+	}
+
+	Texture2D<float2> hierarchy =
+		bindless_textures_float2[
+			descriptor_index(ocean.texture_heightHierarchy)];
+
+	uint width;
+	uint height;
+	uint levels;
+	hierarchy.GetDimensions(0, width, height, levels);
+
+	// Metres one base texel covers: the pyramid spans exactly one patch.
+	const float baseTexel = rcp(max(ocean.patch_size_rcp, 0.000001))
+		/ (float)max(width, 1u);
+
+	const float wanted = log2(max(extent / max(baseTexel, 0.000001), 1.0));
+
+	return min((uint)ceil(wanted), levels - 1);
+}
+
 inline float ocean_surface_height(in float3 position)
 {
 	const ShaderOcean ocean = GetWeather().ocean;

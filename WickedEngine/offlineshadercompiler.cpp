@@ -108,6 +108,7 @@ wi::vector<ShaderEntry> shaders = {
 	{"paint_textureCS", wi::graphics::ShaderStage::CS},
 	{"oceanUpdateDisplacementMapCS", wi::graphics::ShaderStage::CS},
 	{"oceanUpdateGradientFoldingCS", wi::graphics::ShaderStage::CS},
+	{"oceanUpdateHeightHierarchyCS", wi::graphics::ShaderStage::CS},
 	{"oceanSimulatorCS", wi::graphics::ShaderStage::CS},
 	{"msao_interleaveCS", wi::graphics::ShaderStage::CS},
 	{"msao_preparedepthbuffers1CS", wi::graphics::ShaderStage::CS},

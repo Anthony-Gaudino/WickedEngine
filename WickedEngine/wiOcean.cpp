@@ -2,6 +2,7 @@
 #include "wiRenderer.h"
 #include "wiResourceManager.h"
 #include "shaders/ShaderInterop_Ocean.h"
+#include "shaders/ShaderInterop_Postprocess.h"
 #include "wiScene.h"
 #include "wiBacklog.h"
 #include "wiEventHandler.h"
@@ -23,6 +24,7 @@ namespace wi
 		Shader		updateSpectrumCS;
 		Shader		updateDisplacementMapCS;
 		Shader		updateGradientFoldingCS;
+		Shader		updateHeightHierarchyCS;
 		Shader		oceanSurfVS;
 		Shader		wireframePS;
 		Shader		oceanSurfPS;
@@ -372,6 +374,7 @@ namespace wi
 			wi::renderer::LoadShader(ShaderStage::CS, updateSpectrumCS, "oceanSimulatorCS.cso");
 			wi::renderer::LoadShader(ShaderStage::CS, updateDisplacementMapCS, "oceanUpdateDisplacementMapCS.cso");
 			wi::renderer::LoadShader(ShaderStage::CS, updateGradientFoldingCS, "oceanUpdateGradientFoldingCS.cso");
+			wi::renderer::LoadShader(ShaderStage::CS, updateHeightHierarchyCS, "oceanUpdateHeightHierarchyCS.cso");
 
 			wi::renderer::LoadShader(ShaderStage::VS, oceanSurfVS, "oceanSurfaceVS.cso");
 
@@ -553,6 +556,31 @@ namespace wi
 			subresource_index = device->CreateSubresource(&gradientMap, SubresourceType::UAV, 0, 1, i, 1);
 			assert(subresource_index == i);
 		}
+
+		// The height hierarchy: two channels, highest and lowest, all the way
+		// down to a single texel covering the whole patch. Its own subresources
+		// per level, because each level is written by its own dispatch reading
+		// the level above - `GenerateMipChain` cannot build it, a filtered mip
+		// being an average rather than a bound.
+		tex_desc.format = Format::R16G16_FLOAT;
+		tex_desc.width = hmap_dim / 2;
+		tex_desc.height = hmap_dim / 2;
+		tex_desc.mip_levels = GetMipCount(tex_desc.width, tex_desc.height);
+		tex_desc.layout = ResourceState::SHADER_RESOURCE_COMPUTE;
+		device->CreateTextureZeroed(&tex_desc, &heightHierarchy);
+		device->SetName(&heightHierarchy, "ocean.heightHierarchy");
+
+		for (uint32_t i = 0; i < heightHierarchy.GetDesc().mip_levels; ++i)
+		{
+			int subresource_index;
+			subresource_index = device->CreateSubresource(&heightHierarchy, SubresourceType::SRV, 0, 1, i, 1);
+			assert(subresource_index == i);
+			subresource_index = device->CreateSubresource(&heightHierarchy, SubresourceType::UAV, 0, 1, i, 1);
+			assert(subresource_index == i);
+		}
+
+		tex_desc.width = hmap_dim;
+		tex_desc.height = hmap_dim;
 
 		// Half-float displacement: the values are zero-mean wave offsets, so 16-bit
 		// float's ~0.05% relative precision is ample for both rendering and the CPU
@@ -815,6 +843,68 @@ namespace wi
 			GPUBarrier::Memory(&buffer_MaxDisplacement),
 		};
 		device->Barrier(displacementDone, arraysize(displacementDone), cmd);
+
+		// **The height hierarchy, one dispatch per level.**
+		//
+		// Level zero reduces the displacement map; every level after it reduces
+		// the one above. Each has to finish before the next reads it, so they
+		// cannot be merged into a single pass.
+		{
+			device->EventBegin("Ocean Height Hierarchy", cmd);
+
+			device->BindComputeShader(&updateHeightHierarchyCS, cmd);
+
+			const TextureDesc& hierarchyDesc = heightHierarchy.GetDesc();
+
+			for (uint32_t level = 0; level < hierarchyDesc.mip_levels; ++level)
+			{
+				const uint32_t levelWidth =
+					std::max(1u, hierarchyDesc.width >> level);
+				const uint32_t levelHeight =
+					std::max(1u, hierarchyDesc.height >> level);
+
+				device->Barrier(
+					GPUBarrier::Image(
+						&heightHierarchy,
+						level == 0
+							? hierarchyDesc.layout
+							: ResourceState::SHADER_RESOURCE_COMPUTE,
+						ResourceState::UNORDERED_ACCESS,
+						level),
+					cmd);
+
+				PostProcess push = {};
+				push.params0.x = (float)levelWidth;
+				push.params0.y = (float)levelHeight;
+				push.params0.z = level == 0 ? 1.0f : 0.0f;
+				device->PushConstants(&push, sizeof(push), cmd);
+
+				device->BindResource(&displacementMap, 0, cmd);
+				device->BindResource(
+					&heightHierarchy, 1, cmd,
+					level == 0 ? -1 : (int)level - 1);
+				device->BindUAV(&heightHierarchy, 0, cmd, (int)level);
+
+				device->Dispatch(
+					(levelWidth + OCEAN_COMPUTE_TILESIZE - 1)
+						/ OCEAN_COMPUTE_TILESIZE,
+					(levelHeight + OCEAN_COMPUTE_TILESIZE - 1)
+						/ OCEAN_COMPUTE_TILESIZE,
+					1,
+					cmd
+				);
+
+				device->Barrier(
+					GPUBarrier::Image(
+						&heightHierarchy,
+						ResourceState::UNORDERED_ACCESS,
+						ResourceState::SHADER_RESOURCE_COMPUTE,
+						level),
+					cmd);
+			}
+
+			device->EventEnd(cmd);
+		}
 
 		// Update gradient map:
 		device->BindComputeShader(&updateGradientFoldingCS, cmd);
@@ -1098,6 +1188,11 @@ namespace wi
 	const Texture* Ocean::getGradientMap() const
 	{
 		return &gradientMap;
+	}
+
+	const Texture* Ocean::getHeightHierarchy() const
+	{
+		return &heightHierarchy;
 	}
 
 	const GPUBuffer* Ocean::GetMaxDisplacementBuffer() const noexcept

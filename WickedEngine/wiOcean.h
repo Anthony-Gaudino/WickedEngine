@@ -121,6 +121,7 @@ namespace wi
 
 		const wi::graphics::Texture* getDisplacementMap() const;
 		const wi::graphics::Texture* getGradientMap() const;
+		const wi::graphics::Texture* getHeightHierarchy() const;
 
 		/**
 		 * Buffer holding the tallest wave in the patch, as one float's bits.
@@ -191,6 +192,22 @@ namespace wi
 	protected:
 		wi::graphics::Texture displacementMap;		// (RGBA32F)
 		wi::graphics::Texture gradientMap;			// (RGBA16F)
+
+		/**
+		 * Min/max pyramid of the drawn surface's height, per mip. (RG16F)
+		 *
+		 * `x` is the highest the surface reaches anywhere in the patch region
+		 * a texel covers and `y` the lowest, so a ray passing entirely above
+		 * the one or below the other cannot cross the surface there at all.
+		 * That is what lets a trace reject a whole region instead of sampling
+		 * along it, and it holds however long the segment is - which a fixed
+		 * step count cannot.
+		 *
+		 * Built by `oceanUpdateHeightHierarchyCS`, one dispatch per level.
+		 * NOT by `GenerateMipChain`: a filtered chain averages, and an average
+		 * is not a bound.
+		 */
+		wi::graphics::Texture heightHierarchy;
 
 		wi::graphics::Texture displacementMap_readback[wi::graphics::GraphicsDevice::GetBufferCount()];		// (RGBA32F)
 		mutable bool displacement_readback_valid[arraysize(displacementMap_readback)] = {};
