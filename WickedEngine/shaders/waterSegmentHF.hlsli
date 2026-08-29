@@ -282,12 +282,27 @@ inline void WaterSegmentBracketCrossings(
 
 	const ShaderOcean ocean = GetWeather().ocean;
 
+	// **Everything the loop needs that does not change, fetched once.** The
+	// walk runs tens of iterations per call and several calls per pixel, so a
+	// descriptor lookup, a reciprocal or a constant-buffer read left inside it
+	// is paid tens of thousands of times a frame for one answer.
+	Texture2D<float2> hierarchy =
+		bindless_textures_float2[
+			descriptor_index(ocean.texture_heightHierarchy)];
+
 	uint baseWidth;
 	uint baseHeight;
 	uint levelCount;
-	bindless_textures_float2[
-		descriptor_index(ocean.texture_heightHierarchy)].GetDimensions(
-			0, baseWidth, baseHeight, levelCount);
+	hierarchy.GetDimensions(0, baseWidth, baseHeight, levelCount);
+
+	const float patchLength = rcp(max(ocean.patch_size_rcp, 1e-6));
+	const float waterHeight = ocean.water_height;
+
+	// Per-level quantities, expressed so a level change is a shift rather than
+	// a divide. A cell is `baseCell` doubled once per level, and its size in
+	// patch space likewise.
+	const float baseCell = patchLength / (float)max(baseWidth, 1u);
+	const float baseCellUV = 1.0 / (float)max(baseWidth, 1u);
 
 	// Patch space, where one unit is one patch and the pyramid is one texel
 	// wide at its coarsest. The walk is done unwrapped so the geometry stays
@@ -312,9 +327,26 @@ inline void WaterSegmentBracketCrossings(
 		ocean_height_bounds_level(length(searchEnd.xz - searchStart.xz)),
 		levelCount - 1);
 
+	// The direction never changes, so neither does which way the walk leaves a
+	// cell, nor the reciprocal it divides by to find out when. A component
+	// going nowhere is given a reciprocal of zero and guarded at its use.
+	const float2 stepToFarEdge = select(directionUV > 0, 1.0, 0.0);
+	const bool2 directionMoves = abs(directionUV) > 1e-9;
+	const float2 invDirectionUV = select(
+		directionMoves,
+		rcp(select(directionMoves, directionUV, 1.0)),
+		0.0);
+
 	float along = searchNear;
 
 	cellsUsed = 0;
+
+	// The far end of the last leaf tested, so a leaf that carries straight on
+	// from it does not ask the height field the same question twice. Leaves are
+	// contiguous whenever the walk neither skipped nor changed level between
+	// them, which along a crest is most of them.
+	float carriedAlong = -1;
+	bool carriedSubmerged = false;
 
 	uint budget = WATER_SEGMENT_WALK_BUDGET;
 
@@ -324,17 +356,20 @@ inline void WaterSegmentBracketCrossings(
 		--budget;
 		++cellsUsed;
 
-		const uint dimension = max(baseWidth >> level, 1u);
+		const float levelScale = (float)(1u << level);
+		const float cellUV = baseCellUV * levelScale;
+		const float invCellUV = rcp(cellUV);
+
 		const float2 hereUV = originUV + directionUV * along;
 
 		// How far to the cell's far side, on whichever axis leaves first. A
 		// component going nowhere never leaves, hence the guard.
-		const float2 cellNext = (floor(hereUV * dimension)
-			+ select(directionUV > 0, 1.0, 0.0)) / dimension;
+		const float2 cellNext =
+			(floor(hereUV * invCellUV) + stepToFarEdge) * cellUV;
 
 		const float2 toEdge = select(
-			abs(directionUV) > 1e-9,
-			(cellNext - hereUV) / directionUV,
+			directionMoves,
+			(cellNext - hereUV) * invDirectionUV,
 			FLT_MAX);
 
 		// **Nudged past the boundary by a fraction of the cell, never by a
@@ -347,22 +382,32 @@ inline void WaterSegmentBracketCrossings(
 		//
 		// A minimum step sized by the cell removes the stall outright: no
 		// matter how grazing the crossing, the walk always leaves.
-		const float cellWorld = rcp(max(ocean.patch_size_rcp, 1e-6))
-			/ (float)dimension;
+		const float cellWorld = baseCell * levelScale;
 
 		const float cellSpan = max(min(toEdge.x, toEdge.y), 0.0);
 		const float exitAlong = min(
 			along + max(cellSpan, cellWorld * 0.01) + cellWorld * 1e-3,
 			searchFar);
 
-		const float3 pointNear = mad(along, direction, origin);
-		const float3 pointFar = mad(exitAlong, direction, origin);
+		// Only the ray's HEIGHT decides whether a cell can be crossed, so only
+		// that scalar is carried here. The full world positions are wanted
+		// solely at a leaf, and most iterations skip or descend instead.
+		const float heightNear = mad(along, direction.y, origin.y) - waterHeight;
+		const float heightFar =
+			mad(exitAlong, direction.y, origin.y) - waterHeight;
 
-		const float2 bounds = ocean_height_bounds_uv(hereUV, level);
+		// Sampled through the hoisted texture rather than through
+		// `ocean_height_bounds_uv`, which re-reads the descriptor and the
+		// water height on every call. The bound is relative to the still
+		// plane, and so is the ray's height above, so neither needs an offset
+		// added back before they are compared.
+		const float2 bounds = hierarchy.SampleLevel(
+			sampler_point_wrap, hereUV, level);
 
-		const bool clearOfCell =
-			min(pointNear.y, pointFar.y) > bounds.x
-			|| max(pointNear.y, pointFar.y) < bounds.y;
+		const float rayLow = min(heightNear, heightFar);
+		const float rayHigh = max(heightNear, heightFar);
+
+		const bool clearOfCell = rayLow > bounds.x || rayHigh < bounds.y;
 
 		[branch]
 		if (clearOfCell)
@@ -386,8 +431,17 @@ inline void WaterSegmentBracketCrossings(
 		// Finest cell, and the ray could be crossing inside it. Only the ends
 		// can say whether it does; the bound said it was possible, not that it
 		// happened.
-		const bool nearSubmerged = WaterSegmentHeightAbove(pointNear) <= 0;
+		const float3 pointNear = mad(along, direction, origin);
+		const float3 pointFar = mad(exitAlong, direction, origin);
+
+		const bool nearSubmerged = (carriedAlong == along)
+			? carriedSubmerged
+			: WaterSegmentHeightAbove(pointNear) <= 0;
+
 		const bool farSubmerged = WaterSegmentHeightAbove(pointFar) <= 0;
+
+		carriedAlong = exitAlong;
+		carriedSubmerged = farSubmerged;
 
 		if (nearSubmerged != farSubmerged)
 		{
@@ -402,11 +456,16 @@ inline void WaterSegmentBracketCrossings(
 		}
 		else
 		{
-			// The bound allowed a crossing and the ends disagree with it, so
-			// there is nothing here after all - which is the same news as a
-			// skip and earns the same widening. Without this the walk grinds
-			// along at the finest level for as far as the bound stays
-			// hopeful, which along a crest is most of the way.
+			// **Widened even though the bound was hopeful.** The bound allowed
+			// a crossing and the ends disagree with it, so there is nothing
+			// here after all - the same news as a skip, and it earns the same
+			// widening.
+			//
+			// Staying at this level instead looks cheaper, since a climb that
+			// is immediately undone costs two steps. It is not: the surface
+			// undulates away from the ray often enough that the coarse cell
+			// above is usually clear, and skipping it whole beats grinding
+			// through its children one at a time.
 			level = min(level + 1, levelCount - 1);
 		}
 
