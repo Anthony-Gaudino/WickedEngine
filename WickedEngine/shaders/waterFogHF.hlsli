@@ -542,8 +542,23 @@ WaterFog GetWaterFog(
 		? water.entryPoint.y - fragmentPosition.y
 		: -fragmentHeight;
 
+	// **Whichever of the two describes more water, because both are lower
+	// bounds and neither is the whole story.**
+	//
+	// `SubmergedViewPath` is a COLUMN: a depth divided by how steeply the
+	// refracted ray descends, with the divisor floored at the critical angle,
+	// so it can never report more than about one and a half times the drop. It
+	// is the right measure for a fragment lying under open water and it cannot
+	// express a chord - a ray entering a crest's flank and crossing it
+	// sideways falls barely at all, so the column reads as nothing while the
+	// ray has gone through metres of sea. That is what makes a crest look
+	// transparent from the side and opaque from above.
+	//
+	// `water.submerged` is the water actually crossed along the segment, which
+	// answers the chord and under-answers the column, since it is measured
+	// straight while the light arrives bent.
 	const float airPath = fragmentHeight < 0
-		? SubmergedViewPath(max(0, entryDepth), toEye)
+		? max(SubmergedViewPath(max(0, entryDepth), toEye), water.submerged)
 		: water.submerged;
 
 	// Blend on the EYE's submersion, not the medium's: the medium is fully
