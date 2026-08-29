@@ -12,6 +12,7 @@
  */
 #include "ShaderInterop_VolumetricFroxels.h"
 #include "underwaterHF.hlsli"
+#include "waterSegmentHF.hlsli"
 
 /**
  * Radial distance from the eye to a slice boundary, in metres.
@@ -193,18 +194,28 @@ inline bool VolumetricFroxelCarriesTheSun()
  * the screen instead of snapping it, and only the pixel knows where that line
  * falls.
  *
+ * **Where the water begins is traced, not inferred from the two ends.** Whether
+ * a fragment is itself submerged is a different question from whether the ray
+ * reaching it crossed water, and only the second one bounds the air: a hillside
+ * standing in the open, seen through a wave, is dry at both ends of a ray that
+ * spends metres inside the sea.
+ *
  * @param[in] screenUV - Screen space position of the fragment (0-1).
  * @param[in] fragmentPosition - World position of the fragment.
  * @param[in] distanceToEye - Radial distance from the eye to the fragment, in
  *                            metres.
  *
  * @return Distance the volume may be read out to, in metres. The whole of
- *         `distanceToEye` wherever the ray stays in one medium.
+ *         `distanceToEye` wherever the ray stays in air.
  *
- * @note Costs two surface height samples in a scene that has an ocean, and the
- *       pixel's own submersion - an unprojection and a third sample - only for
- *       a dry eye looking at something submerged, which is the one case that
- *       has a waterline to sweep.
+ * @note Costs a water segment trace for a dry eye whose ray dips into the wave
+ *       slab, which is the only case that can have water on it. A segment clear
+ *       of the slab at both ends is rejected on two compares, and a submerged
+ *       eye on one height sample.
+ *
+ * @note The same segment `ApplyWaterFog` traces for this fragment immediately
+ *       beforehand. Sharing one trace between them would halve the cost, at
+ *       the price of a distance threaded through every call site.
  */
 inline float VolumetricFroxelColumnLength(
 	in float2 screenUV, in float3 fragmentPosition, in float distanceToEye
@@ -218,8 +229,6 @@ inline float VolumetricFroxelColumnLength(
 
 	const float3 eye = GetCamera().position;
 	const float eyeHeight = eye.y - ocean_drawn_surface_height(eye);
-	const float fragmentHeight =
-		fragmentPosition.y - ocean_drawn_surface_height(fragmentPosition);
 
 	// **An eye under the surface reads the whole of its column, whichever way
 	// the ray points.** The volume fills a column with one medium and describes
@@ -238,30 +247,39 @@ inline float VolumetricFroxelColumnLength(
 		return distanceToEye;
 	}
 
-	// Both ends dry, so nothing on this ray is misdescribed. Rejected here
-	// rather than by the arithmetic below so that a scene with an ocean nobody
-	// is looking through pays no unprojection.
+	// Above every crest the sea can raise at both ends, so the straight line
+	// between them is above it too and no water can stand on this ray. Costs
+	// two compares and spares the trace below to every fragment in a scene the
+	// waves are not in front of, which is most of them.
+	const float slabTop =
+		GetWeather().ocean.water_height + ocean_max_displacement();
+
 	[branch]
-	if (fragmentHeight >= 0)
+	if (eye.y >= slabTop && fragmentPosition.y >= slabTop)
 	{
 		return distanceToEye;
 	}
 
-	// Where the ray meets the surface, as a share of the segment. Both heights
-	// are measured against the wave surface over their own end, so this is the
-	// same linear clip between the same two heights that `GetWaterFog` uses to
-	// find its submerged length - and it must be, or the stretch one of them
-	// calls air is the stretch the other calls water. Taken as the eye's share
-	// of the two magnitudes rather than as a signed ratio, which is the same
-	// number for a straddling segment and is symmetric: the eye is under the
-	// surface as often as the fragment is, and a form that divides by the
-	// signed span collapses to zero for one of the two directions.
-	const float crossing = distanceToEye * saturate(abs(eyeHeight)
-		/ max(abs(eyeHeight) + abs(fragmentHeight), 0.00001));
+	// **Where the air ends, found by following the ray.** The volume's column
+	// is filled with air for a dry eye, so it describes this ray only as far as
+	// the first water on it.
+	//
+	// The two ends cannot stand in for the trace, cheap as they are: a fragment
+	// standing in air is still seen THROUGH water wherever a crest lies between
+	// it and the eye, and both ends of that ray are dry. Since the volume is
+	// ADDED after the water fog rather than composited into it, haze handed out
+	// past the water is haze the water can no longer take back.
+	const WaterSegment water = TraceWaterSegment(eye, fragmentPosition, 0);
+
+	[branch]
+	if (!water.crosses)
+	{
+		return distanceToEye;
+	}
 
 	// Faded on the pixel's own submersion, which is what sweeps the waterline
 	// down the screen as the camera comes down to meet it.
-	return lerp(crossing, distanceToEye, ocean_underwater_factor(screenUV));
+	return lerp(water.entry, distanceToEye, ocean_underwater_factor(screenUV));
 }
 
 /**
