@@ -62,6 +62,16 @@ void main(uint3 DTid : SV_DispatchThreadID)
 		}
 	}
 
+	// **How much of this texel is worth believing, kept rather than thrown
+	// away.** The count is already the answer: a consumer handed only a colour
+	// cannot tell an average built from all sixteen source texels from one
+	// built from three, and cannot tell either from a texel that had none - so
+	// it treats invented content and measured content alike.
+	//
+	// Carried in alpha, which this copy has no other use for. A consumer that
+	// ignores it reads exactly the colour it read before.
+	const float validity = weight / 16.0f;
+
 	if (weight > 0)
 	{
 		color /= weight;
@@ -95,6 +105,10 @@ void main(uint3 DTid : SV_DispatchThreadID)
 #endif // REJECT_MASKED
 
 	color.rgb = inverse_tonemap(color.rgb);
+
+#ifdef REJECT_MASKED
+	color.a = validity;
+#endif // REJECT_MASKED
 
 #if defined(REJECT_MASKED) && REJECT_MASKED_DEBUG != 0
 	if (debug_override)

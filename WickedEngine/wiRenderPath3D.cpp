@@ -9,6 +9,29 @@
 using namespace wi::graphics;
 using namespace wi::enums;
 using namespace wi::scene;
+
+/**
+ * Whether the ocean's scene copy has its masked holes inpainted.
+ *
+ * The masked downsample empties every texel whose whole footprint stood on
+ * water, so that what is in FRONT of the surface is not refracted onto it.
+ * `Postprocess_FillHoles` answers for those out of the content around them, on
+ * the premise that a hole is ringed by water.
+ *
+ * At a silhouette that premise fails. The nearest content is sky, and a ray
+ * refracted from a dry eye descends and can never reach it, so the fill
+ * spreads in the one thing that cannot be there - at the coarse resolution of
+ * whichever mip it had to climb to cover the hole.
+ *
+ * **The copy now carries how much of each texel survived the mask, and the
+ * ocean gives the share it cannot answer for to its own column** - a
+ * description of the water rather than of its neighbours. That settles the
+ * holes without inventing anything, so the fill is off.
+ *
+ * It cannot be left on beside that either: the fill writes an alpha of 1, and
+ * so erases the very mark the ocean would have read.
+ */
+static constexpr bool OCEAN_COPY_FILL_HOLES = false;
 using namespace wi::ecs;
 
 namespace wi
@@ -2775,7 +2798,15 @@ namespace wi
 			// honest candidate is the water around it: that content is already
 			// the bed seen through this same medium, which is what the hole
 			// would have shown had the frame drawn it.
-			wi::renderer::Postprocess_FillHoles(rtSceneCopy, cmd);
+			//
+			// That premise holds where a hole is ringed by water and fails at
+			// a silhouette, where the nearest content is sky. The copy carries
+			// what survived the mask instead, and the ocean answers for the
+			// rest out of its own column - see `OCEAN_COPY_FILL_HOLES`.
+			if (OCEAN_COPY_FILL_HOLES)
+			{
+				wi::renderer::Postprocess_FillHoles(rtSceneCopy, cmd);
+			}
 			device->EventEnd(cmd);
 
 			// Keep the depth without the water in it for the overlays that come

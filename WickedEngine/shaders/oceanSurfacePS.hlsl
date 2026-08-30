@@ -971,7 +971,18 @@ float4 main(PSIn input) : SV_TARGET
 		}
 
 
-		surface.refraction.rgb = texture_refraction.SampleLevel(sampler_linear_mirror, refraction_uv, 0).rgb;
+		const half4 refractionSample = (half4)texture_refraction.SampleLevel(
+			sampler_linear_mirror, refraction_uv, 0);
+
+		// **How much of what was sampled is measured rather than absent.** The
+		// masked downsample empties every texel whose footprint stood on
+		// water, so that what is in FRONT of the surface is never refracted
+		// onto it, and it carries what survived in alpha. A texel it emptied
+		// describes nothing at all, and read as a colour it hands the water a
+		// hole to show.
+		const half copyValidity = saturate(refractionSample.a);
+
+		surface.refraction.rgb = refractionSample.rgb;
 
 		// **What the copy carries from IN FRONT of the water must not bend with
 		// it.** The copy holds the light scattered along its whole column, and
@@ -1076,9 +1087,15 @@ float4 main(PSIn input) : SV_TARGET
 			&& distance(refraction_position, surface.P) >
 				refractionMedium.VisibleRange();
 
+		// **Weighted by how much of the sample was there to begin with.** What
+		// the copy could not describe is not a dark refraction, it is no
+		// refraction - and the share it cannot answer for falls to the column
+		// below, which is the water describing itself over a depth that ends
+		// the question. That is the stand-in a refusal is already given.
 		const half3 refractionReach = refractionUnreachable
 			? (half3)0
-			: (half3)exp(-refractionMedium.sigmaT * refractionWater);
+			: (half3)exp(-refractionMedium.sigmaT * refractionWater)
+				* copyValidity;
 
 		[branch]
 		if (!camera_below_water)
