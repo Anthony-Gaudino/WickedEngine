@@ -1298,19 +1298,36 @@ float4 main(PSIn input) : SV_TARGET
 			xOceanFoamColor.rgb * foamFog.transmittance + foamFog.inscatter);
 
 		surface.albedo = lerp(surface.albedo, foamColor, foam);
-		surface.refraction.a *= 1 - foam * (half)xOceanFoamColor.a;
-		// Same guard: with no sea bed under water there is no shoreline to
-		// restore the refraction over.
+
+		// Shallow water over a bed shows that bed. Same guard as the foam:
+		// with no sea bed under water there is no shoreline to restore the
+		// refraction over.
 		//
 		// Reaches half as far as the foam and is scaled by the same gain, so
 		// the two cannot be set against each other: thinning the foam without
 		// thinning this would brighten water that has no foam left on it.
-		surface.refraction.a = saturate(surface.refraction.a +
-			(shore_foam_present
-				? saturate(exp(-shore_depth * shore_foam_falloff * 2))
-					* GetWeather().ocean.shore_foam_strength
-					* shoreReach
-				: 0));
+		const half shoreRestore = (half)(shore_foam_present
+			? saturate(exp(-shore_depth * shore_foam_falloff * 2))
+				* GetWeather().ocean.shore_foam_strength
+				* shoreReach
+			: 0);
+
+		// How much of what lies under the foam still reaches the eye.
+		const half foamOcclusion = 1 - foam * (half)xOceanFoamColor.a;
+
+		// **Foam floats ON the surface, so it occludes last.** The albedo
+		// carrying the foam is composited at `1 - refraction.a`, so an alpha
+		// raised after this point takes the foam back out of the picture: the
+		// shore hands its bed back straight through the foam standing over it,
+		// and at full coverage the band reads as bright water with no foam on
+		// it at all.
+		//
+		// The same alpha decides what the fog may touch. `background` is
+		// scaled by it, and the share claimed as already fogged is the
+		// refraction's alone - so whatever the foam covers has to leave that
+		// claim, the foam being raised here and having crossed no air.
+		surface.refraction.a = saturate(surface.refraction.a + shoreRestore);
+		surface.refraction.a *= foamOcclusion;
 	}
 #endif
 
