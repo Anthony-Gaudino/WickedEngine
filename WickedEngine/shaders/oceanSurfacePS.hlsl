@@ -19,6 +19,31 @@
 #define OCEAN_VOLUMETRIC_DEBUG 0
 
 /**
+ * Water depth over which the shore foam's shaded edge fades in, in metres.
+ *
+ * The foam has thickness of its own, and where the film beneath it is
+ * shallower than that thickness the ground shows through. This is that
+ * thickness, expressed as the depth of water it takes to cover.
+ *
+ * **Fixed, and deliberately not scaled by `shore_foam_width`.** That setting
+ * says how deep the water may be and still grow foam, which is a property of
+ * the beach; this is a property of the foam. Scaling one by the other stretches
+ * the shaded lip across metres of sand the moment a wide band is authored, and
+ * a lip that wide stops reading as thickness at all.
+ */
+#define OCEAN_SHORE_FOAM_EDGE_DEPTH 0.004
+
+/**
+ * How far down the foam is shaded where the water runs out from under it.
+ *
+ * 1 leaves the edge as bright as the rest of the foam and flat with it; lower
+ * digs it in. It multiplies the foam's own colour rather than mixing towards a
+ * colour of its own, so the edge stays whatever the foam is lit as and only
+ * darkens - foam tinted by its water does not turn grey at the shore.
+ */
+#define OCEAN_SHORE_FOAM_EDGE_SHADE 0.45
+
+/**
  * Traces the refracted ray but does not shade what it finds.
  *
  * Splits the traced refraction's cost in two. Only `distance` is consumed from
@@ -1211,6 +1236,12 @@ float4 main(PSIn input) : SV_TARGET
 			max(shoreTransmittance.r, shoreTransmittance.g),
 			shoreTransmittance.b);
 
+		// How far the water has covered the foam's own thickness, 0 where the
+		// film has run out from under it and 1 once it is deeper than the
+		// foam is thick.
+		const float shore_foam_film =
+			saturate(shore_water_column / OCEAN_SHORE_FOAM_EDGE_DEPTH);
+
 		// Only the SHORE's foam. Wave foam is on this fragment and crosses
 		// nothing to be seen.
 		float foam_shore = shore_foam_present
@@ -1294,8 +1325,23 @@ float4 main(PSIn input) : SV_TARGET
 			1
 		);
 
+		// **The foam's edge is a lip, not a fade.** Where the film runs out
+		// from under it the foam still covers the ground - it has thickness of
+		// its own - but that thickness stands over wet sand and shades it, and
+		// the eye reads the darkening as depth. Thinning the coverage instead
+		// hands back the bright bed underneath, which ends the band like the
+		// cut edge of a plane.
+		//
+		// Guarded on the shore, because the column this is graded by describes
+		// a sea bed and says nothing where there is none - wave foam on open
+		// water would otherwise be shaded by whatever that happened to hold.
+		const half foamEdgeShade = shore_foam_present
+			? (half)lerp(OCEAN_SHORE_FOAM_EDGE_SHADE, 1.0, shore_foam_film)
+			: (half)1;
+
 		const half3 foamColor = (half3)(
-			xOceanFoamColor.rgb * foamFog.transmittance + foamFog.inscatter);
+			(xOceanFoamColor.rgb * foamFog.transmittance + foamFog.inscatter)
+				* foamEdgeShade);
 
 		surface.albedo = lerp(surface.albedo, foamColor, foam);
 
