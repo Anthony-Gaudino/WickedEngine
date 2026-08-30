@@ -783,6 +783,19 @@ float4 main(PSIn input) : SV_TARGET
 
 	float water_depth = FLT_MAX;
 
+	// The share of the refraction that has NOT crossed the air in front of the
+	// water.
+	//
+	// Everything the appliers below are told to leave alone must already carry
+	// that air's fog, or it reaches the eye through however much haze stands
+	// there and is dimmed by none of it. Only a screen space sample qualifies:
+	// it was drawn elsewhere in the frame and fogged over its own distance.
+	//
+	// A traced hit and the deep water column both fail that test. Each is
+	// raised at or beyond this surface with no air behind it, so the air over
+	// them is this fragment's own `dist` and they take the fog it takes.
+	half3 refractionWithoutAirFog = 0;
+
 	// Whether what lies behind this surface is found by following the refracted
 	// ray, rather than guessed at by sliding the screen space lookup sideways.
 	//
@@ -820,6 +833,13 @@ float4 main(PSIn input) : SV_TARGET
 			pixel,
 			MakeWaterVolumetrics(1)
 		);
+
+		// **All of it was made here.** The traced hit is shaded from the scene
+		// directly and the column behind it is raised at this surface, so
+		// neither has crossed the air standing in front of the water. The whole
+		// term takes this fragment's own air fog rather than being held out of
+		// it as a screen sample is.
+		refractionWithoutAirFog = (half3)surface.refraction.rgb;
 
 		// The transport is applied over the traced path inside, so nothing here
 		// is owed a screen depth attenuation - see the note on the screen space
@@ -1045,12 +1065,14 @@ float4 main(PSIn input) : SV_TARGET
 			const float columnWeight =
 				max(max(columnShare.r, columnShare.g), columnShare.b);
 
+			const half3 column = OceanDeepWaterColumn(
+				surface, V, ScreenCoord, pixel, refractionMedium,
+				columnWeight);
+
+			refractionWithoutAirFog = column * (1 - refractionReach);
+
 			surface.refraction.rgb = lerp(
-				OceanDeepWaterColumn(
-					surface, V, ScreenCoord, pixel, refractionMedium,
-					columnWeight),
-				(half3)surface.refraction.rgb,
-				refractionReach);
+				column, (half3)surface.refraction.rgb, refractionReach);
 		}
 
 		water_depth = max(water_depth, -dot(float4(refraction_position, 1), water_plane));
@@ -1305,8 +1327,13 @@ float4 main(PSIn input) : SV_TARGET
 	//
 	// Seen from below that background is the sky; seen from above it is
 	// whatever is under the water.
+	//
+	// **What never crossed that air is taken back out of it.** Such a term is
+	// not something the appliers would be fogging twice - it is something they
+	// have yet to fog once.
 	const half3 background = (half3)(
-		surface.refraction.rgb * (1 - surface.F) * surface.refraction.a);
+		max(0, (half3)surface.refraction.rgb - refractionWithoutAirFog)
+			* (1 - surface.F) * surface.refraction.a);
 
 	ApplyAerialPerspective(ScreenCoord, surface.P, background, color);
 
