@@ -1434,7 +1434,21 @@ float4 main(PSIn input) : SV_TARGET
 	// out of it where it was sampled, so this is the only place the light in
 	// front of the water enters the pixel at all - and it enters down this
 	// pixel's own column, which is the one it was gathered along.
-	ApplyVolumetricLight(ScreenCoord, surface.P, color);
+
+	// **AtSurface, for the same reason the water fog above is.** This fragment
+	// IS the interface, so nothing stands between it and a dry eye but air -
+	// the column runs the whole way and there is no crossing to cut it at.
+	//
+	// Asking the trace instead makes the surface find itself. It ends on the
+	// water it is drawn on, and anywhere the trace answers early - a crossing
+	// pair it cannot see, a walk that gives up - the column is cut short of a
+	// fragment nothing is in front of, and the volume's share goes missing in
+	// patches. Nothing can be in front of it: it is what the depth buffer
+	// kept.
+	//
+	// An eye under the surface is settled inside the applier, from the
+	// camera's own height, and is unaffected either way.
+	ApplyVolumetricLight(ScreenCoord, surface.P, -1, 0, color);
 
 	// The clouds are composited before the transparents, and the ocean is one -
 	// so it paints over them and stands out of a cloud that has swallowed the
