@@ -1335,9 +1335,23 @@ float4 main(PSIn input) : SV_TARGET
 		max(0, (half3)surface.refraction.rgb - refractionWithoutAirFog)
 			* (1 - surface.F) * surface.refraction.a);
 
-	ApplyAerialPerspective(ScreenCoord, surface.P, background, color);
+	// How much of the pixel that background fills, which the additive half of
+	// each applier needs and cannot infer from a radiance.
+	//
+	// The refraction fills `(1 - F) * a` of the pixel, and only the share of it
+	// that crossed the air counts as already fogged - so a traced refraction,
+	// which is entirely this shader's own work, fills none of it.
+	const half3 alreadyFoggedShare = (half3)saturate(
+		max(0, (half3)surface.refraction.rgb - refractionWithoutAirFog)
+			/ max((half3)surface.refraction.rgb, (half3)0.0001));
 
-	ApplyFog(dist, V, background, color);
+	const half3 backgroundWeight = alreadyFoggedShare
+		* (half3)((1 - surface.F) * surface.refraction.a);
+
+	ApplyAerialPerspective(
+		ScreenCoord, surface.P, background, backgroundWeight, color);
+
+	ApplyFog(dist, V, background, backgroundWeight, color);
 
 	// AtSurface: this fragment IS the interface, so what lies between it and
 	// the eye is water exactly when the eye is under it. Classifying it by

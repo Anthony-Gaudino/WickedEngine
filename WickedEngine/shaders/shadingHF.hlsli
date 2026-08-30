@@ -553,6 +553,56 @@ inline void TiledDecals(inout Surface surface, inout half4 surfaceMap, SamplerSt
  * ApplyFog(dist, surface.V, background, color);
  * @endcode
  *
+ * **`background` says WHAT to leave alone; `backgroundWeight` says HOW MUCH of
+ * the pixel it fills.** Two different questions, and only the first can be
+ * answered by a radiance. Attenuation is multiplicative and a subtraction
+ * holds a radiance out of it, but the in-scatter is added: laid on whole over
+ * a pixel that is mostly already-fogged background, it stacks haze on haze and
+ * the fragment comes back brighter than the fog around it rather than equal to
+ * it. At full fog that is the difference between a surface vanishing into the
+ * haze and standing out of it as a bright rim.
+ *
+ * @param[in] distance - Distance from the eye to the fragment (in metres).
+ * @param[in] V - Normalized direction from the fragment towards the eye.
+ * @param[in] background - Radiance already fogged elsewhere, to pass through
+ *                         untouched.
+ * @param[in] backgroundWeight - Fraction of the pixel `background` fills
+ *                               (0-1). Per channel, because a refraction's
+ *                               Fresnel term is.
+ * @param[in,out] color - Fragment colour, fogged in place.
+ */
+inline void ApplyFog(
+	in float distance,
+	float3 V,
+	half3 background,
+	half3 backgroundWeight,
+	inout half4 color
+)
+{
+	const half4 fog = GetFog(distance, GetCamera().position, -V);
+
+	// Never take out more than is there, matching ApplyWaterFog: a shader that
+	// overwrites its colour after the refraction was composited would otherwise
+	// drive the fogged term negative.
+	const half3 alreadyFogged = min(background, color.rgb);
+
+	// **The in-scatter is weighted by what the background does NOT fill.**
+	// Holding a radiance out of the attenuation is a subtraction and needs no
+	// coverage, but this term is added, and a pixel that is mostly background
+	// receives haze the background already carries. At full fog that lands the
+	// fragment on the fog's colour PLUS whatever was exempt, so it comes back
+	// brighter than the fog around it - a bright rim exactly where the exempt
+	// share is largest, which is why a shore whose alpha is driven to 1 draws a
+	// line across an otherwise fogged view.
+	color.rgb =
+		(color.rgb - alreadyFogged) * (1 - fog.a)
+		+ fog.rgb * fog.a * (1 - backgroundWeight)
+		+ alreadyFogged;
+}
+
+/**
+ * The same, for a caller whose background fills none of the pixel.
+ *
  * @param[in] distance - Distance from the eye to the fragment (in metres).
  * @param[in] V - Normalized direction from the fragment towards the eye.
  * @param[in] background - Radiance already fogged elsewhere, to pass through
@@ -563,15 +613,7 @@ inline void ApplyFog(
 	in float distance, float3 V, half3 background, inout half4 color
 )
 {
-	const half4 fog = GetFog(distance, GetCamera().position, -V);
-
-	// Never take out more than is there, matching ApplyWaterFog: a shader that
-	// overwrites its colour after the refraction was composited would otherwise
-	// drive the fogged term negative.
-	const half3 alreadyFogged = min(background, color.rgb);
-
-	// Non-premultiplied fog, over the fragment's own contribution only.
-	color.rgb = lerp(color.rgb - alreadyFogged, fog.rgb, fog.a) + alreadyFogged;
+	ApplyFog(distance, V, background, 0, color);
 }
 
 /**
@@ -589,8 +631,44 @@ inline void ApplyFog(in float distance, float3 V, inout half4 color)
 /**
  * Applies aerial perspective to a fragment, passing a background through.
  *
- * Same reasoning as the `ApplyFog` overload above: what was sampled from the
- * scene behind this fragment already crossed that air when it was drawn.
+ * Same reasoning as the `ApplyFog` overload above, in both halves: what was
+ * sampled from the scene behind this fragment already crossed that air when it
+ * was drawn, and the atmosphere's own colour is added rather than multiplied,
+ * so it needs the coverage that radiance cannot supply.
+ *
+ * @param[in] uv - Screen space UV coordinates (0-1) of the fragment.
+ * @param[in] P - World position of the fragment.
+ * @param[in] background - Radiance already fogged elsewhere, to pass through
+ *                         untouched.
+ * @param[in] backgroundWeight - Fraction of the pixel `background` fills
+ *                               (0-1). Per channel, because a refraction's
+ *                               Fresnel term is.
+ * @param[in,out] color - Fragment colour, modified in place.
+ */
+inline void ApplyAerialPerspective(
+	float2 uv,
+	float3 P,
+	half3 background,
+	half3 backgroundWeight,
+	inout half4 color
+)
+{
+	if (GetFrame().options & OPTION_BIT_REALISTIC_SKY_AERIAL_PERSPECTIVE)
+	{
+		const half4 AP = GetAerialPerspectiveTransmittance(
+			uv, P, GetCamera().position, texture_cameravolumelut);
+
+		const half3 alreadyFogged = min(background, color.rgb);
+
+		color.rgb =
+			(color.rgb - alreadyFogged) * (1.0 - AP.a)
+			+ AP.rgb * (1 - backgroundWeight)
+			+ alreadyFogged;
+	}
+}
+
+/**
+ * The same, for a caller whose background fills none of the pixel.
  *
  * @param[in] uv - Screen space UV coordinates (0-1) of the fragment.
  * @param[in] P - World position of the fragment.
@@ -602,16 +680,7 @@ inline void ApplyAerialPerspective(
 	float2 uv, float3 P, half3 background, inout half4 color
 )
 {
-	if (GetFrame().options & OPTION_BIT_REALISTIC_SKY_AERIAL_PERSPECTIVE)
-	{
-		const half4 AP = GetAerialPerspectiveTransmittance(
-			uv, P, GetCamera().position, texture_cameravolumelut);
-
-		const half3 alreadyFogged = min(background, color.rgb);
-
-		color.rgb =
-			(color.rgb - alreadyFogged) * (1.0 - AP.a) + AP.rgb + alreadyFogged;
-	}
+	ApplyAerialPerspective(uv, P, background, 0, color);
 }
 
 /**

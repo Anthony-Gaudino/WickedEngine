@@ -1123,14 +1123,20 @@ float4 main(PixelInput input, in bool is_frontface : SV_IsFrontFace APPEND_COVER
 	const half3 background = (half3)(
 		surface.refraction.rgb * (1 - surface.F) * surface.refraction.a);
 
+	// How much of the pixel that background fills, which the additive half of
+	// each applier needs and cannot infer from a radiance.
+	const half3 backgroundWeight =
+		(half3)((1 - surface.F) * surface.refraction.a);
+
 // Transparent objects has been rendered separately from opaque, so let's apply it now.
 // Must also be applied before fog since fog is layered over.
 #if defined(TRANSPARENT) || defined(ENVMAPRENDERING)
-	ApplyAerialPerspective(ScreenCoord, surface.P, background, color);
+	ApplyAerialPerspective(
+		ScreenCoord, surface.P, background, backgroundWeight, color);
 #endif // defined(TRANSPARENT) || defined(ENVMAPRENDERING)
 
 
-	ApplyFog(dist, surface.V, background, color);
+	ApplyFog(dist, surface.V, background, backgroundWeight, color);
 
 	// One trace for the pair: the fog measures where this segment meets the
 	// water, and the volumetric light needs the same crossing to know where its
@@ -1145,7 +1151,7 @@ float4 main(PixelInput input, in bool is_frontface : SV_IsFrontFace APPEND_COVER
 		ScreenCoord,
 		surface.P,
 		waterFog.entry,
-		(half3)((1 - surface.F) * surface.refraction.a),
+		backgroundWeight,
 		color
 	);
 
