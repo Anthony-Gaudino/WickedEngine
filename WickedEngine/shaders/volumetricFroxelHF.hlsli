@@ -170,6 +170,74 @@ inline bool VolumetricFroxelCarriesTheSun()
 }
 
 /**
+ * The column length for a caller that has already traced this segment.
+ *
+ * Named apart from the tracing form rather than overloaded on it: HLSL splats
+ * a scalar to a vector, so a `float` distance would bind happily to that
+ * function's `float3` position and the two would resolve to each other.
+ *
+ * The water fog traces the identical segment to build itself, immediately
+ * before the volumetric light is applied, so a caller holding that result can
+ * hand the crossing over instead of paying for it twice. `WaterFog::entry` is
+ * exactly this number.
+ *
+ * @param[in] screenUV - Screen space position of the fragment (0-1).
+ * @param[in] distanceToEye - Radial distance from the eye to the fragment, in
+ *                            metres.
+ * @param[in] waterEntry - Distance from the eye to the first water a TRACE
+ *                         found on the segment, in metres, negative when none
+ *                         was found or none was traced. `WaterFog::entry` is
+ *                         exactly this and reports -1 unless it traced.
+ *
+ * @return Distance the volume may be read out to, in metres.
+ *
+ * @note Costs one surface height sample and no trace. A -1 runs the column its
+ *       full length, which is right for a segment with no water on it and
+ *       wrong for one whose water was never looked for - so the fog handed
+ *       here must be one that traced.
+ */
+inline float VolumetricFroxelColumnLengthFromEntry(
+	in float2 screenUV, in float distanceToEye, in float waterEntry
+)
+{
+	[branch]
+	if (!GetCamera().IsWaterFog())
+	{
+		return distanceToEye;
+	}
+
+	// **An eye under the surface reads the whole of its column, and that is
+	// settled by the camera's own height rather than by this pixel.** The
+	// volume fills a column with one medium and describes it from the eye
+	// onwards, so a column it filled with water is water the whole way.
+	//
+	// The pixel cannot stand in for the camera here. A ray leaving a submerged
+	// eye and rising into the air crosses the surface, so a crossing exists to
+	// cut on - but the fade below is taken at the pixel, and every pixel
+	// showing what stands ABOVE the water reads dry and fades to nothing. The
+	// column is then cut at the surface for exactly the part of the screen the
+	// air fills, and the volumetric light outside the water disappears while
+	// the camera straddles the waterline.
+	const float3 eye = GetCamera().position;
+
+	[branch]
+	if (eye.y - ocean_drawn_surface_height(eye) < 0)
+	{
+		return distanceToEye;
+	}
+
+	[branch]
+	if (waterEntry < 0)
+	{
+		return distanceToEye;
+	}
+
+	// Faded on the pixel's own submersion, which is what sweeps the waterline
+	// down the screen as the camera comes down to meet it.
+	return lerp(waterEntry, distanceToEye, ocean_underwater_factor(screenUV));
+}
+
+/**
  * How far along a view ray the volume still describes what is there.
  *
  * The volume holds **one medium per column, chosen at the eye**
@@ -279,7 +347,100 @@ inline float VolumetricFroxelColumnLength(
 
 	// Faded on the pixel's own submersion, which is what sweeps the waterline
 	// down the screen as the camera comes down to meet it.
+	//
+	// Finished here rather than by handing the crossing to
+	// `VolumetricFroxelColumnLengthFromEntry`: the eye's own side has already
+	// been settled above, and that function would sample the surface over the
+	// camera a second time to settle it again.
 	return lerp(water.entry, distanceToEye, ocean_underwater_factor(screenUV));
+}
+
+/**
+ * Adds the volume's light over a column of already-decided length.
+ *
+ * The shared body of the appliers below, which differ only in how they settle
+ * how far the volume still describes this ray. Nothing here asks that question.
+ *
+ * @param[in] screenUV - Screen space position of the fragment (0-1).
+ * @param[in] distanceToEye - How far the volume may be read out along this
+ *                            ray, in metres, as settled by one of the
+ *                            `VolumetricFroxelColumnLength` forms.
+ * @param[in] backgroundWeight - Fraction of this fragment's colour that came
+ *                               from behind it and already carries its own
+ *                               inscatter (0-1).
+ * @param[in,out] color - Fragment colour, lit in place. Alpha is untouched.
+ */
+inline void ApplyVolumetricLightOverColumn(
+	in float2 screenUV,
+	in float distanceToEye,
+	in half3 backgroundWeight,
+	inout half4 color
+)
+{
+	[branch]
+	if (GetCamera().texture_volumetricfroxels_index < 0)
+	{
+		return;
+	}
+
+	float slice = VolumetricFroxelDepthToW(
+		distanceToEye, GetFrame().volumetricfroxel_range)
+		* VOLUMETRIC_FROXEL_SLICES;
+
+	// Nothing is stored nearer than the first texel's own depth, and the
+	// sampler's clamp would hand a fragment closer than that the whole of the
+	// first slice - light gathered over a stretch it does not stand behind. The
+	// first texel is held and faded in instead, which is exact at zero and at
+	// the texel, and the only thing it can be in between.
+	half weight = 1;
+	if (slice < 0.5)
+	{
+		weight = (half)saturate(slice * 2);
+		slice = 0.5;
+	}
+
+	const half3 inscatter = (half3)texture_volumetricfroxels.SampleLevel(
+		sampler_linear_clamp,
+		float3(screenUV, slice / VOLUMETRIC_FROXEL_SLICES),
+		0).rgb;
+
+	half3 total = inscatter * weight;
+
+	// The column beyond the volume, faded in over the distance it occupies
+	// rather than delivered at the boundary. It is zero at the last texel's own
+	// depth, so the two meet without a step, and complete at the far plane.
+	[branch]
+	if (GetFrame().texture_volumetricfroxeltail_index >= 0)
+	{
+		const float lastTexelDepth = VolumetricFroxelSliceToDepth(
+			(float)VOLUMETRIC_FROXEL_SLICES - 0.5,
+			GetFrame().volumetricfroxel_range);
+
+		const float tailSpan = GetCamera().z_far - lastTexelDepth;
+		const float intoTail = distanceToEye - lastTexelDepth;
+
+		[branch]
+		if (intoTail > 0 && tailSpan > 0)
+		{
+			const half4 tail = texture_volumetricfroxeltail.SampleLevel(
+				sampler_linear_clamp, screenUV, 0);
+
+			// Shaped by the medium's own extinction over that stretch, so the
+			// far field arrives the way a medium delivers it - most of it
+			// early, tailing off - instead of climbing in a straight line.
+			// Falls back to that straight line where there is no medium to
+			// shape it.
+			const float extinction = (float)tail.a;
+			const float ramp = extinction > 0.000001
+				? (1 - exp(-extinction * intoTail))
+					/ max(1 - exp(-extinction * tailSpan), 0.000001)
+				: (intoTail / tailSpan);
+
+			total += tail.rgb * (half)saturate(ramp);
+		}
+	}
+
+	color.rgb += total * (1 - backgroundWeight);
 }
 
 /**
@@ -347,69 +508,63 @@ inline void ApplyVolumetricLight(
 		return;
 	}
 
-	const float distanceToEye = VolumetricFroxelColumnLength(
+	ApplyVolumetricLightOverColumn(
 		screenUV,
-		fragmentPosition,
-		length(fragmentPosition - GetCamera().position));
+		VolumetricFroxelColumnLength(
+			screenUV,
+			fragmentPosition,
+			length(fragmentPosition - GetCamera().position)),
+		backgroundWeight,
+		color);
+}
 
-	float slice = VolumetricFroxelDepthToW(
-		distanceToEye, GetFrame().volumetricfroxel_range)
-		* VOLUMETRIC_FROXEL_SLICES;
-
-	// Nothing is stored nearer than the first texel's own depth, and the
-	// sampler's clamp would hand a fragment closer than that the whole of the
-	// first slice - light gathered over a stretch it does not stand behind. The
-	// first texel is held and faded in instead, which is exact at zero and at
-	// the texel, and the only thing it can be in between.
-	half weight = 1;
-	if (slice < 0.5)
-	{
-		weight = (half)saturate(slice * 2);
-		slice = 0.5;
-	}
-
-	const half3 inscatter = (half3)texture_volumetricfroxels.SampleLevel(
-		sampler_linear_clamp,
-		float3(screenUV, slice / VOLUMETRIC_FROXEL_SLICES),
-		0).rgb;
-
-	half3 total = inscatter * weight;
-
-	// The column beyond the volume, faded in over the distance it occupies
-	// rather than delivered at the boundary. It is zero at the last texel's own
-	// depth, so the two meet without a step, and complete at the far plane.
+/**
+ * The same, for a caller that has already traced this fragment's segment.
+ *
+ * The water fog traces it to build itself, so a caller that has a `WaterFog`
+ * in hand can pass its `entry` here and the segment is measured once for the
+ * pair instead of once each.
+ *
+ * @param[in] screenUV - Screen space position of the fragment (0-1).
+ * @param[in] fragmentPosition - World position of the fragment.
+ * @param[in] waterEntry - Distance from the eye to the first water on the
+ *                         segment, in metres, negative where it meets none.
+ *                         `WaterFog::entry` is exactly this.
+ * @param[in] backgroundWeight - Fraction of this fragment's colour that came
+ *                               from behind it and already carries its own
+ *                               in-scatter (0-1).
+ * @param[in,out] color - Fragment colour, lit in place.
+ *
+ * @note Pass a value from a fog that was actually TRACED. `MakeWaterFog`
+ *       reports -1 whatever stands on the segment, and the untraced
+ *       `GetWaterFog` overloads - the ones `ApplyWaterFogAtSurface` uses -
+ *       report a crossing derived from the two ends, which cannot see a crest
+ *       standing between them. Either would hand the column a ray it is not
+ *       entitled to describe. Only `GetWaterFog(screenUV, fragmentPosition)`
+ *       traces.
+ */
+inline void ApplyVolumetricLight(
+	in float2 screenUV,
+	in float3 fragmentPosition,
+	in float waterEntry,
+	in half3 backgroundWeight,
+	inout half4 color
+)
+{
 	[branch]
-	if (GetFrame().texture_volumetricfroxeltail_index >= 0)
+	if (GetCamera().texture_volumetricfroxels_index < 0)
 	{
-		const float lastTexelDepth = VolumetricFroxelSliceToDepth(
-			(float)VOLUMETRIC_FROXEL_SLICES - 0.5,
-			GetFrame().volumetricfroxel_range);
-
-		const float tailSpan = GetCamera().z_far - lastTexelDepth;
-		const float intoTail = distanceToEye - lastTexelDepth;
-
-		[branch]
-		if (intoTail > 0 && tailSpan > 0)
-		{
-			const half4 tail = texture_volumetricfroxeltail.SampleLevel(
-				sampler_linear_clamp, screenUV, 0);
-
-			// Shaped by the medium's own extinction over that stretch, so the
-			// far field arrives the way a medium delivers it - most of it
-			// early, tailing off - instead of climbing in a straight line.
-			// Falls back to that straight line where there is no medium to
-			// shape it.
-			const float extinction = (float)tail.a;
-			const float ramp = extinction > 0.000001
-				? (1 - exp(-extinction * intoTail))
-					/ max(1 - exp(-extinction * tailSpan), 0.000001)
-				: (intoTail / tailSpan);
-
-			total += tail.rgb * (half)saturate(ramp);
-		}
+		return;
 	}
 
-	color.rgb += total * (1 - backgroundWeight);
+	ApplyVolumetricLightOverColumn(
+		screenUV,
+		VolumetricFroxelColumnLengthFromEntry(
+			screenUV,
+			length(fragmentPosition - GetCamera().position),
+			waterEntry),
+		backgroundWeight,
+		color);
 }
 
 /**

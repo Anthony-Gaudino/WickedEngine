@@ -1132,7 +1132,11 @@ float4 main(PixelInput input, in bool is_frontface : SV_IsFrontFace APPEND_COVER
 
 	ApplyFog(dist, surface.V, background, color);
 
-	ApplyWaterFog(ScreenCoord, surface.P, background, color);
+	// One trace for the pair: the fog measures where this segment meets the
+	// water, and the volumetric light needs the same crossing to know where its
+	// column stops describing the ray.
+	const WaterFog waterFog = GetWaterFog(ScreenCoord, surface.P);
+	ApplyWaterFog(waterFog, background, color);
 
 	// The refraction was drawn earlier and carries the light scattered over its
 	// own longer column already, so only this surface's own share is added -
@@ -1140,6 +1144,7 @@ float4 main(PixelInput input, in bool is_frontface : SV_IsFrontFace APPEND_COVER
 	ApplyVolumetricLight(
 		ScreenCoord,
 		surface.P,
+		waterFog.entry,
 		(half3)((1 - surface.F) * surface.refraction.a),
 		color
 	);

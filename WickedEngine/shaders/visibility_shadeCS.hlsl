@@ -127,8 +127,15 @@ void main(uint Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
 #endif // UNLIT
 
 	ApplyFog(surface.hit_depth, surface.V, color);
-	ApplyWaterFog(surface.screenUV, surface.P, color);
-	ApplyVolumetricLight(surface.screenUV, surface.P, color);
+
+	// One trace for the pair: the fog measures where this segment meets the
+	// water, and the volumetric light needs the same crossing to know where
+	// its column stops describing the ray.
+	const WaterFog waterFog = GetWaterFog(surface.screenUV, surface.P);
+	ApplyWaterFog(waterFog, 0, color);
+
+	ApplyVolumetricLight(
+		surface.screenUV, surface.P, waterFog.entry, 0, color);
 
 	color = saturateMediump(color);
 

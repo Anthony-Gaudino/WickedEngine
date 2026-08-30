@@ -104,6 +104,26 @@ struct WaterFog
 	float3 inscatter;
 
 	/**
+	 * Distance from the eye to the first water a TRACE found on the segment,
+	 * in metres.
+	 *
+	 * Carried because finding it is the expensive part of building this fog and
+	 * the volumetric light needs the same number: the froxel column is filled
+	 * with one medium and stops describing a ray where that ray changes medium.
+	 * Handing this to `ApplyVolumetricLight` spares a second trace of the very
+	 * segment just traced here.
+	 *
+	 * **Negative unless a trace found a crossing.** That covers a segment lying
+	 * wholly in the air, one lying wholly under the water, and - the case worth
+	 * stating - a fog built without tracing at all. The untraced overloads
+	 * settle the crossing by comparing the heights at the two ends, which
+	 * cannot see a crest standing between them, and an answer of that kind must
+	 * never reach the column: it is the whole of what the column was taught to
+	 * stop trusting.
+	 */
+	float entry;
+
+	/**
 	 * Whether this fog does anything at all.
 	 *
 	 * @return true when the water is present and the segment has length.
@@ -171,6 +191,12 @@ WaterFog MakeWaterFog(
 
 	WaterFog fog;
 	fog.transmittance = exp(-path * medium.sigmaT);
+
+	// This builder is handed a length, never a segment, so it cannot know
+	// where the water began. `GetWaterFog` overwrites this with what its own
+	// trace found; a caller building a fog by hand gets the honest answer that
+	// there is nothing here for the volumetric light to shorten its column on.
+	fog.entry = -1;
 
 	// Only the scattered share of what was extinguished comes back. This is
 	// the SINGLE scattering veiling term, and it stays that way: it feeds the
@@ -429,6 +455,7 @@ WaterFog GetWaterFog(
 	WaterFog fog;
 	fog.transmittance = 1;
 	fog.inscatter = 0;
+	fog.entry = -1;
 
 	[branch]
 	if (!GetCamera().IsWaterFog())
@@ -478,6 +505,7 @@ WaterFog GetWaterFog(
 	[branch]
 	if (water.submerged <= 0)
 	{
+		fog.entry = (traceSegment && water.crosses) ? water.entry : -1;
 		return fog;
 	}
 
@@ -509,6 +537,7 @@ WaterFog GetWaterFog(
 	[branch]
 	if (!medium.IsActive())
 	{
+		fog.entry = (traceSegment && water.crosses) ? water.entry : -1;
 		return fog;
 	}
 
@@ -618,7 +647,7 @@ WaterFog GetWaterFog(
 		}
 	}
 
-	return MakeWaterFog(
+	WaterFog traced = MakeWaterFog(
 		medium,
 		path,
 		toEye,
@@ -632,6 +661,12 @@ WaterFog GetWaterFog(
 		GetCamera().IsUnderwaterGodRays() && eyeSubmersion > 0,
 		sunModulation
 	);
+
+	// What the trace above already found, carried out so the volumetric light
+	// does not have to trace this same segment again.
+	traced.entry = (traceSegment && water.crosses) ? water.entry : -1;
+
+	return traced;
 }
 
 /**
@@ -676,6 +711,7 @@ WaterFog GetWaterFog(float2 screenUV, float3 fragmentPosition)
 	WaterFog fog;
 	fog.transmittance = 1;
 	fog.inscatter = 0;
+	fog.entry = -1;
 
 	[branch]
 	if (!GetCamera().IsWaterFog())

@@ -28,7 +28,8 @@ float4 main(float4 pos : SV_Position) : SV_Target
 	// takes the whole column the volume holds. Added by hand for the same
 	// reason the water fog above is: this colour is full precision.
 	half4 volumetric = 0;
-	ApplyVolumetricLight(waterFogUV, waterFogP, volumetric);
+	ApplyVolumetricLight(
+		waterFogUV, waterFogP, waterFog.entry, 0, volumetric);
 	color.rgb += volumetric.rgb;
 
 	color = saturateMediump(color);
